@@ -1,0 +1,48 @@
+profile_name: blue_origin_new_glenn
+description: Default New Glenn telemetry profile derived from BlueOrigin_NG-3.mp4.
+reference_resolution:
+  width: 1920
+  height: 1080
+default_sample_fps: 0.5
+fixture_frame_count: 20
+fixture_reference_times_s:
+  - 0
+  - 47
+  - 93
+  - 140
+  - 187
+  - 233
+  - 280
+  - 327
+  - 374
+  - 420
+  - 467
+  - 514
+  - 560
+  - 607
+  - 654
+  - 700
+  - 747
+  - 794
+  - 840
+fields:
+  stage1_velocity:
+    kind: velocity
+    stage: stage1
+    box: [0.070, 0.790, 0.285, 0.960]
+  stage1_altitude:
+    kind: altitude
+    stage: stage1
+    box: [0.270, 0.790, 0.495, 0.960]
+  met:
+    kind: met
+    stage: null
+    box: [0.390, 0.790, 0.650, 0.960]
+  stage2_velocity:
+    kind: velocity
+    stage: stage2
+    box: [0.640, 0.790, 0.855, 0.960]
+  stage2_altitude:
+    kind: altitude
+    stage: stage2
+    box: [0.800, 0.790, 0.998, 0.960]
