@@ -38,7 +38,7 @@ ALTITUDE_SCALE = 0.001
 
 STAGE_COLORS_BGRA = {
     "stage1": (180, 119, 31, 255),
-    "stage2": (14, 127, 255, 255),
+    "stage2": (40, 39, 214, 255),
 }
 
 WHITE = (255, 255, 255, 255)

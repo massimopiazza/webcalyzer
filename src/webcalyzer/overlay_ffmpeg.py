@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import deque
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,16 +80,14 @@ def render_via_ffmpeg(
             f"[webcalyzer] ffmpeg overlay engine: encoder={resolved_encoder} "
             f"panels={len(plan.panel_cache)} segments={len(plan.panel_segments)}"
         )
-        result = subprocess.run(
+        returncode, output_tail = _run_ffmpeg_with_progress(
             command,
-            capture_output=True,
-            text=True,
-            check=False,
+            total_duration_s=float(plan.metadata.duration_s),
         )
-        if result.returncode != 0:
-            stderr_tail = "\n".join(result.stderr.strip().splitlines()[-30:])
+        if returncode != 0:
+            stderr_tail = "\n".join(output_tail[-30:])
             raise RuntimeError(
-                f"ffmpeg overlay encode failed (exit={result.returncode}). Last stderr lines:\n{stderr_tail}"
+                f"ffmpeg overlay encode failed (exit={returncode}). Last output lines:\n{stderr_tail}"
             )
 
     print(
@@ -96,6 +95,95 @@ def render_via_ffmpeg(
         f"→ {output_path}"
     )
     return output_path
+
+
+def _run_ffmpeg_with_progress(
+    command: list[str],
+    *,
+    total_duration_s: float,
+    log_interval_s: float = 10.0,
+    min_percent_step: float = 5.0,
+) -> tuple[int, list[str]]:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    output_tail: deque[str] = deque(maxlen=80)
+    progress: dict[str, str] = {}
+    last_log_time = time.perf_counter()
+    last_log_percent = -min_percent_step
+
+    assert process.stdout is not None
+    for raw_line in process.stdout:
+        line = raw_line.strip()
+        if not line:
+            continue
+        output_tail.append(line)
+        if "=" not in line:
+            print(f"[webcalyzer] ffmpeg: {line}")
+            continue
+        key, value = line.split("=", 1)
+        progress[key] = value
+        if key != "progress":
+            continue
+        percent = _ffmpeg_progress_percent(progress, total_duration_s)
+        now = time.perf_counter()
+        is_final = value == "end"
+        should_log = (
+            is_final
+            or percent >= last_log_percent + min_percent_step
+            or now - last_log_time >= log_interval_s
+        )
+        if should_log:
+            print(_format_ffmpeg_progress(progress, percent, final=is_final))
+            last_log_time = now
+            last_log_percent = percent
+
+    return process.wait(), list(output_tail)
+
+
+def _ffmpeg_progress_percent(progress: dict[str, str], total_duration_s: float) -> float:
+    if total_duration_s <= 0:
+        return 0.0
+    out_time_s = _ffmpeg_out_time_s(progress)
+    return min(100.0, max(0.0, (out_time_s / total_duration_s) * 100.0))
+
+
+def _ffmpeg_out_time_s(progress: dict[str, str]) -> float:
+    for key in ("out_time_us", "out_time_ms"):
+        value = progress.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value) / 1_000_000.0
+        except ValueError:
+            pass
+    value = progress.get("out_time")
+    if value is None:
+        return 0.0
+    parts = value.split(":")
+    if len(parts) != 3:
+        return 0.0
+    try:
+        hours = float(parts[0])
+        minutes = float(parts[1])
+        seconds = float(parts[2])
+    except ValueError:
+        return 0.0
+    return hours * 3600.0 + minutes * 60.0 + seconds
+
+
+def _format_ffmpeg_progress(progress: dict[str, str], percent: float, *, final: bool) -> str:
+    label = "complete" if final else "progress"
+    frame = progress.get("frame", "?")
+    out_time = progress.get("out_time", "?")
+    return (
+        f"[webcalyzer] ffmpeg overlay {label}: "
+        f"{percent:5.1f}% frame={frame} time={out_time}"
+    )
 
 
 def _resolve_encoder(encoder: str) -> str:
@@ -151,13 +239,20 @@ def _available_encoders() -> frozenset[str]:
 
 def _write_panels_as_pngs(panels: dict[int, "object"], tmp_dir: Path) -> dict[int, Path]:
     paths: dict[int, Path] = {}
-    for reveal_index, panel in panels.items():
+    panel_items = list(panels.items())
+    total = len(panel_items)
+    if total:
+        print(f"[webcalyzer] ffmpeg overlay: writing {total} overlay panel PNGs")
+    log_step = max(1, total // 10) if total else 1
+    for position, (reveal_index, panel) in enumerate(panel_items, start=1):
         path = tmp_dir / f"panel_{reveal_index:04d}.png"
         # cv2 expects BGRA → on disk PNG with alpha. Quality is irrelevant
         # because PNG is lossless; compression level 1 keeps writing fast.
         if not cv2.imwrite(str(path), panel, [cv2.IMWRITE_PNG_COMPRESSION, 1]):
             raise RuntimeError(f"failed to write overlay panel PNG: {path}")
         paths[reveal_index] = path
+        if position == total or position % log_step == 0:
+            print(f"[webcalyzer] ffmpeg overlay panels: {position}/{total}")
     return paths
 
 
@@ -231,7 +326,9 @@ def _build_ffmpeg_command(
         "-hide_banner",
         "-loglevel",
         "error",
-        "-stats",
+        "-nostats",
+        "-progress",
+        "pipe:1",
         *decode_args,
         "-i",
         str(source_path),

@@ -1,6 +1,8 @@
 import numpy as np
+from matplotlib.colors import to_rgb
 
-from webcalyzer.overlay import BACKGROUND, Y_TICK_TARGET, _axis_layout, _draw_rounded_rect, _nice_range, _nice_ticks
+from webcalyzer.overlay import BACKGROUND, STAGE_COLORS_BGRA, Y_TICK_TARGET, _axis_layout, _draw_rounded_rect, _nice_range, _nice_ticks
+from webcalyzer.plotting import SUMMARY_COLORS
 
 
 def test_overlay_ticks_do_not_label_values_outside_axis_range() -> None:
@@ -32,3 +34,12 @@ def test_overlay_three_axis_layout_stays_inside_panel() -> None:
 
     assert axes[2] is not None
     assert max(axis.y + axis.height for axis in axes if axis is not None) < 120
+
+
+def test_overlay_stage_colors_match_pdf_summary_colors() -> None:
+    def bgra_to_rgb01(color: tuple[int, int, int, int]) -> tuple[float, float, float]:
+        blue, green, red, _alpha = color
+        return (red / 255.0, green / 255.0, blue / 255.0)
+
+    assert bgra_to_rgb01(STAGE_COLORS_BGRA["stage1"]) == to_rgb(SUMMARY_COLORS["stage1"])
+    assert bgra_to_rgb01(STAGE_COLORS_BGRA["stage2"]) == to_rgb(SUMMARY_COLORS["stage2"])
