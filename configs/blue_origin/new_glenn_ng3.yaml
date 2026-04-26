@@ -5,7 +5,9 @@ reference_resolution:
   height: 1080
 default_sample_fps: 0.5
 fixture_frame_count: 20
-fixture_time_range_s: [0.0, 840.0]
+fixture_time_range_s:
+- 0.0
+- 840.0
 video_overlay:
   enabled: true
   plot_mode: filtered
@@ -17,20 +19,40 @@ fields:
   stage1_velocity:
     kind: velocity
     stage: stage1
-    bbox_x1y1x2y2: [0.065625, 0.8722222222222222, 0.2359375, 0.9731481481481481]
+    bbox_x1y1x2y2:
+    - 0.12291666666666666
+    - 0.9027777777777778
+    - 0.23333333333333334
+    - 0.9574074074074074
   stage1_altitude:
     kind: altitude
     stage: stage1
-    bbox_x1y1x2y2: [0.24739583333333334, 0.8870370370370371, 0.4046875, 0.9638888888888889]
+    bbox_x1y1x2y2:
+    - 0.28541666666666665
+    - 0.9046296296296297
+    - 0.40208333333333335
+    - 0.9546296296296296
   met:
     kind: met
     stage: null
-    bbox_x1y1x2y2: [0.41458333333333336, 0.8861111111111111, 0.5963541666666666, 0.975]
+    bbox_x1y1x2y2:
+    - 0.41458333333333336
+    - 0.8861111111111111
+    - 0.5963541666666666
+    - 0.975
   stage2_velocity:
     kind: velocity
     stage: stage2
-    bbox_x1y1x2y2: [0.6015625, 0.8851851851851852, 0.75625, 0.9814814814814815]
+    bbox_x1y1x2y2:
+    - 0.6453125
+    - 0.8981481481481481
+    - 0.75625
+    - 0.9648148148148148
   stage2_altitude:
     kind: altitude
     stage: stage2
-    bbox_x1y1x2y2: [0.7682291666666666, 0.8916666666666667, 0.9114583333333334, 0.975925925925926]
+    bbox_x1y1x2y2:
+    - 0.8041666666666667
+    - 0.8962962962962963
+    - 0.909375
+    - 0.9537037037037037

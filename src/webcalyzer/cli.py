@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply Mahalanobis-distance outlier rejection to telemetry_clean.csv.",
     )
     outlier_parser.add_argument("--output", required=True, help="Extraction output directory.")
-    outlier_parser.add_argument("--chi2", type=float, default=13.82, help="Chi^2 threshold (default 13.82 for 99.9%% / 2 DoF).")
+    outlier_parser.add_argument("--chi2", type=float, default=36.0, help="Per-field squared residual threshold.")
     outlier_parser.add_argument("--window-s", type=float, default=40.0, help="Neighbor window in seconds.")
 
     run_parser = subparsers.add_parser("run", help="Run extraction and plotting.")

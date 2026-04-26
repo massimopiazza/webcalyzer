@@ -41,7 +41,6 @@ STAGE_COLORS_BGRA = {
 WHITE = (255, 255, 255, 255)
 BLACK = (0, 0, 0, 255)
 GRID = (255, 255, 255, 70)
-CURSOR = (255, 255, 255, 210)
 
 
 def render_telemetry_overlay_video(
@@ -99,6 +98,8 @@ def render_telemetry_overlay_video(
     rejected_series = (
         _build_series(rejected_df, x_range, velocity_range, altitude_range) if include_rejected and rejected_df is not None else {}
     )
+    reveal_times = _build_reveal_times(retained_series, rejected_series)
+    overlay_cache: dict[int, np.ndarray] = {}
     progress = _build_progress_mapper(clean_df)
 
     temp_path = output_path.with_name(f"{output_path.stem}.noaudio{output_path.suffix}")
@@ -122,20 +123,25 @@ def render_telemetry_overlay_video(
 
             current_time_s = frame_index / metadata.fps if metadata.fps else 0.0
             current_x = progress(current_time_s)
-            overlay = base_overlay.copy()
-            _draw_summary_data(
-                overlay=overlay,
-                current_x=current_x,
-                velocity_axis=velocity_axis,
-                altitude_axis=altitude_axis,
-                retained_series=retained_series,
-                rejected_series=rejected_series,
-                x_range=x_range,
-                velocity_range=velocity_range,
-                altitude_range=altitude_range,
-                font_scale=font_scale,
-                include_rejected=include_rejected,
-            )
+            reveal_index = int(np.searchsorted(reveal_times, current_x, side="right"))
+            overlay = overlay_cache.get(reveal_index)
+            if overlay is None:
+                overlay = base_overlay.copy()
+                threshold_x = reveal_times[reveal_index - 1] if reveal_index > 0 else x_range[0] - 1.0
+                _draw_summary_data(
+                    overlay=overlay,
+                    current_x=threshold_x,
+                    velocity_axis=velocity_axis,
+                    altitude_axis=altitude_axis,
+                    retained_series=retained_series,
+                    rejected_series=rejected_series,
+                    x_range=x_range,
+                    velocity_range=velocity_range,
+                    altitude_range=altitude_range,
+                    font_scale=font_scale,
+                    include_rejected=include_rejected,
+                )
+                overlay_cache[reveal_index] = overlay
             _composite_overlay(frame, overlay)
             writer.write(frame)
             frame_index += 1
@@ -260,6 +266,17 @@ def _build_series(
     return result
 
 
+def _build_reveal_times(
+    retained_series: dict[str, PlotSeries],
+    rejected_series: dict[str, PlotSeries],
+) -> np.ndarray:
+    arrays = [series.x for series in retained_series.values()]
+    arrays.extend(series.x for series in rejected_series.values())
+    if not arrays:
+        return np.array([], dtype=float)
+    return np.unique(np.concatenate(arrays))
+
+
 def _draw_summary_data(
     overlay: np.ndarray,
     current_x: float,
@@ -307,10 +324,6 @@ def _draw_summary_data(
             current_x,
         )
 
-    cursor_x = _map_x(current_x, velocity_axis, x_range)
-    _line(overlay, (cursor_x, velocity_axis.y), (cursor_x, velocity_axis.y + velocity_axis.height), CURSOR, thickness=1)
-    cursor_x = _map_x(current_x, altitude_axis, x_range)
-    _line(overlay, (cursor_x, altitude_axis.y), (cursor_x, altitude_axis.y + altitude_axis.height), CURSOR, thickness=1)
     _draw_legend(overlay, velocity_axis, font_scale, include_rejected)
 
 

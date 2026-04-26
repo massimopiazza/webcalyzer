@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 
+ALTITUDE_SCALE = 0.001
+
 
 SUMMARY_COLORS = {
     "stage1": "#1f77b4",
@@ -62,7 +64,7 @@ def _create_summary_pdf(df: pd.DataFrame, path: Path, rejected_df: pd.DataFrame 
             df,
             "stage1_altitude_m",
             "stage2_altitude_m",
-            ylabel="Altitude [m]",
+            ylabel="Altitude [km]",
             rejected_df=rejected_df,
         )
         axes[1].set_xlabel("Mission Elapsed Time [s]")
@@ -159,6 +161,8 @@ def _plot_line_with_rejected(
     rejected_df: pd.DataFrame | None,
 ) -> None:
     axis.plot(df["mission_elapsed_time_s"], df[column], color=color, label=label, linewidth=1.2)
+    y_values = _plot_values(df[column], column)
+    axis.plot(df["mission_elapsed_time_s"], y_values, color=color, label=label, linewidth=1.2)
     if rejected_df is None or column not in rejected_df.columns:
         return
 
@@ -167,13 +171,19 @@ def _plot_line_with_rejected(
         return
     axis.scatter(
         rejected["mission_elapsed_time_s"],
-        rejected[column],
+        _plot_values(rejected[column], column),
         s=16,
         facecolors="none",
         edgecolors=color,
         linewidths=0.8,
         label=f"{label} rejected",
     )
+
+
+def _plot_values(values: pd.Series, column: str) -> pd.Series:
+    if column.endswith("_altitude_m"):
+        return values * ALTITUDE_SCALE
+    return values
 
 
 def _plot_coverage(axis: plt.Axes, df: pd.DataFrame, velocity_column: str, altitude_column: str, title: str) -> None:

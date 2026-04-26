@@ -84,15 +84,22 @@ STAGE_COLUMNS = {
     "stage2": ("stage2_velocity_mps", "stage2_altitude_m"),
 }
 
+FIELD_COLUMNS = [
+    ("stage1_velocity_mps", "velocity"),
+    ("stage1_altitude_m", "altitude"),
+    ("stage2_velocity_mps", "velocity"),
+    ("stage2_altitude_m", "altitude"),
+]
+
 
 def apply_mahalanobis_outlier_rejection(
     clean_df: pd.DataFrame,
-    chi2_threshold: float = 13.82,
+    chi2_threshold: float = 36.0,
     window_s: float = 40.0,
     min_neighbors: int = 6,
     min_side_neighbors: int = 2,
-    min_variance: tuple[float, float] = (25.0, 2500.0),
-    passes: int = 2,
+    min_variance: tuple[float, float] = (144.0, 22500.0),
+    passes: int = 5,
 ) -> pd.DataFrame:
     cleaned, _rejected = apply_mahalanobis_outlier_rejection_with_rejected(
         clean_df=clean_df,
@@ -108,104 +115,120 @@ def apply_mahalanobis_outlier_rejection(
 
 def apply_mahalanobis_outlier_rejection_with_rejected(
     clean_df: pd.DataFrame,
-    chi2_threshold: float = 13.82,
+    chi2_threshold: float = 36.0,
     window_s: float = 40.0,
     min_neighbors: int = 6,
     min_side_neighbors: int = 2,
-    min_variance: tuple[float, float] = (25.0, 2500.0),
-    passes: int = 2,
+    min_variance: tuple[float, float] = (144.0, 22500.0),
+    passes: int = 5,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Reject outliers using Mahalanobis distance in (velocity, altitude) per stage.
+    """Reject outliers with a per-field Mahalanobis distance on local residuals.
 
-    For each sample we fit a local quadratic to the surrounding window (excluding
-    the sample itself), compute residuals and their covariance, and flag any
-    sample whose squared Mahalanobis distance exceeds the chi^2 threshold
-    (99.9% for 2 DoF defaults to 13.82). The rejection is repeated ``passes``
-    times because removing one outlier can reveal another.
+    OCR failures in velocity and altitude are independent, so each telemetry
+    column is scored separately. For each sample we fit a local quadratic to the
+    same column in the surrounding window, excluding the sample itself. The
+    squared residual divided by robust local variance is the 1-D Mahalanobis
+    distance. Rejection is repeated because removing one bad point can reveal a
+    neighboring one.
     """
     df = clean_df.copy()
     rejected_df = _empty_rejected_frame(clean_df)
     met = df["mission_elapsed_time_s"].to_numpy(dtype=float)
 
+    min_variance_by_kind = {
+        "velocity": float(min_variance[0]),
+        "altitude": float(min_variance[1]),
+    }
+    for column, kind in FIELD_COLUMNS:
+        if column not in df.columns:
+            continue
+        _reject_column_outliers(
+            df=df,
+            rejected_df=rejected_df,
+            met=met,
+            column=column,
+            chi2_threshold=chi2_threshold,
+            window_s=window_s,
+            min_neighbors=min_neighbors,
+            min_side_neighbors=min_side_neighbors,
+            min_variance=min_variance_by_kind[kind],
+            passes=passes,
+        )
+    return df, rejected_df
+
+
+def _reject_column_outliers(
+    df: pd.DataFrame,
+    rejected_df: pd.DataFrame,
+    met: np.ndarray,
+    column: str,
+    chi2_threshold: float,
+    window_s: float,
+    min_neighbors: int,
+    min_side_neighbors: int,
+    min_variance: float,
+    passes: int,
+) -> None:
+    row_positions = np.arange(len(df))
     for _ in range(passes):
-        rejected_any = False
-        for stage, (v_col, h_col) in STAGE_COLUMNS.items():
-            v = df[v_col].to_numpy(dtype=float)
-            h = df[h_col].to_numpy(dtype=float)
-            mask = np.isfinite(v) & np.isfinite(h) & np.isfinite(met)
-            indices = np.where(mask)[0]
-            if indices.size < min_neighbors + 1:
+        values = df[column].to_numpy(dtype=float)
+        mask = np.isfinite(values) & np.isfinite(met)
+        indices = np.where(mask)[0]
+        if indices.size < min_neighbors + 1:
+            return
+
+        flagged: list[int] = []
+        for idx in indices:
+            t0 = met[idx]
+            neighbor_mask = mask & (np.abs(met - t0) <= window_s) & (row_positions != idx)
+            neighbor_idx = np.where(neighbor_mask)[0]
+            if neighbor_idx.size < min_neighbors:
+                continue
+            left = int(np.sum(met[neighbor_idx] < t0))
+            right = int(np.sum(met[neighbor_idx] > t0))
+            if left < min_side_neighbors or right < min_side_neighbors:
                 continue
 
-            flagged: list[int] = []
-            for idx in indices:
-                t0 = met[idx]
-                neighbor_mask = (
-                    mask
-                    & (np.abs(met - t0) <= window_s)
-                    & (np.arange(len(met)) != idx)
-                )
-                neighbor_idx = np.where(neighbor_mask)[0]
-                if neighbor_idx.size < min_neighbors:
-                    continue
-                left = int(np.sum(met[neighbor_idx] < t0))
-                right = int(np.sum(met[neighbor_idx] > t0))
-                if left < min_side_neighbors or right < min_side_neighbors:
-                    continue
-                t_neighbors = met[neighbor_idx]
-                v_neighbors = v[neighbor_idx]
-                h_neighbors = h[neighbor_idx]
+            t_neighbors = met[neighbor_idx]
+            y_neighbors = values[neighbor_idx]
+            try:
+                degree = 2 if neighbor_idx.size >= 5 else 1
+                coefficients = np.polyfit(t_neighbors, y_neighbors, degree)
+            except (np.linalg.LinAlgError, ValueError):
+                continue
 
-                try:
-                    degree = 2 if neighbor_idx.size >= 5 else 1
-                    v_coef = np.polyfit(t_neighbors, v_neighbors, degree)
-                    h_coef = np.polyfit(t_neighbors, h_neighbors, degree)
-                except (np.linalg.LinAlgError, ValueError):
-                    continue
+            predicted_neighbors = np.polyval(coefficients, t_neighbors)
+            residuals = y_neighbors - predicted_neighbors
+            variance = _robust_residual_variance(residuals, min_variance=min_variance)
+            predicted_sample = float(np.polyval(coefficients, t0))
+            delta = values[idx] - predicted_sample
+            md2 = float((delta * delta) / variance)
+            if md2 > chi2_threshold:
+                flagged.append(idx)
 
-                v_pred = np.polyval(v_coef, t_neighbors)
-                h_pred = np.polyval(h_coef, t_neighbors)
-                v_res = v_neighbors - v_pred
-                h_res = h_neighbors - h_pred
+        if not flagged:
+            return
 
-                cov = np.cov(np.stack([v_res, h_res]))
-                if cov.shape == ():
-                    continue
-                var_v = max(float(cov[0, 0]), min_variance[0])
-                var_h = max(float(cov[1, 1]), min_variance[1])
-                cov_vh = float(cov[0, 1])
-                # Clip correlation to avoid singular matrices from near-linear residuals.
-                max_cov = 0.9 * np.sqrt(var_v * var_h)
-                cov_vh = float(np.clip(cov_vh, -max_cov, max_cov))
-                cov_matrix = np.array([[var_v, cov_vh], [cov_vh, var_h]])
+        for idx in flagged:
+            row_label = df.index[idx]
+            rejected_df.at[row_label, "frame_index"] = df.at[row_label, "frame_index"]
+            rejected_df.at[row_label, "sample_time_s"] = df.at[row_label, "sample_time_s"]
+            rejected_df.at[row_label, "mission_elapsed_time_s"] = df.at[row_label, "mission_elapsed_time_s"]
+            rejected_df.at[row_label, column] = df.at[row_label, column]
+            df.at[row_label, column] = np.nan
 
-                try:
-                    inv_cov = np.linalg.inv(cov_matrix)
-                except np.linalg.LinAlgError:
-                    continue
 
-                v_sample_pred = float(np.polyval(v_coef, t0))
-                h_sample_pred = float(np.polyval(h_coef, t0))
-                delta = np.array([v[idx] - v_sample_pred, h[idx] - h_sample_pred])
-                md2 = float(delta @ inv_cov @ delta)
-                if md2 > chi2_threshold:
-                    flagged.append(idx)
-
-            if flagged:
-                rejected_any = True
-                for idx in flagged:
-                    row_label = df.index[idx]
-                    rejected_df.at[row_label, "frame_index"] = df.at[row_label, "frame_index"]
-                    rejected_df.at[row_label, "sample_time_s"] = df.at[row_label, "sample_time_s"]
-                    rejected_df.at[row_label, "mission_elapsed_time_s"] = df.at[row_label, "mission_elapsed_time_s"]
-                    rejected_df.at[row_label, v_col] = df.at[row_label, v_col]
-                    rejected_df.at[row_label, h_col] = df.at[row_label, h_col]
-                    df.at[row_label, v_col] = np.nan
-                    df.at[row_label, h_col] = np.nan
-
-        if not rejected_any:
-            break
-    return df, rejected_df
+def _robust_residual_variance(residuals: np.ndarray, min_variance: float) -> float:
+    residuals = residuals[np.isfinite(residuals)]
+    if residuals.size == 0:
+        return min_variance
+    median = float(np.median(residuals))
+    mad = float(np.median(np.abs(residuals - median)))
+    robust_sigma = 1.4826 * mad
+    if not np.isfinite(robust_sigma) or robust_sigma <= 0.0:
+        robust_sigma = float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0
+    variance = robust_sigma * robust_sigma
+    return max(float(variance), float(min_variance))
 
 
 def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
@@ -224,11 +247,15 @@ def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_outlier_rejection_in_output_dir(
     output_dir: str | Path,
-    chi2_threshold: float = 13.82,
+    chi2_threshold: float = 36.0,
     window_s: float = 40.0,
 ) -> pd.DataFrame:
     output_path = Path(output_dir)
-    clean_df = pd.read_csv(output_path / "telemetry_clean.csv")
+    raw_path = output_path / "telemetry_raw.csv"
+    if raw_path.exists():
+        clean_df = rebuild_clean_from_raw(pd.read_csv(raw_path))
+    else:
+        clean_df = pd.read_csv(output_path / "telemetry_clean.csv")
     cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
         clean_df, chi2_threshold=chi2_threshold, window_s=window_s
     )
