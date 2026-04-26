@@ -67,6 +67,8 @@ On macOS the install will additionally pull in `pyobjc-framework-Vision` and
 and Windows those are skipped automatically and the project falls back to
 the cross-platform RapidOCR backend.
 
+<img width="1282" height="720" alt="telemetry_overlay" src="https://github.com/user-attachments/assets/0ad97552-0df2-4f57-b5dd-56e935cb6211" />
+
 ## Argument reference
 
 ### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)
