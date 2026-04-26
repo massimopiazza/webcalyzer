@@ -403,6 +403,12 @@ trajectory:
     longitude_deg: null
     azimuth_deg: null
 
+hardcoded_raw_data_points:       # optional synthetic raw points keyed by MET
+  - mission_elapsed_time_s: 560.0
+    stage1:
+      velocity_mps: 0.0
+      altitude_m: 0.0
+
 fields:
   stage1_velocity:              # one entry per field
     kind: velocity              # one of: velocity, altitude, met
@@ -413,6 +419,12 @@ fields:
   stage2_velocity:   { … }
   stage2_altitude:   { … }
 ```
+
+`hardcoded_raw_data_points` are merged into `telemetry_raw.csv` before clean
+telemetry is built. A point with a new `mission_elapsed_time_s` inserts a
+synthetic row; a point whose timestamp already exists replaces the configured
+field values in that row. Supported stage keys are `stage1` and `stage2`, each
+with optional `velocity_mps` and `altitude_m`.
 
 The video overlay panel sits in the top-left corner with a symmetric pixel
 margin (`max(8, height * 0.012)`) on both the top and left, so the plot is

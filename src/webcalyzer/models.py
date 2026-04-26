@@ -124,6 +124,41 @@ class TrajectoryConfig:
 
 
 @dataclass(slots=True)
+class HardcodedRawDataPoint:
+    mission_elapsed_time_s: float
+    stage1_velocity_mps: float | None = None
+    stage1_altitude_m: float | None = None
+    stage2_velocity_mps: float | None = None
+    stage2_altitude_m: float | None = None
+
+    def field_values(self) -> dict[str, float]:
+        return {
+            field_name: value
+            for field_name, value in {
+                "stage1_velocity": self.stage1_velocity_mps,
+                "stage1_altitude": self.stage1_altitude_m,
+                "stage2_velocity": self.stage2_velocity_mps,
+                "stage2_altitude": self.stage2_altitude_m,
+            }.items()
+            if value is not None
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"mission_elapsed_time_s": self.mission_elapsed_time_s}
+        for stage in ("stage1", "stage2"):
+            stage_data: dict[str, float] = {}
+            velocity = getattr(self, f"{stage}_velocity_mps")
+            altitude = getattr(self, f"{stage}_altitude_m")
+            if velocity is not None:
+                stage_data["velocity_mps"] = velocity
+            if altitude is not None:
+                stage_data["altitude_m"] = altitude
+            if stage_data:
+                data[stage] = stage_data
+        return data
+
+
+@dataclass(slots=True)
 class ProfileConfig:
     profile_name: str
     description: str
@@ -134,13 +169,14 @@ class ProfileConfig:
     fixture_time_range_s: tuple[float, float] | None
     video_overlay: VideoOverlayConfig = field(default_factory=VideoOverlayConfig)
     trajectory: TrajectoryConfig = field(default_factory=TrajectoryConfig)
+    hardcoded_raw_data_points: list[HardcodedRawDataPoint] = field(default_factory=list)
     fields: dict[str, FieldConfig] = field(default_factory=dict)
 
     def ordered_field_names(self) -> list[str]:
         return list(self.fields.keys())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "profile_name": self.profile_name,
             "description": self.description,
             "reference_resolution": {
@@ -152,8 +188,13 @@ class ProfileConfig:
             "fixture_time_range_s": list(self.fixture_time_range_s) if self.fixture_time_range_s is not None else None,
             "video_overlay": self.video_overlay.to_dict(),
             "trajectory": self.trajectory.to_dict(),
-            "fields": {name: field_cfg.to_dict() for name, field_cfg in self.fields.items()},
         }
+        if self.hardcoded_raw_data_points:
+            data["hardcoded_raw_data_points"] = [
+                point.to_dict() for point in self.hardcoded_raw_data_points
+            ]
+        data["fields"] = {name: field_cfg.to_dict() for name, field_cfg in self.fields.items()}
+        return data
 
 
 @dataclass(slots=True)

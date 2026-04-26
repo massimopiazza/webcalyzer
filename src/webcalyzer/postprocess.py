@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
 
+from webcalyzer.config import load_profile
 from webcalyzer.extract import _field_specific_option_is_valid, _stage2_measurement_is_active
+from webcalyzer.models import HardcodedRawDataPoint, ProfileConfig
+from webcalyzer.raw_points import apply_hardcoded_raw_data_points
 from webcalyzer.sanitize import choose_best_measurement, parse_measurement_options
 
 
-def rebuild_clean_from_raw(raw_df: pd.DataFrame) -> pd.DataFrame:
+def rebuild_clean_from_raw(
+    raw_df: pd.DataFrame,
+    hardcoded_raw_data_points: Iterable[HardcodedRawDataPoint] | None = None,
+) -> pd.DataFrame:
+    raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_raw_data_points)
     state = {
         "stage1_velocity": {"prev_val": None, "prev_met": None},
         "stage1_altitude": {"prev_val": None, "prev_met": None},
@@ -22,12 +30,22 @@ def rebuild_clean_from_raw(raw_df: pd.DataFrame) -> pd.DataFrame:
     for _, row in raw_df.iterrows():
         mission_elapsed_time_s = row["mission_elapsed_time_s"]
         parsed: dict[str, float | None] = {}
+        hardcoded_fields: set[str] = set()
         for field_name, kind in [
             ("stage1_velocity", "velocity"),
             ("stage1_altitude", "altitude"),
             ("stage2_velocity", "velocity"),
             ("stage2_altitude", "altitude"),
         ]:
+            hardcoded_value = _hardcoded_si_value(row, field_name)
+            if hardcoded_value is not None:
+                hardcoded_fields.add(field_name)
+                parsed[field_name] = hardcoded_value
+                if not pd.isna(mission_elapsed_time_s):
+                    state[field_name]["prev_val"] = hardcoded_value
+                    state[field_name]["prev_met"] = mission_elapsed_time_s
+                continue
+
             raw_text = row.get(f"{field_name}_raw_text")
             if pd.isna(raw_text):
                 parsed[field_name] = None
@@ -50,9 +68,10 @@ def rebuild_clean_from_raw(raw_df: pd.DataFrame) -> pd.DataFrame:
         stage2_velocity = parsed["stage2_velocity"]
         stage2_altitude = parsed["stage2_altitude"]
         if stage2_velocity is not None or stage2_altitude is not None:
+            stage2_is_hardcoded = bool({"stage2_velocity", "stage2_altitude"} & hardcoded_fields)
             if _stage2_measurement_is_active(stage2_velocity, stage2_altitude):
                 stage2_activated = True
-            elif not stage2_activated:
+            elif not stage2_activated and not stage2_is_hardcoded:
                 stage2_velocity = None
                 stage2_altitude = None
 
@@ -70,9 +89,9 @@ def rebuild_clean_from_raw(raw_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def rebuild_clean_in_output_dir(output_dir: str | Path) -> pd.DataFrame:
+def rebuild_clean_in_output_dir(output_dir: str | Path, profile: ProfileConfig | None = None) -> pd.DataFrame:
     output_path = Path(output_dir)
-    raw_df = pd.read_csv(output_path / "telemetry_raw.csv")
+    raw_df = _read_raw_with_hardcoded_points(output_path, profile=profile, persist=True)
     clean_df = rebuild_clean_from_raw(raw_df)
     clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
     _empty_rejected_frame(clean_df).dropna(how="all").to_csv(output_path / "telemetry_rejected.csv", index=False)
@@ -249,11 +268,12 @@ def apply_outlier_rejection_in_output_dir(
     output_dir: str | Path,
     chi2_threshold: float = 36.0,
     window_s: float = 40.0,
+    profile: ProfileConfig | None = None,
 ) -> pd.DataFrame:
     output_path = Path(output_dir)
     raw_path = output_path / "telemetry_raw.csv"
     if raw_path.exists():
-        clean_df = rebuild_clean_from_raw(pd.read_csv(raw_path))
+        clean_df = rebuild_clean_from_raw(_read_raw_with_hardcoded_points(output_path, profile=profile, persist=True))
     else:
         clean_df = pd.read_csv(output_path / "telemetry_clean.csv")
     cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
@@ -265,3 +285,36 @@ def apply_outlier_rejection_in_output_dir(
         index=False,
     )
     return cleaned
+
+
+def _hardcoded_si_value(row: pd.Series, field_name: str) -> float | None:
+    status = row.get(f"{field_name}_parse_status")
+    if pd.isna(status) or status != "hardcoded":
+        return None
+    value = row.get(f"{field_name}_si_value")
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _read_raw_with_hardcoded_points(
+    output_path: Path,
+    profile: ProfileConfig | None,
+    persist: bool,
+) -> pd.DataFrame:
+    raw_path = output_path / "telemetry_raw.csv"
+    raw_df = pd.read_csv(raw_path)
+    profile = profile or _profile_from_output(output_path)
+    hardcoded_points = profile.hardcoded_raw_data_points if profile else []
+    if hardcoded_points:
+        raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_points)
+        if persist:
+            raw_df.to_csv(raw_path, index=False)
+    return raw_df
+
+
+def _profile_from_output(output_path: Path) -> ProfileConfig | None:
+    profile_path = output_path / "config_resolved.yaml"
+    if not profile_path.exists():
+        return None
+    return load_profile(profile_path)

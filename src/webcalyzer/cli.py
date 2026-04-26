@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> None:
             profile=profile,
             backend_options=_ocr_backend_options(args),
         )
-        clean_df = rebuild_clean_in_output_dir(args.output)
+        clean_df = rebuild_clean_in_output_dir(args.output, profile=profile)
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
         create_plots(clean_df, args.output, trajectory_df=trajectory_df)
         return

@@ -21,11 +21,19 @@ def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> 
         profile.trajectory.launch_site.latitude_deg,
         float,
     )
+    assert len(profile.hardcoded_raw_data_points) == 1
+    hardcoded_point = profile.hardcoded_raw_data_points[0]
+    assert hardcoded_point.mission_elapsed_time_s == 560.0
+    assert hardcoded_point.stage1_velocity_mps == 0.0
+    assert hardcoded_point.stage1_altitude_m == 0.0
+    assert hardcoded_point.stage2_velocity_mps is None
 
     saved_path = save_profile(profile, tmp_path / "profile.yaml")
     saved_text = saved_path.read_text()
-    assert "fixture_time_range_s" in saved_text
+    assert "fixture_time_range_s: [0.0, 840.0]" in saved_text
     assert "fixture_reference_times_s" not in saved_text
+    assert "hardcoded_raw_data_points:" in saved_text
+    assert "mission_elapsed_time_s: 560.0" in saved_text
     assert "bbox_x1y1x2y2" in saved_text
     assert "bbox_x1y1x2y2: [" in saved_text
     assert "trajectory:" in saved_text

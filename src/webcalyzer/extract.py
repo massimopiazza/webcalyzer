@@ -13,6 +13,7 @@ from webcalyzer.config import save_profile
 from webcalyzer.models import Box, ExtractionRow, OCRObservation, ProfileConfig
 from webcalyzer.ocr import OCRBackend, OCRDetection
 from webcalyzer.ocr_factory import OCRBackendOptions, make_backend, resolve_backend_name
+from webcalyzer.raw_points import apply_hardcoded_raw_data_points
 from webcalyzer.sanitize import MeasurementOption, choose_best_measurement, parse_measurement_options, parse_met_candidates
 from webcalyzer.video import build_sample_indices, crop_box, get_video_metadata, iterate_frames
 
@@ -97,7 +98,13 @@ def extract_telemetry(
     )
 
     raw_df = pd.DataFrame(raw_rows)
-    clean_df = pd.DataFrame(clean_rows)
+    if profile.hardcoded_raw_data_points:
+        from webcalyzer.postprocess import rebuild_clean_from_raw
+
+        raw_df = apply_hardcoded_raw_data_points(raw_df, profile.hardcoded_raw_data_points)
+        clean_df = rebuild_clean_from_raw(raw_df)
+    else:
+        clean_df = pd.DataFrame(clean_rows)
     raw_df.to_csv(output_path / "telemetry_raw.csv", index=False)
     clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
     pd.DataFrame(columns=clean_df.columns).to_csv(output_path / "telemetry_rejected.csv", index=False)

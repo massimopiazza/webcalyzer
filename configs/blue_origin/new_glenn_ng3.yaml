@@ -5,9 +5,7 @@ reference_resolution:
   height: 1080
 default_sample_fps: 0.5
 fixture_frame_count: 20
-fixture_time_range_s:
-- 0.0
-- 840.0
+fixture_time_range_s: [0.0, 840.0]
 video_overlay:
   enabled: true
   plot_mode: filtered
@@ -29,6 +27,11 @@ trajectory:
     latitude_deg: 28.47056
     longitude_deg: -80.54
     azimuth_deg: 107.4
+hardcoded_raw_data_points:
+  - mission_elapsed_time_s: 560.0
+    stage1:
+      velocity_mps: 0.0
+      altitude_m: 0.0
 fields:
   stage1_velocity:
     kind: velocity

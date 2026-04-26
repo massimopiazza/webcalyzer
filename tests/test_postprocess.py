@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from webcalyzer.postprocess import apply_mahalanobis_outlier_rejection_with_rejected, apply_outlier_rejection_in_output_dir
+from webcalyzer.models import HardcodedRawDataPoint
+from webcalyzer.postprocess import (
+    apply_mahalanobis_outlier_rejection_with_rejected,
+    apply_outlier_rejection_in_output_dir,
+    rebuild_clean_from_raw,
+)
 
 
 def test_outlier_rejection_scores_velocity_and_altitude_independently() -> None:
@@ -70,3 +75,93 @@ def test_output_dir_outlier_rejection_is_repeatable_from_raw(tmp_path) -> None:
 
     assert first_rejected["stage1_velocity_mps"].notna().sum() == 1
     assert second_rejected["stage1_velocity_mps"].notna().sum() == 1
+
+
+def test_rebuild_clean_inserts_hardcoded_raw_data_point() -> None:
+    raw_df = pd.DataFrame(
+        [
+            {
+                "frame_index": 0,
+                "sample_time_s": 558.0,
+                "mission_elapsed_time_s": 558.0,
+                "stage1_velocity_raw_text": "001,000 MPH",
+                "stage1_altitude_raw_text": "010,000 FT",
+            },
+            {
+                "frame_index": 1,
+                "sample_time_s": 562.0,
+                "mission_elapsed_time_s": 562.0,
+                "stage1_velocity_raw_text": "000,900 MPH",
+                "stage1_altitude_raw_text": "009,000 FT",
+            },
+        ]
+    )
+
+    clean_df = rebuild_clean_from_raw(
+        raw_df,
+        [
+            HardcodedRawDataPoint(
+                mission_elapsed_time_s=560.0,
+                stage1_velocity_mps=0.0,
+                stage1_altitude_m=0.0,
+            )
+        ],
+    )
+
+    inserted = clean_df[clean_df["mission_elapsed_time_s"] == 560.0].iloc[0]
+    assert clean_df["mission_elapsed_time_s"].tolist() == [558.0, 560.0, 562.0]
+    assert inserted["stage1_velocity_mps"] == 0.0
+    assert inserted["stage1_altitude_m"] == 0.0
+
+
+def test_rebuild_clean_replaces_overlapping_hardcoded_raw_data_point() -> None:
+    raw_df = pd.DataFrame(
+        [
+            {
+                "frame_index": 0,
+                "sample_time_s": 560.0,
+                "mission_elapsed_time_s": 560.0,
+                "stage1_velocity_raw_text": "001,000 MPH",
+                "stage1_altitude_raw_text": "010,000 FT",
+            }
+        ]
+    )
+
+    clean_df = rebuild_clean_from_raw(
+        raw_df,
+        [
+            HardcodedRawDataPoint(
+                mission_elapsed_time_s=560.0,
+                stage1_velocity_mps=0.0,
+                stage1_altitude_m=0.0,
+            )
+        ],
+    )
+
+    assert len(clean_df) == 1
+    assert clean_df.loc[0, "stage1_velocity_mps"] == 0.0
+    assert clean_df.loc[0, "stage1_altitude_m"] == 0.0
+
+
+def test_hardcoded_stage2_zero_is_not_suppressed_before_activation() -> None:
+    clean_df = rebuild_clean_from_raw(
+        pd.DataFrame(
+            [
+                {
+                    "frame_index": 0,
+                    "sample_time_s": 10.0,
+                    "mission_elapsed_time_s": 10.0,
+                }
+            ]
+        ),
+        [
+            HardcodedRawDataPoint(
+                mission_elapsed_time_s=10.0,
+                stage2_velocity_mps=0.0,
+                stage2_altitude_m=0.0,
+            )
+        ],
+    )
+
+    assert clean_df.loc[0, "stage2_velocity_mps"] == 0.0
+    assert clean_df.loc[0, "stage2_altitude_m"] == 0.0

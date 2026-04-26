@@ -8,6 +8,7 @@ import yaml
 from webcalyzer.models import (
     Box,
     FieldConfig,
+    HardcodedRawDataPoint,
     LaunchSiteConfig,
     ProfileConfig,
     TrajectoryConfig,
@@ -53,6 +54,7 @@ def load_profile(path: str | Path) -> ProfileConfig:
         fixture_time_range_s=_load_fixture_time_range(data),
         video_overlay=_load_video_overlay(data.get("video_overlay", {})),
         trajectory=_load_trajectory(data.get("trajectory", {})),
+        hardcoded_raw_data_points=_load_hardcoded_raw_data_points(data),
         fields=fields,
     )
 
@@ -66,6 +68,9 @@ def save_profile(profile: ProfileConfig, path: str | Path) -> Path:
 
 def _profile_to_yaml_dict(profile: ProfileConfig) -> dict[str, Any]:
     data = profile.to_dict()
+    fixture_time_range = data.get("fixture_time_range_s")
+    if isinstance(fixture_time_range, list):
+        data["fixture_time_range_s"] = _FlowList(fixture_time_range)
     for field_data in data.get("fields", {}).values():
         bbox = field_data.get("bbox_x1y1x2y2")
         if isinstance(bbox, list):
@@ -94,6 +99,48 @@ def _load_fixture_time_range(data: dict[str, Any]) -> tuple[float, float] | None
     if reference_times:
         return (min(reference_times), max(reference_times))
     return None
+
+
+def _load_hardcoded_raw_data_points(data: dict[str, Any]) -> list[HardcodedRawDataPoint]:
+    raw_points = data.get("hardcoded_raw_data_points", data.get("hardcoded_raw_points", [])) or []
+    if not isinstance(raw_points, list):
+        raise ValueError("hardcoded_raw_data_points must be a list")
+    return [_load_hardcoded_raw_data_point(point_data) for point_data in raw_points]
+
+
+def _load_hardcoded_raw_data_point(point_data: dict[str, Any]) -> HardcodedRawDataPoint:
+    if not isinstance(point_data, dict):
+        raise ValueError("Each hardcoded raw data point must be a mapping")
+
+    mission_elapsed_time_s = point_data.get(
+        "mission_elapsed_time_s",
+        point_data.get("met_s", point_data.get("timestamp_s")),
+    )
+    if mission_elapsed_time_s is None:
+        raise ValueError("Each hardcoded raw data point must define mission_elapsed_time_s")
+
+    values: dict[str, float | None] = {}
+    for stage in ("stage1", "stage2"):
+        stage_data = point_data.get(stage, {}) or {}
+        if not isinstance(stage_data, dict):
+            raise ValueError(f"{stage} hardcoded raw data must be a mapping")
+        values[f"{stage}_velocity_mps"] = _optional_float(
+            point_data.get(f"{stage}_velocity_mps", stage_data.get("velocity_mps", stage_data.get("velocity")))
+        )
+        values[f"{stage}_altitude_m"] = _optional_float(
+            point_data.get(f"{stage}_altitude_m", stage_data.get("altitude_m", stage_data.get("altitude")))
+        )
+
+    if all(value is None for value in values.values()):
+        raise ValueError("Each hardcoded raw data point must define at least one telemetry value")
+
+    return HardcodedRawDataPoint(
+        mission_elapsed_time_s=float(mission_elapsed_time_s),
+        stage1_velocity_mps=values["stage1_velocity_mps"],
+        stage1_altitude_m=values["stage1_altitude_m"],
+        stage2_velocity_mps=values["stage2_velocity_mps"],
+        stage2_altitude_m=values["stage2_altitude_m"],
+    )
 
 
 def _load_video_overlay(data: dict[str, Any] | None) -> VideoOverlayConfig:
