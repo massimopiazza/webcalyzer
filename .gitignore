@@ -209,3 +209,6 @@ __marimo__/
 # Outputs folder - keep folder but ignore all contents except .gitkeep
 outputs/*
 !outputs/.gitkeep
+
+# Video files
+*.mp4
