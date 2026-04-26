@@ -5,8 +5,8 @@ time) from a launch webcast video by OCR'ing the on-screen overlay frame by
 frame, sanitizing the text, and producing CSVs, plots, and a video copy with
 a synchronized telemetry plot.
 
-The repository is tuned for Blue Origin New Glenn-style overlays and was
-validated against `BlueOrigin_NG-3.mp4`, but the calibration profile is
+The repository was originally tuned for Blue Origin New Glenn-style overlays and was
+validated against it, but the calibration profile is
 generic: any printed-digit telemetry overlay with stable bounding boxes can
 be supported by writing a new YAML profile.
 
@@ -67,12 +67,84 @@ On macOS the install will additionally pull in `pyobjc-framework-Vision` and
 and Windows those are skipped automatically and the project falls back to
 the cross-platform RapidOCR backend.
 
+## Argument reference
+
+### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)
+
+| Flag | Type | Required | Default | Options | Notes |
+|------|------|----------|---------|---------|-------|
+| `--video` | path | yes | — | any video file readable by OpenCV/AVFoundation | The source video. |
+| `--config` | path | yes (`extract`/`run`); optional (`rescue`) | — | path to a YAML profile | Loaded via `webcalyzer.config.load_profile`. |
+| `--output` | path | yes | — | any directory path | Created if missing; CSVs and metadata are written here. |
+| `--ocr-backend` | choice | no | `auto` | `auto`, `rapidocr`, `vision` | `auto` selects Vision on macOS when pyobjc-Vision is importable, RapidOCR otherwise. Forcing `vision` on a non-macOS host raises a clear error. |
+| `--ocr-recognition-level` | choice | no | `accurate` | `accurate`, `fast` | Vision-only. Ignored when the resolved backend is RapidOCR. |
+| `--ocr-workers` | int or `auto` | no (`extract`/`run` only) | `auto` | positive integer or `auto` | `auto` resolves to `max(1, physical_cores - 1)` for RapidOCR and `1` for Vision. |
+| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | off | — | Opt-in. Bypasses detection and runs recognition only on each calibrated field crop. |
+
+### Subcommand-specific arguments
+
+| Subcommand | Flag | Type | Required | Default | Options | Notes |
+|------------|------|------|----------|---------|---------|-------|
+| `sample-frames` | `--video` | path | yes | — | — | |
+|                 | `--config` | path | yes | — | — | |
+|                 | `--output` | path | yes | — | — | Directory for review JPEGs and `contact_sheet.jpg`. |
+|                 | `--count` | int | no | profile's `fixture_frame_count` | any positive int | Override the per-profile count for this run only. |
+| `calibrate` | `--video` | path | yes | — | — | |
+|             | `--config` | path | yes | — | — | Loaded as the starting point; saved into `--output`. |
+|             | `--output` | path | yes | — | — | Destination YAML for the edited profile. |
+| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (0.5 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
+| `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
+|       | `--skip-video-overlay` | flag | no | overlay enabled | — | Skip the post-extract overlay render. |
+|       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
+|       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
+|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_…` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
+| `plot` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
+| `rebuild-clean` | `--output` | path | yes | — | — | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
+| `rescue` | `--video` | path | yes | — | — | |
+|          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | — | Optional override of the profile saved alongside the run. |
+|          | `--output` | path | yes | — | — | |
+| `reject-outliers` | `--output` | path | yes | — | — | |
+|                   | `--chi2` | float | no | `36.0` | any positive float | Per-field squared residual threshold (1-D Mahalanobis). |
+|                   | `--window-s` | float | no | `40.0` | any positive float | Neighbor window in seconds for the local residual fit. |
+| `reconstruct-trajectory` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
+|                          | `--config` | path | no | `<output>/config_resolved.yaml` | — | Optional YAML profile override. |
+|                          | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | |
+|                          | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | `simpson` is accepted as an alias for `rk4`. |
+|                          | `--trajectory-step-s` | float | no | profile's `trajectory.integration_step_s` | any positive float | Fixed integration step in seconds. |
+| `render-overlay` | `--video` | path | yes | — | — | |
+|                  | `--output` | path | yes | — | — | |
+|                  | `--config` | path | no | — | — | Optional YAML profile with `video_overlay` settings. |
+|                  | `--plot-mode` | choice | no | profile's `video_overlay.plot_mode` (`filtered`) | `filtered`, `with_rejected` | |
+|                  | `--width-fraction` | float | no | profile's `video_overlay.width_fraction` | 0.05–1.0 | Overlay panel width as a fraction of the source frame width. |
+|                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05–1.0 | Overlay panel height as a fraction of the source frame height. |
+|                  | `--output-filename` | string | no | profile's `video_overlay.output_filename` (`telemetry_overlay.mp4`) | any filename | Output video filename inside `--output`. |
+|                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | — | Skip the audio re-mux step. |
+|                  | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | Same semantics as `run --overlay-engine`. |
+|                  | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` | Ignored when the resolved engine is `opencv`. |
+
+## Tips
+
+- Heaviest-load configurations first: run `webcalyzer run` once, eyeball
+  the plots, then iterate on the YAML profile and use the lighter
+  subcommands (`rebuild-clean`, `reject-outliers`, `render-overlay`) to
+  avoid re-OCR'ing the entire video.
+- For quick experiments, drop `--sample-fps` to e.g. `0.1` so each
+  iteration takes a fraction of the time. Production runs at the
+  profile's default usually look right at `0.5`.
+- On Apple Silicon, leaving `--ocr-backend auto` is the right default;
+  override with `--ocr-backend rapidocr` when you want platform-parity
+  output for a regression diff against a Linux/Windows run.
+
+---
+---
+
+# Architecture
 ## Overlay rendering architecture
 
 The synchronized telemetry overlay video sits behind the same kind of
 backend selector as the OCR pipeline. Two engines ship in-tree:
 
-- **`ffmpeg`** — single-shot pipeline. Pre-renders the unique overlay
+- **`ffmpeg`**: single-shot pipeline. Pre-renders the unique overlay
   panels to PNGs in a temp dir, hands them to a single `ffmpeg`
   invocation via the `concat` demuxer, and lets ffmpeg do the alpha
   compositing (in its SIMD-optimized `overlay` filter) and the encode
@@ -80,7 +152,7 @@ backend selector as the OCR pipeline. Two engines ship in-tree:
   (`h264_videotoolbox` / `h264_nvenc` / `h264_qsv` / `h264_vaapi`,
   with `libx264` as the cross-platform fallback). This is the default
   when ffmpeg is on `PATH`.
-- **`opencv`** — the in-process Python loop using `cv2.VideoCapture`
+- **`opencv`**: the in-process Python loop using `cv2.VideoCapture`
   and `cv2.VideoWriter`. Numpy alpha-blends each frame, writes via the
   AVFoundation/FFmpeg `cv2` backend on the platform. Used as the
   fallback when `ffmpeg` isn't installed.
@@ -105,9 +177,9 @@ OCR is split behind a small backend interface (`OCRBackend`) so the rest of
 the pipeline doesn't care which engine is producing the text. Two backends
 ship in-tree:
 
-- **`rapidocr`** — ONNXRuntime-backed RapidOCR running on CPU. Available
+- **`rapidocr`**: ONNXRuntime-backed RapidOCR running on CPU. Available
   on every platform. The default everywhere except macOS.
-- **`vision`** — Apple Vision (`VNRecognizeTextRequest`). Runs on the ANE
+- **`vision`**: Apple Vision (`VNRecognizeTextRequest`). Runs on the ANE
   and GPU on Apple Silicon. The default on macOS when the pyobjc bindings
   are installed.
 
@@ -116,12 +188,12 @@ ship in-tree:
 
 The OCR step itself is split into two phases:
 
-- **Phase A — stateless.** For each sampled frame, run the strip OCR and
+- **Phase A (stateless)** For each sampled frame, run the strip OCR and
   any per-field fallback. Phase A is *parallelizable*: with
   `--ocr-workers N>1` the sample list is chunked across `N` worker
   processes (each opens its own video capture) and Phase A runs in
   parallel.
-- **Phase B — sequential.** Walk the per-frame OCR results in frame
+- **Phase B (sequential)** Walk the per-frame OCR results in frame
   order and apply the order-dependent logic: MET tracking with rolling
   offset filter, stage activation, plausibility scoring against the
   previous parsed value, and `choose_best_measurement`.
@@ -143,7 +215,7 @@ The single CLI entry point `webcalyzer` exposes every stage as a
 subcommand. All sub-options shown below also have short help text via
 `webcalyzer <subcommand> --help`.
 
-### `sample-frames` — produce review JPEGs
+### `sample-frames`: produce review JPEGs
 
 Generates `fixture_frame_count` representative frames inside
 `fixture_time_range_s` plus a contact sheet, used as input to
@@ -156,7 +228,7 @@ webcalyzer sample-frames \
   --output outputs/ng3/review
 ```
 
-### `calibrate` — interactive bounding-box editor
+### `calibrate`: interactive bounding-box editor
 
 Opens an OpenCV window with the representative frames. Mouse-drag to
 draw a box, press a number key to switch field, `n`/`p` to flip pages,
@@ -178,7 +250,7 @@ webcalyzer calibrate \
 | `q` | Quit |
 | Mouse drag | Draw a new bounding box for the selected field |
 
-### `extract` — OCR + sanitize, no plots/overlay
+### `extract`:  OCR + sanitize, no plots/overlay
 
 Reads the video and produces just the CSVs and metadata. Use this when
 iterating on OCR settings without wanting to re-render the overlay
@@ -193,7 +265,7 @@ webcalyzer extract \
   --ocr-workers auto
 ```
 
-### `run` — extract + plot + render overlay
+### `run`: extract + plot + render overlay
 
 The convenience subcommand. Equivalent to running `sample-frames`,
 `extract`, `plot`, and `render-overlay` back to back into the same
@@ -206,7 +278,7 @@ webcalyzer run \
   --output outputs/ng3
 ```
 
-### `plot` — regenerate plots from an existing run
+### `plot`: regenerate plots from an existing run
 
 Re-renders the PDF plots from `telemetry_clean.csv` without re-OCR'ing.
 
@@ -214,7 +286,7 @@ Re-renders the PDF plots from `telemetry_clean.csv` without re-OCR'ing.
 webcalyzer plot --output outputs/ng3
 ```
 
-### `rebuild-clean` — re-derive `telemetry_clean.csv` from raw text
+### `rebuild-clean`:  re-derive `telemetry_clean.csv` from raw text
 
 Re-runs the sanitization and stage-activation logic over
 `telemetry_raw.csv` without reading the video. Useful after editing
@@ -224,7 +296,7 @@ sanitization rules.
 webcalyzer rebuild-clean --output outputs/ng3
 ```
 
-### `rescue` — multi-variant re-OCR for missing rows
+### `rescue`:  multi-variant re-OCR for missing rows
 
 For rows whose strip OCR failed, re-reads the video, runs a tiered
 multi-variant OCR (`fast → medium → full`) and tries multiple frame
@@ -238,7 +310,7 @@ webcalyzer rescue \
   --config configs/blue_origin/new_glenn_ng3.yaml
 ```
 
-### `reject-outliers` — Mahalanobis filter
+### `reject-outliers`:  Mahalanobis filter
 
 Drops samples whose squared local residual exceeds the threshold and
 moves them to `telemetry_rejected.csv`. Operates per field, per stage,
@@ -250,7 +322,7 @@ or loosen thresholds without losing data.
 webcalyzer reject-outliers --output outputs/ng3 --chi2 36 --window-s 40
 ```
 
-### `reconstruct-trajectory` — integrate velocity into downrange
+### `reconstruct-trajectory`:  integrate velocity into downrange
 
 Rebuilds `trajectory.csv`, appends trajectory columns to
 `telemetry_clean.csv`, and refreshes plots without re-OCR'ing.
@@ -262,7 +334,7 @@ webcalyzer reconstruct-trajectory \
   --trajectory-integration rk4
 ```
 
-### `render-overlay` — synchronized plot-on-video
+### `render-overlay`:  synchronized plot-on-video
 
 Re-renders the telemetry overlay video from
 `telemetry_clean.csv`. Useful when you've updated the plot mode or
@@ -415,7 +487,7 @@ default 0.5 fps cadence) on an Apple M1 Pro:
 
 | Configuration | Phase A wall time | Speedup vs baseline |
 |---------------|------------------:|--------------------:|
-| `--ocr-backend rapidocr` (no skip, workers=1) — *baseline* | 1182.0 s | 1.0× |
+| `--ocr-backend rapidocr` (no skip, workers=1) is the *baseline* | 1182.0 s | 1.0× |
 | `--ocr-backend vision` (auto on macOS) | 87.7 s | **13.5×** |
 | `--ocr-backend vision --ocr-skip-detection` | 109.2 s | 10.8× |
 | `--ocr-backend rapidocr --ocr-skip-detection` | 75.8 s | 15.6× |
@@ -440,9 +512,9 @@ matches within 1 sample on 100% of overlapping rows for every config.
 Velocity/altitude columns match within 1% on 96–100% of overlapping rows;
 the few outliers come from individual frames whose strip OCR was
 ambiguous and where the new path's parsing chose a different valid
-candidate. The skip-detection path is more aggressive on Stage 2 — it
-recovers ~7 more parseable rows than the baseline before the stage 2
-activation gate trips.
+candidate. The skip-detection path is more aggressive on Stage 2, e.g. it
+recovered ~7x more parseable rows than the baseline before the stage 2
+activation gate trips in the NG-3 flight test case.
 
 ## Overlay performance
 
@@ -451,7 +523,7 @@ M1 Pro:
 
 | Configuration | Wall time | Speedup |
 |---|---:|---:|
-| `--overlay-engine opencv` (in-process numpy alpha + cv2 encode) — *baseline* | ~1438 s (extrapolated) | 1.0× |
+| `--overlay-engine opencv` (in-process numpy alpha + cv2 encode) is the *baseline* | ~1438 s (extrapolated) | 1.0× |
 | `--overlay-engine ffmpeg --overlay-encoder libx264` | 337.9 s | 4.3× |
 | `--overlay-engine ffmpeg --overlay-encoder videotoolbox` (auto on Mac) | 287.2 s | **5.0×** |
 
@@ -471,71 +543,3 @@ The unique overlay panels are also reduced by quantizing reveal times
 to a 0.5 s MET grid (controlled by `REVEAL_QUANTIZE_STEP_S` in
 `overlay.py`), so the trajectory module's per-step samples don't
 balloon the panel cache and the concat playlist.
-
-## Argument reference
-
-### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)
-
-| Flag | Type | Required | Default | Options | Notes |
-|------|------|----------|---------|---------|-------|
-| `--video` | path | yes | — | any video file readable by OpenCV/AVFoundation | The source video. |
-| `--config` | path | yes (`extract`/`run`); optional (`rescue`) | — | path to a YAML profile | Loaded via `webcalyzer.config.load_profile`. |
-| `--output` | path | yes | — | any directory path | Created if missing; CSVs and metadata are written here. |
-| `--ocr-backend` | choice | no | `auto` | `auto`, `rapidocr`, `vision` | `auto` selects Vision on macOS when pyobjc-Vision is importable, RapidOCR otherwise. Forcing `vision` on a non-macOS host raises a clear error. |
-| `--ocr-recognition-level` | choice | no | `accurate` | `accurate`, `fast` | Vision-only. Ignored when the resolved backend is RapidOCR. |
-| `--ocr-workers` | int or `auto` | no (`extract`/`run` only) | `auto` | positive integer or `auto` | `auto` resolves to `max(1, physical_cores - 1)` for RapidOCR and `1` for Vision. |
-| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | off | — | Opt-in. Bypasses detection and runs recognition only on each calibrated field crop. |
-
-### Subcommand-specific arguments
-
-| Subcommand | Flag | Type | Required | Default | Options | Notes |
-|------------|------|------|----------|---------|---------|-------|
-| `sample-frames` | `--video` | path | yes | — | — | |
-|                 | `--config` | path | yes | — | — | |
-|                 | `--output` | path | yes | — | — | Directory for review JPEGs and `contact_sheet.jpg`. |
-|                 | `--count` | int | no | profile's `fixture_frame_count` | any positive int | Override the per-profile count for this run only. |
-| `calibrate` | `--video` | path | yes | — | — | |
-|             | `--config` | path | yes | — | — | Loaded as the starting point; saved into `--output`. |
-|             | `--output` | path | yes | — | — | Destination YAML for the edited profile. |
-| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (0.5 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
-| `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
-|       | `--skip-video-overlay` | flag | no | overlay enabled | — | Skip the post-extract overlay render. |
-|       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
-|       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
-|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_…` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
-| `plot` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
-| `rebuild-clean` | `--output` | path | yes | — | — | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
-| `rescue` | `--video` | path | yes | — | — | |
-|          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | — | Optional override of the profile saved alongside the run. |
-|          | `--output` | path | yes | — | — | |
-| `reject-outliers` | `--output` | path | yes | — | — | |
-|                   | `--chi2` | float | no | `36.0` | any positive float | Per-field squared residual threshold (1-D Mahalanobis). |
-|                   | `--window-s` | float | no | `40.0` | any positive float | Neighbor window in seconds for the local residual fit. |
-| `reconstruct-trajectory` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
-|                          | `--config` | path | no | `<output>/config_resolved.yaml` | — | Optional YAML profile override. |
-|                          | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | |
-|                          | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | `simpson` is accepted as an alias for `rk4`. |
-|                          | `--trajectory-step-s` | float | no | profile's `trajectory.integration_step_s` | any positive float | Fixed integration step in seconds. |
-| `render-overlay` | `--video` | path | yes | — | — | |
-|                  | `--output` | path | yes | — | — | |
-|                  | `--config` | path | no | — | — | Optional YAML profile with `video_overlay` settings. |
-|                  | `--plot-mode` | choice | no | profile's `video_overlay.plot_mode` (`filtered`) | `filtered`, `with_rejected` | |
-|                  | `--width-fraction` | float | no | profile's `video_overlay.width_fraction` | 0.05–1.0 | Overlay panel width as a fraction of the source frame width. |
-|                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05–1.0 | Overlay panel height as a fraction of the source frame height. |
-|                  | `--output-filename` | string | no | profile's `video_overlay.output_filename` (`telemetry_overlay.mp4`) | any filename | Output video filename inside `--output`. |
-|                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | — | Skip the audio re-mux step. |
-|                  | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | Same semantics as `run --overlay-engine`. |
-|                  | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` | Ignored when the resolved engine is `opencv`. |
-
-## Tips
-
-- Heaviest-load configurations first: run `webcalyzer run` once, eyeball
-  the plots, then iterate on the YAML profile and use the lighter
-  subcommands (`rebuild-clean`, `reject-outliers`, `render-overlay`) to
-  avoid re-OCR'ing the entire video.
-- For quick experiments, drop `--sample-fps` to e.g. `0.1` so each
-  iteration takes a fraction of the time. Production runs at the
-  profile's default usually look right at `0.5`.
-- On Apple Silicon, leaving `--ocr-backend auto` is the right default;
-  override with `--ocr-backend rapidocr` when you want platform-parity
-  output for a regression diff against a Linux/Windows run.
