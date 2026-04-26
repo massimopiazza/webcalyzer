@@ -25,6 +25,7 @@ class AxisRect:
 class PlotSeries:
     x: np.ndarray
     y: np.ndarray
+    segments: tuple[tuple[np.ndarray, np.ndarray], ...]
     color: tuple[int, int, int, int]
 
 
@@ -33,14 +34,18 @@ SUMMARY_COLUMNS = {
     "altitude": ("stage1_altitude_m", "stage2_altitude_m"),
 }
 
+ALTITUDE_SCALE = 0.001
+
 STAGE_COLORS_BGRA = {
     "stage1": (180, 119, 31, 255),
     "stage2": (14, 127, 255, 255),
 }
 
 WHITE = (255, 255, 255, 255)
-BLACK = (0, 0, 0, 255)
 GRID = (255, 255, 255, 70)
+BACKGROUND = (0, 0, 0, 153)
+X_TICK_TARGET = 5
+Y_TICK_TARGET = 4
 
 
 def render_telemetry_overlay_video(
@@ -62,24 +67,37 @@ def render_telemetry_overlay_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = get_video_metadata(source_path)
-    overlay_width = _scaled_dimension(metadata.width, config.width_fraction)
-    overlay_height = _scaled_dimension(metadata.height, config.height_fraction)
-    overlay_width = min(metadata.width, overlay_width)
-    overlay_height = min(metadata.height, overlay_height)
+    display_overlay_width = _scaled_dimension(metadata.width, config.width_fraction)
+    display_overlay_height = _scaled_dimension(metadata.height, config.height_fraction)
+    top_margin_px = min(_top_margin_px(metadata.height), max(0, metadata.height - display_overlay_height))
+    display_overlay_width = min(metadata.width, display_overlay_width)
+    display_overlay_height = min(metadata.height - top_margin_px, display_overlay_height)
+    render_scale = _overlay_render_scale(metadata.width, metadata.height)
+    overlay_width = display_overlay_width * render_scale
+    overlay_height = display_overlay_height * render_scale
 
     include_rejected = plot_mode == "with_rejected" and rejected_df is not None and not rejected_df.empty
-    x_range = _range_for_columns(clean_df, rejected_df if include_rejected else None, ["mission_elapsed_time_s"])
-    velocity_range = _range_for_columns(
-        clean_df,
-        rejected_df if include_rejected else None,
-        list(SUMMARY_COLUMNS["velocity"]),
-        lower_floor=0.0,
+    x_range = _nice_range(
+        _range_for_columns(clean_df, rejected_df if include_rejected else None, ["mission_elapsed_time_s"], lower_floor=0.0),
+        target_count=X_TICK_TARGET,
     )
-    altitude_range = _range_for_columns(
-        clean_df,
-        rejected_df if include_rejected else None,
-        list(SUMMARY_COLUMNS["altitude"]),
-        lower_floor=0.0,
+    velocity_range = _nice_range(
+        _range_for_columns(
+            clean_df,
+            rejected_df if include_rejected else None,
+            list(SUMMARY_COLUMNS["velocity"]),
+            lower_floor=0.0,
+        ),
+        target_count=Y_TICK_TARGET,
+    )
+    altitude_range = _nice_range(
+        _range_for_columns(
+            clean_df,
+            rejected_df if include_rejected else None,
+            list(SUMMARY_COLUMNS["altitude"]),
+            lower_floor=0.0,
+        ),
+        target_count=Y_TICK_TARGET,
     )
     velocity_axis, altitude_axis = _axis_layout(overlay_width, overlay_height)
     font_scale = _font_scale(overlay_width, overlay_height)
@@ -108,10 +126,7 @@ def render_telemetry_overlay_video(
     if output_path.exists():
         output_path.unlink()
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(temp_path), fourcc, metadata.fps, (metadata.width, metadata.height))
-    if not writer.isOpened():
-        raise RuntimeError(f"Failed to open video writer: {temp_path}")
+    writer = _open_video_writer(temp_path, metadata.fps, (metadata.width, metadata.height))
 
     capture = open_capture(source_path)
     frame_index = 0
@@ -141,8 +156,14 @@ def render_telemetry_overlay_video(
                     font_scale=font_scale,
                     include_rejected=include_rejected,
                 )
+                if render_scale != 1:
+                    overlay = cv2.resize(
+                        overlay,
+                        (display_overlay_width, display_overlay_height),
+                        interpolation=cv2.INTER_AREA,
+                    )
                 overlay_cache[reveal_index] = overlay
-            _composite_overlay(frame, overlay)
+            _composite_overlay(frame, overlay, top_margin_px=top_margin_px)
             writer.write(frame)
             frame_index += 1
 
@@ -162,6 +183,28 @@ def render_telemetry_overlay_video(
 
 def _scaled_dimension(source: int, fraction: float) -> int:
     return max(120, int(round(source * max(0.05, min(1.0, fraction)))))
+
+
+def _top_margin_px(frame_height: int) -> int:
+    return max(8, int(round(frame_height * 0.012)))
+
+
+def _overlay_render_scale(frame_width: int, frame_height: int) -> int:
+    if frame_width >= 3840 or frame_height >= 2160:
+        return 3
+    if frame_width >= 1920 or frame_height >= 1080:
+        return 2
+    return 1
+
+
+def _open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> cv2.VideoWriter:
+    for codec in ("avc1", "H264", "mp4v"):
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*codec), fps, size)
+        if writer.isOpened():
+            writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 100)
+            return writer
+        writer.release()
+    raise RuntimeError(f"Failed to open video writer: {path}")
 
 
 def _axis_layout(width: int, height: int) -> tuple[AxisRect, AxisRect]:
@@ -189,9 +232,16 @@ def _draw_base_overlay(
 ) -> np.ndarray:
     overlay = np.zeros((height, width, 4), dtype=np.uint8)
     font_scale = _font_scale(width, height)
+    _draw_rounded_rect(
+        overlay,
+        (0, 0),
+        (width - 1, height - 1),
+        radius=max(18, int(round(min(width, height) * 0.045))),
+        color=BACKGROUND,
+    )
 
     _draw_axis(overlay, velocity_axis, x_range, velocity_range, "Velocity [m/s]", font_scale)
-    _draw_axis(overlay, altitude_axis, x_range, altitude_range, "Altitude [m]", font_scale)
+    _draw_axis(overlay, altitude_axis, x_range, altitude_range, "Altitude [km]", font_scale)
     _put_text(
         overlay,
         "Mission Elapsed Time [s]",
@@ -214,32 +264,37 @@ def _draw_axis(
     label: str,
     font_scale: float,
 ) -> None:
-    _line(overlay, (rect.x, rect.y), (rect.x, rect.y + rect.height), WHITE, thickness=1)
-    _line(overlay, (rect.x, rect.y + rect.height), (rect.x + rect.width, rect.y + rect.height), WHITE, thickness=1)
+    axis_thickness = max(1, int(round(font_scale * 2.0)))
+    grid_thickness = max(1, axis_thickness // 2)
+    _line(overlay, (rect.x, rect.y), (rect.x, rect.y + rect.height), WHITE, thickness=axis_thickness)
+    _line(overlay, (rect.x, rect.y + rect.height), (rect.x + rect.width, rect.y + rect.height), WHITE, thickness=axis_thickness)
 
-    for tick in np.linspace(x_range[0], x_range[1], 5):
+    for tick in _nice_ticks(x_range[0], x_range[1], target_count=X_TICK_TARGET):
         x = _map_x(float(tick), rect, x_range)
-        cv2.line(overlay, (x, rect.y), (x, rect.y + rect.height), GRID, 1, cv2.LINE_AA)
-        _put_text(overlay, f"{tick:,.0f}", (x - 14, rect.y + rect.height + 16), font_scale * 0.82)
+        cv2.line(overlay, (x, rect.y), (x, rect.y + rect.height), GRID, grid_thickness, cv2.LINE_AA)
+        _put_text(overlay, _format_tick(float(tick)), (x - int(24 * font_scale), rect.y + rect.height + int(34 * font_scale)), font_scale * 0.82)
 
-    for tick in np.linspace(y_range[0], y_range[1], 4):
+    for tick in _nice_ticks(y_range[0], y_range[1], target_count=Y_TICK_TARGET):
         y = _map_y(float(tick), rect, y_range)
-        cv2.line(overlay, (rect.x, y), (rect.x + rect.width, y), GRID, 1, cv2.LINE_AA)
-        _put_text(overlay, f"{tick:,.0f}", (max(1, rect.x - 58), y + 4), font_scale * 0.82)
+        cv2.line(overlay, (rect.x, y), (rect.x + rect.width, y), GRID, grid_thickness, cv2.LINE_AA)
+        _put_text(overlay, _format_tick(float(tick)), (max(1, rect.x - int(126 * font_scale)), y + int(8 * font_scale)), font_scale * 0.82)
 
     _put_text(overlay, label, (rect.x + 4, max(12, rect.y - 6)), font_scale)
 
 
 def _draw_legend(overlay: np.ndarray, rect: AxisRect, font_scale: float, include_rejected: bool) -> None:
-    x = rect.x + rect.width - 150
-    y = rect.y + 16
-    _line(overlay, (x, y - 4), (x + 28, y - 4), STAGE_COLORS_BGRA["stage1"], thickness=2)
-    _put_text(overlay, "Stage 1", (x + 36, y), font_scale * 0.92)
-    _line(overlay, (x, y + 16), (x + 28, y + 16), STAGE_COLORS_BGRA["stage2"], thickness=2)
-    _put_text(overlay, "Stage 2", (x + 36, y + 20), font_scale * 0.92)
+    x = rect.x + rect.width - int(round(320 * font_scale))
+    y = rect.y + int(round(34 * font_scale))
+    line_length = int(round(60 * font_scale))
+    line_gap = int(round(42 * font_scale))
+    line_thickness = max(2, int(round(font_scale * 2.0)))
+    _line(overlay, (x, y - int(8 * font_scale)), (x + line_length, y - int(8 * font_scale)), STAGE_COLORS_BGRA["stage1"], thickness=line_thickness)
+    _put_text(overlay, "Stage 1", (x + line_length + int(14 * font_scale), y), font_scale * 0.92)
+    _line(overlay, (x, y + line_gap - int(8 * font_scale)), (x + line_length, y + line_gap - int(8 * font_scale)), STAGE_COLORS_BGRA["stage2"], thickness=line_thickness)
+    _put_text(overlay, "Stage 2", (x + line_length + int(14 * font_scale), y + line_gap), font_scale * 0.92)
     if include_rejected:
-        cv2.circle(overlay, (x + 14, y + 36), 4, STAGE_COLORS_BGRA["stage1"], 1, cv2.LINE_AA)
-        _put_text(overlay, "Rejected", (x + 36, y + 40), font_scale * 0.92)
+        cv2.circle(overlay, (x + line_length // 2, y + 2 * line_gap - int(8 * font_scale)), max(4, int(8 * font_scale)), STAGE_COLORS_BGRA["stage1"], line_thickness, cv2.LINE_AA)
+        _put_text(overlay, "Rejected", (x + line_length + int(14 * font_scale), y + 2 * line_gap), font_scale * 0.92)
 
 
 def _build_series(
@@ -258,12 +313,40 @@ def _build_series(
             if column not in df.columns or "mission_elapsed_time_s" not in df.columns:
                 continue
             x = pd.to_numeric(df["mission_elapsed_time_s"], errors="coerce").to_numpy(dtype=float)
-            y = pd.to_numeric(df[column], errors="coerce").to_numpy(dtype=float)
-            finite = np.isfinite(x) & np.isfinite(y)
-            order = np.argsort(x[finite])
+            y = _display_values(pd.to_numeric(df[column], errors="coerce").to_numpy(dtype=float), column)
+            finite_x = np.isfinite(x)
+            order = np.argsort(x[finite_x])
+            ordered_x = x[finite_x][order]
+            ordered_y = y[finite_x][order]
+            finite = np.isfinite(ordered_y)
             key = f"{metric_name}:{stage_name}"
-            result[key] = PlotSeries(x=x[finite][order], y=y[finite][order], color=color)
+            result[key] = PlotSeries(
+                x=ordered_x[finite],
+                y=ordered_y[finite],
+                segments=_finite_segments(ordered_x, ordered_y),
+                color=color,
+            )
     return result
+
+
+def _display_values(values: np.ndarray, column: str) -> np.ndarray:
+    if column.endswith("_altitude_m"):
+        return values * ALTITUDE_SCALE
+    return values
+
+
+def _finite_segments(x: np.ndarray, y: np.ndarray) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+    start: int | None = None
+    finite = np.isfinite(x) & np.isfinite(y)
+    for index, is_finite in enumerate(finite):
+        if is_finite and start is None:
+            start = index
+        if start is not None and (not is_finite or index == len(finite) - 1):
+            end = index if is_finite and index == len(finite) - 1 else index - 1
+            segments.append((x[start : end + 1], y[start : end + 1]))
+            start = None
+    return tuple(segments)
 
 
 def _build_reveal_times(
@@ -341,14 +424,16 @@ def _draw_retained_series(
     mask = series.x <= current_x
     if not np.any(mask):
         return
-    points = [
-        [_map_x(float(x), rect, x_range), _map_y(float(y), rect, y_range)]
-        for x, y in zip(series.x[mask], series.y[mask], strict=True)
-    ]
-    if len(points) == 1:
-        cv2.circle(overlay, tuple(points[0]), 2, series.color, -1, cv2.LINE_AA)
-        return
-    cv2.polylines(overlay, [np.array(points, dtype=np.int32)], False, series.color, 2, cv2.LINE_AA)
+    line_thickness = max(2, int(round(rect.height / 85)))
+    for x_values, y_values in series.segments:
+        mask = x_values <= current_x
+        if np.count_nonzero(mask) < 2:
+            continue
+        points = [
+            [_map_x(float(x), rect, x_range), _map_y(float(y), rect, y_range)]
+            for x, y in zip(x_values[mask], y_values[mask], strict=True)
+        ]
+        cv2.polylines(overlay, [np.array(points, dtype=np.int32)], False, series.color, line_thickness, cv2.LINE_AA)
 
 
 def _draw_rejected_series(
@@ -362,9 +447,11 @@ def _draw_rejected_series(
     if series is None or series.x.size == 0:
         return
     mask = series.x <= current_x
+    radius = max(4, int(round(rect.height / 45)))
+    thickness = max(1, int(round(rect.height / 120)))
     for x, y in zip(series.x[mask], series.y[mask], strict=True):
         point = (_map_x(float(x), rect, x_range), _map_y(float(y), rect, y_range))
-        cv2.circle(overlay, point, 4, series.color, 1, cv2.LINE_AA)
+        cv2.circle(overlay, point, radius, series.color, thickness, cv2.LINE_AA)
 
 
 def _build_progress_mapper(clean_df: pd.DataFrame):
@@ -402,6 +489,7 @@ def _range_for_columns(
         for column in columns:
             if column in df.columns:
                 arrays.append(pd.to_numeric(df[column], errors="coerce").to_numpy(dtype=float))
+                arrays[-1] = _display_values(arrays[-1], column)
     values = np.concatenate(arrays) if arrays else np.array([], dtype=float)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
@@ -415,6 +503,58 @@ def _range_for_columns(
         high = low + 1.0
     padding = (high - low) * 0.06
     return (low, high + padding)
+
+
+def _nice_range(value_range: tuple[float, float], target_count: int) -> tuple[float, float]:
+    ticks = _nice_ticks(value_range[0], value_range[1], target_count=target_count, clip_to_range=False)
+    return (float(ticks[0]), float(ticks[-1]))
+
+
+def _nice_ticks(low: float, high: float, target_count: int, *, clip_to_range: bool = True) -> np.ndarray:
+    if not np.isfinite(low) or not np.isfinite(high):
+        return np.array([0.0, 1.0])
+    if high <= low:
+        high = low + 1.0
+    step = _nice_step((high - low) / max(1, target_count))
+    tick_low = np.floor(low / step) * step
+    tick_high = np.ceil(high / step) * step
+    ticks = np.arange(tick_low, tick_high + step * 0.5, step)
+    while ticks.size > target_count + 3:
+        step = _nice_step(step * 1.5)
+        tick_low = np.floor(low / step) * step
+        tick_high = np.ceil(high / step) * step
+        ticks = np.arange(tick_low, tick_high + step * 0.5, step)
+    if clip_to_range:
+        eps = step * 1e-9
+        ticks = ticks[(ticks >= low - eps) & (ticks <= high + eps)]
+    return ticks
+
+
+def _nice_step(raw_step: float) -> float:
+    if raw_step <= 0 or not np.isfinite(raw_step):
+        return 1.0
+    exponent = np.floor(np.log10(raw_step))
+    base = 10 ** exponent
+    fraction = raw_step / base
+    if fraction <= 1:
+        nice_fraction = 1.0
+    elif fraction <= 2:
+        nice_fraction = 2.0
+    elif fraction <= 2.5:
+        nice_fraction = 2.5
+    elif fraction <= 5:
+        nice_fraction = 5.0
+    else:
+        nice_fraction = 10.0
+    return float(nice_fraction * base)
+
+
+def _format_tick(value: float) -> str:
+    if abs(value) >= 100 or abs(value - round(value)) < 1e-9:
+        return f"{value:,.0f}"
+    if abs(value) >= 10:
+        return f"{value:,.1f}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
 def _map_x(value: float, rect: AxisRect, x_range: tuple[float, float]) -> int:
@@ -440,7 +580,6 @@ def _line(
     color: tuple[int, int, int, int],
     thickness: int,
 ) -> None:
-    cv2.line(image, start, end, BLACK, thickness + 2, cv2.LINE_AA)
     cv2.line(image, start, end, color, thickness, cv2.LINE_AA)
 
 
@@ -451,13 +590,34 @@ def _put_text(
     font_scale: float,
     color: tuple[int, int, int, int] = WHITE,
 ) -> None:
-    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, font_scale, BLACK, 3, cv2.LINE_AA)
     cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1, cv2.LINE_AA)
 
 
-def _composite_overlay(frame: np.ndarray, overlay: np.ndarray) -> None:
+def _draw_rounded_rect(
+    image: np.ndarray,
+    top_left: tuple[int, int],
+    bottom_right: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int, int],
+) -> None:
+    x0, y0 = top_left
+    x1, y1 = bottom_right
+    radius = max(0, min(radius, (x1 - x0) // 2, (y1 - y0) // 2))
+    if radius == 0:
+        cv2.rectangle(image, top_left, bottom_right, color, -1)
+        return
+    cv2.rectangle(image, (x0 + radius, y0), (x1 - radius, y1), color, -1)
+    cv2.rectangle(image, (x0, y0 + radius), (x1, y1 - radius), color, -1)
+    cv2.circle(image, (x0 + radius, y0 + radius), radius, color, -1, cv2.LINE_AA)
+    cv2.circle(image, (x1 - radius, y0 + radius), radius, color, -1, cv2.LINE_AA)
+    cv2.circle(image, (x0 + radius, y1 - radius), radius, color, -1, cv2.LINE_AA)
+    cv2.circle(image, (x1 - radius, y1 - radius), radius, color, -1, cv2.LINE_AA)
+
+
+def _composite_overlay(frame: np.ndarray, overlay: np.ndarray, top_margin_px: int) -> None:
     overlay_height, overlay_width = overlay.shape[:2]
-    roi = frame[:overlay_height, :overlay_width]
+    y0 = max(0, min(frame.shape[0] - overlay_height, top_margin_px))
+    roi = frame[y0 : y0 + overlay_height, :overlay_width]
     alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
     blended = overlay[:, :, :3].astype(np.float32) * alpha + roi.astype(np.float32) * (1.0 - alpha)
     roi[:] = np.clip(blended, 0, 255).astype(np.uint8)

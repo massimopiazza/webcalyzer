@@ -112,7 +112,7 @@ def _create_stage_pdf(df: pd.DataFrame, stage: str, path: Path, rejected_df: pd.
             label="Altitude",
             rejected_df=rejected_df,
         )
-        axes[1].set_ylabel("Altitude [m]")
+        axes[1].set_ylabel("Altitude [km]")
         axes[1].set_xlabel("Mission Elapsed Time [s]")
         axes[1].set_title(f"{stage.upper()} Altitude")
         axes[1].grid(alpha=0.25)
@@ -160,7 +160,6 @@ def _plot_line_with_rejected(
     label: str,
     rejected_df: pd.DataFrame | None,
 ) -> None:
-    axis.plot(df["mission_elapsed_time_s"], df[column], color=color, label=label, linewidth=1.2)
     y_values = _plot_values(df[column], column)
     axis.plot(df["mission_elapsed_time_s"], y_values, color=color, label=label, linewidth=1.2)
     if rejected_df is None or column not in rejected_df.columns:
