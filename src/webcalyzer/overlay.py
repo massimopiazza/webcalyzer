@@ -47,6 +47,29 @@ BACKGROUND = (0, 0, 0, 153)
 X_TICK_TARGET = 5
 Y_TICK_TARGET = 4
 
+# Quantize panel reveals onto a 0.5 s MET grid. Plot updates faster than
+# this are imperceptible at typical playback fps and just multiply the
+# panel cache + concat list size with no visual benefit.
+REVEAL_QUANTIZE_STEP_S = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayPlan:
+    """Everything the renderers need to draw and time the overlay panel.
+
+    Both the OpenCV path and the FFmpeg path consume this plan. Building
+    it once per run also means the panel cache is shared instead of being
+    rebuilt by whichever engine runs.
+    """
+
+    metadata: object
+    display_overlay_width: int
+    display_overlay_height: int
+    top_margin_px: int
+    left_margin_px: int
+    panel_cache: dict[int, np.ndarray]
+    panel_segments: list[tuple[int, float, float]]
+
 
 def render_telemetry_overlay_video(
     video_path: str | Path,
@@ -55,6 +78,9 @@ def render_telemetry_overlay_video(
     config: VideoOverlayConfig,
     rejected_df: pd.DataFrame | None = None,
     trajectory_df: pd.DataFrame | None = None,
+    *,
+    engine: str = "auto",
+    encoder: str = "auto",
 ) -> Path | None:
     if not config.enabled:
         return None
@@ -67,6 +93,66 @@ def render_telemetry_overlay_video(
     output_path = Path(output_dir) / config.output_filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    plan = _build_overlay_plan(
+        source_path=source_path,
+        clean_df=clean_df,
+        rejected_df=rejected_df,
+        trajectory_df=trajectory_df,
+        config=config,
+        plot_mode=plot_mode,
+    )
+
+    selected_engine = _resolve_overlay_engine(engine)
+    if selected_engine == "ffmpeg":
+        from webcalyzer.overlay_ffmpeg import render_via_ffmpeg
+
+        try:
+            return render_via_ffmpeg(
+                source_path=source_path,
+                output_path=output_path,
+                plan=plan,
+                include_audio=config.include_audio,
+                encoder=encoder,
+            )
+        except Exception as exc:  # pragma: no cover - safety fallback
+            print(f"[webcalyzer] ffmpeg overlay engine failed ({exc}); falling back to opencv")
+
+    return _render_via_opencv(
+        source_path=source_path,
+        output_path=output_path,
+        plan=plan,
+        include_audio=config.include_audio,
+    )
+
+
+def _resolve_overlay_engine(engine: str) -> str:
+    """Resolve ``auto`` to ``ffmpeg`` when ffmpeg is on PATH, else ``opencv``."""
+
+    if engine not in {"auto", "ffmpeg", "opencv"}:
+        raise ValueError(
+            f"Unknown overlay engine {engine!r}; expected 'auto', 'ffmpeg', or 'opencv'."
+        )
+    if engine == "ffmpeg":
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError(
+                "overlay engine 'ffmpeg' was requested but ffmpeg is not on PATH."
+            )
+        return "ffmpeg"
+    if engine == "opencv":
+        return "opencv"
+    # auto
+    return "ffmpeg" if shutil.which("ffmpeg") is not None else "opencv"
+
+
+def _build_overlay_plan(
+    *,
+    source_path: Path,
+    clean_df: pd.DataFrame,
+    rejected_df: pd.DataFrame | None,
+    trajectory_df: pd.DataFrame | None,
+    config: VideoOverlayConfig,
+    plot_mode: str,
+) -> OverlayPlan:
     metadata = get_video_metadata(source_path)
     display_overlay_width = _scaled_dimension(metadata.width, config.width_fraction)
     display_overlay_height = _scaled_dimension(metadata.height, config.height_fraction)
@@ -130,9 +216,159 @@ def render_telemetry_overlay_video(
         _build_trajectory_series(trajectory_df, x_range, downrange_range) if include_trajectory and trajectory_df is not None else {}
     )
     reveal_times = _build_reveal_times(retained_series, rejected_series, trajectory_series)
-    overlay_cache: dict[int, np.ndarray] = {}
-    progress = _build_progress_mapper(clean_df)
 
+    panel_cache = _build_panel_cache(
+        base_overlay=base_overlay,
+        reveal_times=reveal_times,
+        x_range=x_range,
+        velocity_range=velocity_range,
+        altitude_range=altitude_range,
+        downrange_range=downrange_range,
+        velocity_axis=velocity_axis,
+        altitude_axis=altitude_axis,
+        downrange_axis=downrange_axis,
+        retained_series=retained_series,
+        rejected_series=rejected_series,
+        trajectory_series=trajectory_series,
+        font_scale=font_scale,
+        include_rejected=include_rejected,
+        render_scale=render_scale,
+        display_overlay_width=display_overlay_width,
+        display_overlay_height=display_overlay_height,
+    )
+    panel_segments = _build_panel_segments(
+        clean_df=clean_df,
+        reveal_times=reveal_times,
+        duration_s=metadata.duration_s,
+    )
+
+    return OverlayPlan(
+        metadata=metadata,
+        display_overlay_width=display_overlay_width,
+        display_overlay_height=display_overlay_height,
+        top_margin_px=top_margin_px,
+        left_margin_px=left_margin_px,
+        panel_cache=panel_cache,
+        panel_segments=panel_segments,
+    )
+
+
+def _build_panel_cache(
+    *,
+    base_overlay: np.ndarray,
+    reveal_times: np.ndarray,
+    x_range: tuple[float, float],
+    velocity_range: tuple[float, float],
+    altitude_range: tuple[float, float],
+    downrange_range: tuple[float, float],
+    velocity_axis: AxisRect,
+    altitude_axis: AxisRect,
+    downrange_axis: AxisRect | None,
+    retained_series: dict[str, "PlotSeries"],
+    rejected_series: dict[str, "PlotSeries"],
+    trajectory_series: dict[str, "PlotSeries"],
+    font_scale: float,
+    include_rejected: bool,
+    render_scale: int,
+    display_overlay_width: int,
+    display_overlay_height: int,
+) -> dict[int, np.ndarray]:
+    cache: dict[int, np.ndarray] = {}
+    panel_count = int(reveal_times.size) + 1
+    for reveal_index in range(panel_count):
+        overlay = base_overlay.copy()
+        threshold_x = (
+            float(reveal_times[reveal_index - 1])
+            if reveal_index > 0
+            else x_range[0] - 1.0
+        )
+        _draw_summary_data(
+            overlay=overlay,
+            current_x=threshold_x,
+            velocity_axis=velocity_axis,
+            altitude_axis=altitude_axis,
+            downrange_axis=downrange_axis,
+            retained_series=retained_series,
+            rejected_series=rejected_series,
+            trajectory_series=trajectory_series,
+            x_range=x_range,
+            velocity_range=velocity_range,
+            altitude_range=altitude_range,
+            downrange_range=downrange_range,
+            font_scale=font_scale,
+            include_rejected=include_rejected,
+        )
+        if render_scale != 1:
+            overlay = cv2.resize(
+                overlay,
+                (display_overlay_width, display_overlay_height),
+                interpolation=cv2.INTER_AREA,
+            )
+        cache[reveal_index] = overlay
+    return cache
+
+
+def _build_panel_segments(
+    *,
+    clean_df: pd.DataFrame,
+    reveal_times: np.ndarray,
+    duration_s: float,
+) -> list[tuple[int, float, float]]:
+    """Compute (reveal_index, source_start_s, source_end_s) for each panel.
+
+    Source-time boundaries are obtained by inverting the MET↔source-time
+    mapping derived from clean_df. When the inverse cannot be built (e.g.
+    no parsed MET rows) the panel sequence collapses to a single empty
+    panel that covers the entire video duration.
+    """
+
+    inverse = _build_inverse_progress_mapper(clean_df)
+    boundaries: list[float] = [0.0]
+    for met in reveal_times:
+        boundaries.append(min(max(0.0, inverse(float(met))), duration_s))
+    boundaries.append(duration_s)
+    segments: list[tuple[int, float, float]] = []
+    for index, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
+        if end <= start:
+            continue
+        segments.append((index, float(start), float(end)))
+    if not segments:
+        segments = [(0, 0.0, duration_s)]
+    return segments
+
+
+def _build_inverse_progress_mapper(clean_df: pd.DataFrame):
+    """Inverse of :func:`_build_progress_mapper`: maps MET → source video time."""
+
+    if "sample_time_s" not in clean_df.columns or "mission_elapsed_time_s" not in clean_df.columns:
+        return lambda met: float(met)
+
+    sample_times = pd.to_numeric(clean_df["sample_time_s"], errors="coerce").to_numpy(dtype=float)
+    met_times = pd.to_numeric(clean_df["mission_elapsed_time_s"], errors="coerce").to_numpy(dtype=float)
+    finite = np.isfinite(sample_times) & np.isfinite(met_times)
+    if np.sum(finite) < 2:
+        return lambda met: float(met)
+
+    sample_times = sample_times[finite]
+    met_times = met_times[finite]
+    order = np.argsort(met_times)
+    met_times = met_times[order]
+    sample_times = sample_times[order]
+
+    def map_back(met: float) -> float:
+        return float(np.interp(met, met_times, sample_times, left=sample_times[0], right=sample_times[-1]))
+
+    return map_back
+
+
+def _render_via_opencv(
+    *,
+    source_path: Path,
+    output_path: Path,
+    plan: OverlayPlan,
+    include_audio: bool,
+) -> Path | None:
+    metadata = plan.metadata
     temp_path = output_path.with_name(f"{output_path.stem}.noaudio{output_path.suffix}")
     if temp_path.exists():
         temp_path.unlink()
@@ -140,55 +376,33 @@ def render_telemetry_overlay_video(
         output_path.unlink()
 
     writer = _open_video_writer(temp_path, metadata.fps, (metadata.width, metadata.height))
-
     capture = open_capture(source_path)
+
+    # Build a per-frame index → reveal_index lookup from the panel segments.
+    fps = metadata.fps if metadata.fps else 1.0
+    segment_starts = np.asarray([seg[1] for seg in plan.panel_segments], dtype=float)
+    segment_indices = np.asarray([seg[0] for seg in plan.panel_segments], dtype=int)
+
     frame_index = 0
     try:
         while True:
             ok, frame = capture.read()
             if not ok or frame is None:
                 break
-
-            current_time_s = frame_index / metadata.fps if metadata.fps else 0.0
-            current_x = progress(current_time_s)
-            reveal_index = int(np.searchsorted(reveal_times, current_x, side="right"))
-            overlay = overlay_cache.get(reveal_index)
-            if overlay is None:
-                overlay = base_overlay.copy()
-                threshold_x = reveal_times[reveal_index - 1] if reveal_index > 0 else x_range[0] - 1.0
-                _draw_summary_data(
-                    overlay=overlay,
-                    current_x=threshold_x,
-                    velocity_axis=velocity_axis,
-                    altitude_axis=altitude_axis,
-                    downrange_axis=downrange_axis,
-                    retained_series=retained_series,
-                    rejected_series=rejected_series,
-                    trajectory_series=trajectory_series,
-                    x_range=x_range,
-                    velocity_range=velocity_range,
-                    altitude_range=altitude_range,
-                    downrange_range=downrange_range,
-                    font_scale=font_scale,
-                    include_rejected=include_rejected,
-                )
-                if render_scale != 1:
-                    overlay = cv2.resize(
-                        overlay,
-                        (display_overlay_width, display_overlay_height),
-                        interpolation=cv2.INTER_AREA,
-                    )
-                overlay_cache[reveal_index] = overlay
+            current_time_s = frame_index / fps
+            slot = int(np.searchsorted(segment_starts, current_time_s, side="right") - 1)
+            slot = max(0, min(slot, segment_indices.size - 1))
+            reveal_index = int(segment_indices[slot])
+            overlay = plan.panel_cache[reveal_index]
             _composite_overlay(
                 frame,
                 overlay,
-                top_margin_px=top_margin_px,
-                left_margin_px=left_margin_px,
+                top_margin_px=plan.top_margin_px,
+                left_margin_px=plan.left_margin_px,
             )
             writer.write(frame)
             frame_index += 1
-
-            if frame_index % max(1, int(round(metadata.fps * 30))) == 0:
+            if frame_index % max(1, int(round(fps * 30))) == 0:
                 print(f"[webcalyzer] rendered overlay video frame {frame_index}/{metadata.frame_count}")
     finally:
         capture.release()
@@ -198,7 +412,7 @@ def render_telemetry_overlay_video(
         rendered_video=temp_path,
         source_video=source_path,
         target_video=output_path,
-        include_audio=config.include_audio,
+        include_audio=include_audio,
     )
 
 
@@ -442,7 +656,27 @@ def _build_reveal_times(
     arrays.extend(series.x for series in trajectory_series.values())
     if not arrays:
         return np.array([], dtype=float)
-    return np.unique(np.concatenate(arrays))
+    times = np.unique(np.concatenate(arrays))
+    return _quantize_reveal_times(times, step_s=REVEAL_QUANTIZE_STEP_S)
+
+
+def _quantize_reveal_times(times: np.ndarray, *, step_s: float) -> np.ndarray:
+    """Round reveal times onto a fixed MET grid so we don't generate one
+    overlay panel per integration step.
+
+    Trajectory series produce a sample every ``integration_step_s`` (often
+    50–100 ms), which would otherwise give us thousands of unique panels
+    even though the visual change between adjacent panels is imperceptible
+    at typical playback fps. Quantizing to ``step_s`` caps the panel count
+    at ``ceil(span_s / step_s) + 1`` while keeping reveals frame-accurate
+    at human perception scales.
+    """
+
+    if times.size == 0 or step_s <= 0:
+        return times
+    bins = np.round(times / step_s).astype(np.int64)
+    _, first_indices = np.unique(bins, return_index=True)
+    return np.sort(times[first_indices])
 
 
 def _draw_summary_data(

@@ -95,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     overlay_parser.add_argument("--height-fraction", type=float, default=None)
     overlay_parser.add_argument("--output-filename", default=None)
     overlay_parser.add_argument("--no-audio", action="store_true", help="Do not mux the original audio into the rendered copy.")
+    _add_overlay_engine_args(overlay_parser)
 
     return parser
 
@@ -150,6 +151,42 @@ def _add_ocr_args(
 def _add_video_overlay_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-video-overlay", action="store_true", help="Do not render the configured video overlay copy.")
     parser.add_argument("--overlay-plot-mode", choices=["filtered", "with_rejected"], default=None)
+    _add_overlay_engine_args(parser)
+
+
+def _add_overlay_engine_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--overlay-engine",
+        choices=["auto", "ffmpeg", "opencv"],
+        default="auto",
+        help=(
+            "Rendering engine for the telemetry overlay video. 'auto' uses "
+            "ffmpeg when available (single-shot pipeline with hardware encode) "
+            "and falls back to the in-process OpenCV path otherwise. Force "
+            "'ffmpeg' to fail loudly if ffmpeg is missing."
+        ),
+    )
+    parser.add_argument(
+        "--overlay-encoder",
+        choices=[
+            "auto",
+            "videotoolbox",
+            "h264_videotoolbox",
+            "nvenc",
+            "h264_nvenc",
+            "qsv",
+            "h264_qsv",
+            "vaapi",
+            "h264_vaapi",
+            "libx264",
+        ],
+        default="auto",
+        help=(
+            "ffmpeg H.264 encoder. 'auto' walks videotoolbox→nvenc→qsv→vaapi→"
+            "libx264 and picks the first one available in the local ffmpeg "
+            "build. Ignored unless the resolved overlay engine is 'ffmpeg'."
+        ),
+    )
 
 
 def _add_trajectory_args(parser: argparse.ArgumentParser) -> None:
@@ -238,6 +275,8 @@ def main(argv: list[str] | None = None) -> None:
             config=overlay_config,
             rejected_df=_read_rejected_df(output_dir),
             trajectory_df=_read_trajectory_df(output_dir),
+            engine=getattr(args, "overlay_engine", "auto"),
+            encoder=getattr(args, "overlay_encoder", "auto"),
         )
         return
 
@@ -407,4 +446,6 @@ def _render_overlay_if_enabled(
         config=overlay_config,
         rejected_df=_read_rejected_df(output_dir),
         trajectory_df=trajectory_df if trajectory_df is not None else _read_trajectory_df(output_dir),
+        engine=getattr(args, "overlay_engine", "auto"),
+        encoder=getattr(args, "overlay_encoder", "auto"),
     )

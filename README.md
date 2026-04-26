@@ -67,6 +67,38 @@ On macOS the install will additionally pull in `pyobjc-framework-Vision` and
 and Windows those are skipped automatically and the project falls back to
 the cross-platform RapidOCR backend.
 
+## Overlay rendering architecture
+
+The synchronized telemetry overlay video sits behind the same kind of
+backend selector as the OCR pipeline. Two engines ship in-tree:
+
+- **`ffmpeg`** — single-shot pipeline. Pre-renders the unique overlay
+  panels to PNGs in a temp dir, hands them to a single `ffmpeg`
+  invocation via the `concat` demuxer, and lets ffmpeg do the alpha
+  compositing (in its SIMD-optimized `overlay` filter) and the encode
+  on a hardware H.264 encoder when one is available
+  (`h264_videotoolbox` / `h264_nvenc` / `h264_qsv` / `h264_vaapi`,
+  with `libx264` as the cross-platform fallback). This is the default
+  when ffmpeg is on `PATH`.
+- **`opencv`** — the in-process Python loop using `cv2.VideoCapture`
+  and `cv2.VideoWriter`. Numpy alpha-blends each frame, writes via the
+  AVFoundation/FFmpeg `cv2` backend on the platform. Used as the
+  fallback when `ffmpeg` isn't installed.
+
+`--overlay-engine auto` (the default) picks `ffmpeg` if `which ffmpeg`
+finds it, otherwise `opencv`. Force one with `--overlay-engine ffmpeg`
+or `--overlay-engine opencv`. The FFmpeg path also exposes
+`--overlay-encoder` for choosing the H.264 encoder; `auto` walks
+`videotoolbox → nvenc → qsv → vaapi → libx264` and picks the first one
+present in the local ffmpeg build.
+
+The overlay only changes at sample reveal points (one new measurement
+per OCR sample, plus per-step trajectory reconstruction points), so we
+build a small panel cache once and replay it across all source frames.
+Reveal times are quantized to a 0.5 s MET grid (`REVEAL_QUANTIZE_STEP_S`
+in `overlay.py`) so the panel cache and concat list don't balloon when
+the trajectory module emits sub-second integration steps.
+
 ## OCR architecture (Layer 1 + Layer 2)
 
 OCR is split behind a small backend interface (`OCRBackend`) so the rest of
@@ -412,6 +444,34 @@ candidate. The skip-detection path is more aggressive on Stage 2 — it
 recovers ~7 more parseable rows than the baseline before the stage 2
 activation gate trips.
 
+## Overlay performance
+
+Same 1080p60 / 887 s / 53,179 frames source. Times measured on the same
+M1 Pro:
+
+| Configuration | Wall time | Speedup |
+|---|---:|---:|
+| `--overlay-engine opencv` (in-process numpy alpha + cv2 encode) — *baseline* | ~1438 s (extrapolated) | 1.0× |
+| `--overlay-engine ffmpeg --overlay-encoder libx264` | 337.9 s | 4.3× |
+| `--overlay-engine ffmpeg --overlay-encoder videotoolbox` (auto on Mac) | 287.2 s | **5.0×** |
+
+What's bottlenecking each engine, from the profile run:
+
+- The OpenCV path spends roughly 16 ms per frame in numpy alpha
+  compositing (`astype(float32)` × 4 large temporaries per frame), 6 ms
+  in CPU H.264 encoding, and 5 ms in `cv2.VideoCapture.read()`.
+  Compositing alone is more than half the wall time.
+- The FFmpeg path moves compositing into ffmpeg's SIMD `overlay`
+  filter, offloads the encode to a hardware H.264 encoder
+  (VideoToolbox on Apple Silicon, NVENC/QSV/VAAPI elsewhere), and
+  collapses the entire pipeline into a single `ffmpeg` invocation.
+  Decode and encode become the bottleneck instead of compositing.
+
+The unique overlay panels are also reduced by quantizing reveal times
+to a 0.5 s MET grid (controlled by `REVEAL_QUANTIZE_STEP_S` in
+`overlay.py`), so the trajectory module's per-step samples don't
+balloon the panel cache and the concat playlist.
+
 ## Argument reference
 
 ### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)
@@ -441,6 +501,8 @@ activation gate trips.
 | `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
 |       | `--skip-video-overlay` | flag | no | overlay enabled | — | Skip the post-extract overlay render. |
 |       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
+|       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
+|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_…` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
 | `plot` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
 | `rebuild-clean` | `--output` | path | yes | — | — | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
 | `rescue` | `--video` | path | yes | — | — | |
@@ -462,6 +524,8 @@ activation gate trips.
 |                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05–1.0 | Overlay panel height as a fraction of the source frame height. |
 |                  | `--output-filename` | string | no | profile's `video_overlay.output_filename` (`telemetry_overlay.mp4`) | any filename | Output video filename inside `--output`. |
 |                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | — | Skip the audio re-mux step. |
+|                  | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | Same semantics as `run --overlay-engine`. |
+|                  | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` | Ignored when the resolved engine is `opencv`. |
 
 ## Tips
 
