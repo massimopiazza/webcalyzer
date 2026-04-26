@@ -54,6 +54,7 @@ def render_telemetry_overlay_video(
     output_dir: str | Path,
     config: VideoOverlayConfig,
     rejected_df: pd.DataFrame | None = None,
+    trajectory_df: pd.DataFrame | None = None,
 ) -> Path | None:
     if not config.enabled:
         return None
@@ -69,14 +70,17 @@ def render_telemetry_overlay_video(
     metadata = get_video_metadata(source_path)
     display_overlay_width = _scaled_dimension(metadata.width, config.width_fraction)
     display_overlay_height = _scaled_dimension(metadata.height, config.height_fraction)
-    top_margin_px = min(_top_margin_px(metadata.height), max(0, metadata.height - display_overlay_height))
-    display_overlay_width = min(metadata.width, display_overlay_width)
+    margin_px = _corner_margin_px(metadata.height)
+    top_margin_px = min(margin_px, max(0, metadata.height - display_overlay_height))
+    left_margin_px = min(margin_px, max(0, metadata.width - display_overlay_width))
+    display_overlay_width = min(metadata.width - left_margin_px, display_overlay_width)
     display_overlay_height = min(metadata.height - top_margin_px, display_overlay_height)
     render_scale = _overlay_render_scale(metadata.width, metadata.height)
     overlay_width = display_overlay_width * render_scale
     overlay_height = display_overlay_height * render_scale
 
     include_rejected = plot_mode == "with_rejected" and rejected_df is not None and not rejected_df.empty
+    include_trajectory = _has_trajectory_data(trajectory_df)
     x_range = _nice_range(
         _range_for_columns(clean_df, rejected_df if include_rejected else None, ["mission_elapsed_time_s"], lower_floor=0.0),
         target_count=X_TICK_TARGET,
@@ -99,7 +103,11 @@ def render_telemetry_overlay_video(
         ),
         target_count=Y_TICK_TARGET,
     )
-    velocity_axis, altitude_axis = _axis_layout(overlay_width, overlay_height)
+    downrange_range = _nice_range(
+        _range_for_trajectory(trajectory_df, lower_floor=0.0),
+        target_count=Y_TICK_TARGET,
+    )
+    velocity_axis, altitude_axis, downrange_axis = _axis_layout(overlay_width, overlay_height, include_trajectory)
     font_scale = _font_scale(overlay_width, overlay_height)
     base_overlay = _draw_base_overlay(
         width=overlay_width,
@@ -107,8 +115,10 @@ def render_telemetry_overlay_video(
         x_range=x_range,
         velocity_range=velocity_range,
         altitude_range=altitude_range,
+        downrange_range=downrange_range,
         velocity_axis=velocity_axis,
         altitude_axis=altitude_axis,
+        downrange_axis=downrange_axis,
         include_rejected=include_rejected,
     )
 
@@ -116,7 +126,10 @@ def render_telemetry_overlay_video(
     rejected_series = (
         _build_series(rejected_df, x_range, velocity_range, altitude_range) if include_rejected and rejected_df is not None else {}
     )
-    reveal_times = _build_reveal_times(retained_series, rejected_series)
+    trajectory_series = (
+        _build_trajectory_series(trajectory_df, x_range, downrange_range) if include_trajectory and trajectory_df is not None else {}
+    )
+    reveal_times = _build_reveal_times(retained_series, rejected_series, trajectory_series)
     overlay_cache: dict[int, np.ndarray] = {}
     progress = _build_progress_mapper(clean_df)
 
@@ -148,11 +161,14 @@ def render_telemetry_overlay_video(
                     current_x=threshold_x,
                     velocity_axis=velocity_axis,
                     altitude_axis=altitude_axis,
+                    downrange_axis=downrange_axis,
                     retained_series=retained_series,
                     rejected_series=rejected_series,
+                    trajectory_series=trajectory_series,
                     x_range=x_range,
                     velocity_range=velocity_range,
                     altitude_range=altitude_range,
+                    downrange_range=downrange_range,
                     font_scale=font_scale,
                     include_rejected=include_rejected,
                 )
@@ -163,7 +179,12 @@ def render_telemetry_overlay_video(
                         interpolation=cv2.INTER_AREA,
                     )
                 overlay_cache[reveal_index] = overlay
-            _composite_overlay(frame, overlay, top_margin_px=top_margin_px)
+            _composite_overlay(
+                frame,
+                overlay,
+                top_margin_px=top_margin_px,
+                left_margin_px=left_margin_px,
+            )
             writer.write(frame)
             frame_index += 1
 
@@ -185,8 +206,18 @@ def _scaled_dimension(source: int, fraction: float) -> int:
     return max(120, int(round(source * max(0.05, min(1.0, fraction)))))
 
 
-def _top_margin_px(frame_height: int) -> int:
+def _corner_margin_px(frame_height: int) -> int:
+    """Symmetric pixel margin used for both the top and the left side of the
+    overlay so the panel sits in a balanced top-left inset rather than
+    flush against the screen edges."""
+
     return max(8, int(round(frame_height * 0.012)))
+
+
+def _top_margin_px(frame_height: int) -> int:
+    """Back-compat alias kept for callers that may import the old name."""
+
+    return _corner_margin_px(frame_height)
 
 
 def _overlay_render_scale(frame_width: int, frame_height: int) -> int:
@@ -207,17 +238,27 @@ def _open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> cv2.Vid
     raise RuntimeError(f"Failed to open video writer: {path}")
 
 
-def _axis_layout(width: int, height: int) -> tuple[AxisRect, AxisRect]:
+def _axis_layout(width: int, height: int, include_trajectory: bool = False) -> tuple[AxisRect, AxisRect, AxisRect | None]:
     left = max(64, int(round(width * 0.10)))
     right = max(18, int(round(width * 0.03)))
+    axis_width = max(80, width - left - right)
+    if include_trajectory:
+        top = max(16, int(round(height * 0.05)))
+        bottom = max(34, int(round(height * 0.10)))
+        gap = max(12, int(round(height * 0.04)))
+        available_height = max(54, height - top - bottom - 2 * gap)
+        axis_height = max(18, int(available_height / 3))
+        velocity_axis = AxisRect(left, top, axis_width, axis_height)
+        altitude_axis = AxisRect(left, top + axis_height + gap, axis_width, axis_height)
+        downrange_axis = AxisRect(left, top + 2 * (axis_height + gap), axis_width, axis_height)
+        return velocity_axis, altitude_axis, downrange_axis
     top = max(22, int(round(height * 0.06)))
     bottom = max(42, int(round(height * 0.12)))
     gap = max(22, int(round(height * 0.06)))
     axis_height = max(48, int((height - top - bottom - gap) / 2))
-    axis_width = max(80, width - left - right)
     velocity_axis = AxisRect(left, top, axis_width, axis_height)
     altitude_axis = AxisRect(left, top + axis_height + gap, axis_width, axis_height)
-    return velocity_axis, altitude_axis
+    return velocity_axis, altitude_axis, None
 
 
 def _draw_base_overlay(
@@ -226,8 +267,10 @@ def _draw_base_overlay(
     x_range: tuple[float, float],
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
+    downrange_range: tuple[float, float],
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
+    downrange_axis: AxisRect | None,
     include_rejected: bool,
 ) -> np.ndarray:
     overlay = np.zeros((height, width, 4), dtype=np.uint8)
@@ -242,10 +285,14 @@ def _draw_base_overlay(
 
     _draw_axis(overlay, velocity_axis, x_range, velocity_range, "Velocity [m/s]", font_scale)
     _draw_axis(overlay, altitude_axis, x_range, altitude_range, "Altitude [km]", font_scale)
+    bottom_axis = altitude_axis
+    if downrange_axis is not None:
+        _draw_axis(overlay, downrange_axis, x_range, downrange_range, "Downrange [km]", font_scale)
+        bottom_axis = downrange_axis
     _put_text(
         overlay,
         "Mission Elapsed Time [s]",
-        (altitude_axis.x + max(0, altitude_axis.width // 2 - 90), height - 12),
+        (bottom_axis.x + max(0, bottom_axis.width // 2 - 90), height - 12),
         font_scale,
     )
     _draw_legend(overlay, velocity_axis, font_scale, include_rejected)
@@ -329,6 +376,42 @@ def _build_series(
     return result
 
 
+def _has_trajectory_data(trajectory_df: pd.DataFrame | None) -> bool:
+    if trajectory_df is None or trajectory_df.empty:
+        return False
+    required = {"stage", "mission_elapsed_time_s", "downrange_m"}
+    return required.issubset(set(trajectory_df.columns)) and trajectory_df["downrange_m"].notna().any()
+
+
+def _build_trajectory_series(
+    trajectory_df: pd.DataFrame | None,
+    x_range: tuple[float, float],
+    downrange_range: tuple[float, float],
+) -> dict[str, PlotSeries]:
+    if trajectory_df is None or trajectory_df.empty:
+        return {}
+
+    result: dict[str, PlotSeries] = {}
+    for stage_name, color in STAGE_COLORS_BGRA.items():
+        stage_df = trajectory_df[trajectory_df["stage"] == stage_name]
+        if stage_df.empty:
+            continue
+        x = pd.to_numeric(stage_df["mission_elapsed_time_s"], errors="coerce").to_numpy(dtype=float)
+        y = pd.to_numeric(stage_df["downrange_m"], errors="coerce").to_numpy(dtype=float) * ALTITUDE_SCALE
+        finite_x = np.isfinite(x)
+        order = np.argsort(x[finite_x])
+        ordered_x = x[finite_x][order]
+        ordered_y = y[finite_x][order]
+        finite = np.isfinite(ordered_y)
+        result[f"downrange:{stage_name}"] = PlotSeries(
+            x=ordered_x[finite],
+            y=ordered_y[finite],
+            segments=_finite_segments(ordered_x, ordered_y),
+            color=color,
+        )
+    return result
+
+
 def _display_values(values: np.ndarray, column: str) -> np.ndarray:
     if column.endswith("_altitude_m"):
         return values * ALTITUDE_SCALE
@@ -352,9 +435,11 @@ def _finite_segments(x: np.ndarray, y: np.ndarray) -> tuple[tuple[np.ndarray, np
 def _build_reveal_times(
     retained_series: dict[str, PlotSeries],
     rejected_series: dict[str, PlotSeries],
+    trajectory_series: dict[str, PlotSeries],
 ) -> np.ndarray:
     arrays = [series.x for series in retained_series.values()]
     arrays.extend(series.x for series in rejected_series.values())
+    arrays.extend(series.x for series in trajectory_series.values())
     if not arrays:
         return np.array([], dtype=float)
     return np.unique(np.concatenate(arrays))
@@ -365,11 +450,14 @@ def _draw_summary_data(
     current_x: float,
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
+    downrange_axis: AxisRect | None,
     retained_series: dict[str, PlotSeries],
     rejected_series: dict[str, PlotSeries],
+    trajectory_series: dict[str, PlotSeries],
     x_range: tuple[float, float],
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
+    downrange_range: tuple[float, float],
     font_scale: float,
     include_rejected: bool,
 ) -> None:
@@ -390,6 +478,15 @@ def _draw_summary_data(
             altitude_range,
             current_x,
         )
+        if downrange_axis is not None:
+            _draw_retained_series(
+                overlay,
+                trajectory_series.get(f"downrange:{stage}"),
+                downrange_axis,
+                x_range,
+                downrange_range,
+                current_x,
+            )
         _draw_rejected_series(
             overlay,
             rejected_series.get(f"velocity:{stage}"),
@@ -495,6 +592,26 @@ def _range_for_columns(
     if finite.size == 0:
         return (0.0, 1.0)
 
+    low = float(np.min(finite))
+    high = float(np.max(finite))
+    if lower_floor is not None:
+        low = min(lower_floor, low)
+    if high <= low:
+        high = low + 1.0
+    padding = (high - low) * 0.06
+    return (low, high + padding)
+
+
+def _range_for_trajectory(
+    trajectory_df: pd.DataFrame | None,
+    lower_floor: float | None = None,
+) -> tuple[float, float]:
+    if trajectory_df is None or trajectory_df.empty or "downrange_m" not in trajectory_df.columns:
+        return (0.0, 1.0)
+    values = pd.to_numeric(trajectory_df["downrange_m"], errors="coerce").to_numpy(dtype=float) * ALTITUDE_SCALE
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (0.0, 1.0)
     low = float(np.min(finite))
     high = float(np.max(finite))
     if lower_floor is not None:
@@ -614,10 +731,16 @@ def _draw_rounded_rect(
     cv2.circle(image, (x1 - radius, y1 - radius), radius, color, -1, cv2.LINE_AA)
 
 
-def _composite_overlay(frame: np.ndarray, overlay: np.ndarray, top_margin_px: int) -> None:
+def _composite_overlay(
+    frame: np.ndarray,
+    overlay: np.ndarray,
+    top_margin_px: int,
+    left_margin_px: int = 0,
+) -> None:
     overlay_height, overlay_width = overlay.shape[:2]
     y0 = max(0, min(frame.shape[0] - overlay_height, top_margin_px))
-    roi = frame[y0 : y0 + overlay_height, :overlay_width]
+    x0 = max(0, min(frame.shape[1] - overlay_width, left_margin_px))
+    roi = frame[y0 : y0 + overlay_height, x0 : x0 + overlay_width]
     alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
     blended = overlay[:, :, :3].astype(np.float32) * alpha + roi.astype(np.float32) * (1.0 - alpha)
     roi[:] = np.clip(blended, 0, 255).astype(np.uint8)

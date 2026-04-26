@@ -15,44 +15,38 @@ video_overlay:
   height_fraction: 0.4
   output_filename: telemetry_overlay.mp4
   include_audio: true
+trajectory:
+  enabled: true
+  interpolation_method: pchip
+  integration_method: rk4
+  integration_step_s: 0.25
+  outlier_preconditioning_enabled: true
+  coarse_step_smoothing_enabled: true
+  coarse_step_max_gap_s: 10.0
+  coarse_altitude_threshold_m: 500.0
+  coarse_velocity_threshold_mps: 50.0
+  launch_site:
+    latitude_deg: 28.47056
+    longitude_deg: -80.54
+    azimuth_deg: 107.4
 fields:
   stage1_velocity:
     kind: velocity
     stage: stage1
-    bbox_x1y1x2y2:
-    - 0.12291666666666666
-    - 0.9027777777777778
-    - 0.23333333333333334
-    - 0.9574074074074074
+    bbox_x1y1x2y2: [0.12291666666666666, 0.9027777777777778, 0.23333333333333334, 0.9574074074074074]
   stage1_altitude:
     kind: altitude
     stage: stage1
-    bbox_x1y1x2y2:
-    - 0.28541666666666665
-    - 0.9046296296296297
-    - 0.40208333333333335
-    - 0.9546296296296296
+    bbox_x1y1x2y2: [0.28541666666666665, 0.9046296296296297, 0.40208333333333335, 0.9546296296296296]
   met:
     kind: met
     stage: null
-    bbox_x1y1x2y2:
-    - 0.41458333333333336
-    - 0.8861111111111111
-    - 0.5963541666666666
-    - 0.975
+    bbox_x1y1x2y2: [0.41458333333333336, 0.8861111111111111, 0.5963541666666666, 0.975]
   stage2_velocity:
     kind: velocity
     stage: stage2
-    bbox_x1y1x2y2:
-    - 0.6453125
-    - 0.8981481481481481
-    - 0.75625
-    - 0.9648148148148148
+    bbox_x1y1x2y2: [0.6453125, 0.8981481481481481, 0.75625, 0.9648148148148148]
   stage2_altitude:
     kind: altitude
     stage: stage2
-    bbox_x1y1x2y2:
-    - 0.8041666666666667
-    - 0.8962962962962963
-    - 0.909375
-    - 0.9537037037037037
+    bbox_x1y1x2y2: [0.8041666666666667, 0.8962962962962963, 0.909375, 0.9537037037037037]

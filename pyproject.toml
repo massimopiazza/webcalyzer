@@ -18,6 +18,9 @@ dependencies = [
   "pandas>=2.2",
   "pyyaml>=6.0",
   "rapidocr-onnxruntime>=1.4.4",
+  "scipy>=1.11",
+  "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

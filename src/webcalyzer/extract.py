@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+import multiprocessing as mp
+import time
 from pathlib import Path
+from typing import Iterable
 
 import pandas as pd
 
 from webcalyzer.config import save_profile
 from webcalyzer.models import Box, ExtractionRow, OCRObservation, ProfileConfig
-from webcalyzer.ocr import OCRDetection, OCRRunner
+from webcalyzer.ocr import OCRBackend, OCRDetection
+from webcalyzer.ocr_factory import OCRBackendOptions, make_backend, resolve_backend_name
 from webcalyzer.sanitize import MeasurementOption, choose_best_measurement, parse_measurement_options, parse_met_candidates
 from webcalyzer.video import build_sample_indices, crop_box, get_video_metadata, iterate_frames
 
@@ -29,11 +33,29 @@ class StageState:
             self.fields = {}
 
 
+@dataclass(slots=True)
+class FrameRawOCR:
+    """Output of Phase A: raw OCR candidates for one frame.
+
+    No state-dependent filtering happens here so workers can produce these
+    records out of order and Phase B replays them sequentially to apply MET
+    tracking, stage activation and plausibility checks.
+    """
+
+    frame_index: int
+    sample_time_s: float
+    candidates_by_field: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+
+
 def extract_telemetry(
     video_path: str | Path,
     profile: ProfileConfig,
     output_dir: str | Path,
     sample_fps: float | None = None,
+    *,
+    backend_options: OCRBackendOptions | None = None,
+    workers: int = 1,
+    skip_detection: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -41,10 +63,230 @@ def extract_telemetry(
     metadata = get_video_metadata(video_path)
     effective_fps = float(sample_fps or profile.default_sample_fps)
     sample_indices = build_sample_indices(metadata=metadata, target_fps=effective_fps)
-    frames = iterate_frames(video_path, sample_indices)
-    strip_box = _build_strip_union_box(profile)
+    if not sample_indices:
+        raise RuntimeError("No frames selected for extraction; check the video and sample_fps.")
+    backend_options = (backend_options or OCRBackendOptions()).validate()
+    workers = max(1, int(workers))
 
-    ocr = OCRRunner()
+    resolved_backend = resolve_backend_name(backend_options.backend)
+    print(
+        f"[webcalyzer] extraction settings: backend={resolved_backend} workers={workers} "
+        f"skip_detection={skip_detection} samples={len(sample_indices)}"
+    )
+
+    started_at = time.perf_counter()
+    raw_frames = _run_phase_a(
+        video_path=video_path,
+        profile=profile,
+        metadata_fps=metadata.fps,
+        sample_indices=sample_indices,
+        backend_options=backend_options,
+        workers=workers,
+        skip_detection=skip_detection,
+    )
+    phase_a_elapsed = time.perf_counter() - started_at
+    print(
+        f"[webcalyzer] phase A complete: {len(raw_frames)} frames OCR'd in "
+        f"{phase_a_elapsed:.1f}s ({len(raw_frames) / max(phase_a_elapsed, 1e-9):.2f} fps)"
+    )
+
+    raw_rows, clean_rows = _run_phase_b(
+        profile=profile,
+        raw_frames=raw_frames,
+        metadata_fps=metadata.fps,
+    )
+
+    raw_df = pd.DataFrame(raw_rows)
+    clean_df = pd.DataFrame(clean_rows)
+    raw_df.to_csv(output_path / "telemetry_raw.csv", index=False)
+    clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
+    pd.DataFrame(columns=clean_df.columns).to_csv(output_path / "telemetry_rejected.csv", index=False)
+    save_profile(profile, output_path / "config_resolved.yaml")
+    (output_path / "run_metadata.json").write_text(
+        json.dumps(
+            {
+                "video": metadata.to_dict(),
+                "sample_fps_requested": effective_fps,
+                "sample_count": len(sample_indices),
+                "profile_name": profile.profile_name,
+                "ocr": {
+                    "backend": resolved_backend,
+                    "backend_requested": backend_options.backend,
+                    "workers": workers,
+                    "skip_detection": skip_detection,
+                    "recognition_level": backend_options.recognition_level,
+                    "phase_a_seconds": phase_a_elapsed,
+                },
+            },
+            indent=2,
+        )
+    )
+    return raw_df, clean_df
+
+
+def _run_phase_a(
+    *,
+    video_path: str | Path,
+    profile: ProfileConfig,
+    metadata_fps: float,
+    sample_indices: list[int],
+    backend_options: OCRBackendOptions,
+    workers: int,
+    skip_detection: bool,
+) -> list[FrameRawOCR]:
+    if workers <= 1:
+        backend = make_backend(backend_options)
+        results: list[FrameRawOCR] = []
+        frames = iterate_frames(video_path, sample_indices)
+        total = len(frames)
+        for idx, (frame_index, frame) in enumerate(frames, start=1):
+            results.append(
+                _ocr_frame(
+                    frame_index=frame_index,
+                    frame=frame,
+                    profile=profile,
+                    metadata_fps=metadata_fps,
+                    backend=backend,
+                    skip_detection=skip_detection,
+                )
+            )
+            if idx % 25 == 0 or idx == total:
+                print(f"[webcalyzer] phase A: processed {idx}/{total} samples")
+        return results
+
+    chunks = _split_indices_into_chunks(sample_indices, workers)
+    ctx = mp.get_context("spawn")
+    payloads = [
+        (str(video_path), profile, metadata_fps, backend_options, skip_detection, chunk)
+        for chunk in chunks
+    ]
+    print(f"[webcalyzer] phase A: dispatching {len(payloads)} chunks across {workers} workers")
+    with ctx.Pool(processes=workers) as pool:
+        chunk_results = pool.map(_phase_a_worker, payloads)
+    flattened: list[FrameRawOCR] = []
+    for chunk in chunk_results:
+        flattened.extend(chunk)
+    flattened.sort(key=lambda item: item.frame_index)
+    return flattened
+
+
+def _phase_a_worker(payload: tuple) -> list[FrameRawOCR]:
+    video_path, profile, metadata_fps, backend_options, skip_detection, frame_indices = payload
+    backend = make_backend(backend_options)
+    frames = iterate_frames(video_path, list(frame_indices))
+    return [
+        _ocr_frame(
+            frame_index=frame_index,
+            frame=frame,
+            profile=profile,
+            metadata_fps=metadata_fps,
+            backend=backend,
+            skip_detection=skip_detection,
+        )
+        for frame_index, frame in frames
+    ]
+
+
+def _ocr_frame(
+    *,
+    frame_index: int,
+    frame,
+    profile: ProfileConfig,
+    metadata_fps: float,
+    backend: OCRBackend,
+    skip_detection: bool,
+) -> FrameRawOCR:
+    sample_time_s = frame_index / metadata_fps if metadata_fps else 0.0
+    if skip_detection:
+        candidates_by_field = _ocr_skip_detection(frame=frame, profile=profile, backend=backend)
+    else:
+        candidates_by_field = _ocr_with_detection(frame=frame, profile=profile, backend=backend)
+    return FrameRawOCR(
+        frame_index=frame_index,
+        sample_time_s=sample_time_s,
+        candidates_by_field=candidates_by_field,
+    )
+
+
+def _ocr_with_detection(
+    *,
+    frame,
+    profile: ProfileConfig,
+    backend: OCRBackend,
+) -> dict[str, list[tuple[str, str]]]:
+    strip_box = _build_strip_union_box(profile)
+    strip_crop = crop_box(frame, strip_box)
+    strip_detections = backend.extract_detections(strip_crop, mode="strip")
+    ocr_candidates_by_field = _assign_strip_detections(
+        profile=profile,
+        frame=frame,
+        strip_box=strip_box,
+        detections=strip_detections,
+    )
+
+    # Per-field multi-variant fallback. Triggered when strip-level parsing
+    # cannot produce a usable measurement (or, for MET, a usable timestamp).
+    # This mirrors the original sequential pipeline; the parse is cheap and
+    # stateless, so it stays in Phase A.
+    for field_name, field_cfg in profile.fields.items():
+        candidates = ocr_candidates_by_field.get(field_name, [])
+        if field_cfg.kind == "met":
+            if parse_met_candidates(candidates) is not None:
+                continue
+        else:
+            options = [
+                option
+                for raw_text, variant in candidates
+                for option in parse_measurement_options(raw_text, kind=field_cfg.kind, variant=variant)
+                if _field_specific_option_is_valid(field_name, option)
+            ]
+            if options:
+                continue
+        crop = crop_box(frame, field_cfg.box)
+        fallback = backend.extract_text(crop, field_kind=field_cfg.kind)
+        if fallback:
+            ocr_candidates_by_field[field_name] = [
+                (candidate.text, candidate.variant) for candidate in fallback
+            ]
+    return ocr_candidates_by_field
+
+
+def _ocr_skip_detection(
+    *,
+    frame,
+    profile: ProfileConfig,
+    backend: OCRBackend,
+) -> dict[str, list[tuple[str, str]]]:
+    crops: dict[str, "object"] = {}
+    for field_name, field_cfg in profile.fields.items():
+        crops[field_name] = crop_box(frame, field_cfg.box)
+    per_field = backend.recognize_field_crops(crops)
+    return {
+        field_name: [(candidate.text, candidate.variant) for candidate in candidates]
+        for field_name, candidates in per_field.items()
+    }
+
+
+def _split_indices_into_chunks(indices: list[int], workers: int) -> list[list[int]]:
+    if workers <= 1:
+        return [list(indices)]
+    chunks: list[list[int]] = [[] for _ in range(workers)]
+    chunk_size = max(1, len(indices) // workers)
+    for slot, start in enumerate(range(0, len(indices), chunk_size)):
+        if slot >= workers:
+            chunks[-1].extend(indices[start:])
+            break
+        chunks[slot] = indices[start : start + chunk_size]
+    chunks = [chunk for chunk in chunks if chunk]
+    return chunks
+
+
+def _run_phase_b(
+    *,
+    profile: ProfileConfig,
+    raw_frames: list[FrameRawOCR],
+    metadata_fps: float,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     raw_rows: list[dict[str, object]] = []
     clean_rows: list[dict[str, object]] = []
     stage_states = {
@@ -53,27 +295,15 @@ def extract_telemetry(
     }
     met_observations: list[tuple[float, float]] = []
 
-    for frame_index, frame in frames:
-        sample_number = len(raw_rows) + 1
-        sample_time_s = frame_index / metadata.fps
+    for frame_data in raw_frames:
         per_field_obs: dict[str, OCRObservation] = {}
-
-        strip_crop = crop_box(frame, strip_box)
-        strip_detections = ocr.extract_detections(strip_crop, mode="strip")
-        ocr_candidates_by_field = _assign_strip_detections(
-            profile=profile,
-            frame=frame,
-            strip_box=strip_box,
-            detections=strip_detections,
-        )
+        ocr_candidates_by_field = {
+            field_name: list(values)
+            for field_name, values in frame_data.candidates_by_field.items()
+        }
+        sample_time_s = frame_data.sample_time_s
 
         met_choice = parse_met_candidates(ocr_candidates_by_field.get("met", []))
-        if met_choice is None:
-            met_crop = crop_box(frame, profile.fields["met"].box)
-            met_fallback = ocr.extract_text(met_crop, field_kind="met")
-            if met_fallback:
-                ocr_candidates_by_field["met"] = [(candidate.text, candidate.variant) for candidate in met_fallback]
-                met_choice = parse_met_candidates(ocr_candidates_by_field["met"])
         mission_elapsed_time_s = met_choice.value if met_choice else None
         if mission_elapsed_time_s is not None and met_observations:
             previous_met = met_observations[-1][0]
@@ -113,22 +343,12 @@ def extract_telemetry(
         for field_name, field_cfg in profile.fields.items():
             if field_cfg.kind == "met":
                 continue
-
             stage_state = stage_states[field_cfg.stage]
             field_state = stage_state.fields.setdefault(field_name, FieldState())
             options: list[MeasurementOption] = []
             for raw_text, variant in ocr_candidates_by_field.get(field_name, []):
                 options.extend(parse_measurement_options(raw_text, kind=field_cfg.kind, variant=variant))
             options = [option for option in options if _field_specific_option_is_valid(field_name, option)]
-            if not options:
-                crop = crop_box(frame, field_cfg.box)
-                field_fallback = ocr.extract_text(crop, field_kind=field_cfg.kind)
-                if field_fallback:
-                    ocr_candidates_by_field[field_name] = [(candidate.text, candidate.variant) for candidate in field_fallback]
-                    for candidate in field_fallback:
-                        options.extend(parse_measurement_options(candidate.text, kind=field_cfg.kind, variant=candidate.variant))
-                    options = [option for option in options if _field_specific_option_is_valid(field_name, option)]
-
             chosen = choose_best_measurement(
                 options=options,
                 kind=field_cfg.kind,
@@ -181,7 +401,7 @@ def extract_telemetry(
         _update_field_state(stage_states["stage2"], "stage2_altitude", stage2_altitude, mission_elapsed_time_s)
 
         raw_row: dict[str, object] = {
-            "frame_index": frame_index,
+            "frame_index": frame_data.frame_index,
             "sample_time_s": sample_time_s,
             "mission_elapsed_time_s": mission_elapsed_time_s,
         }
@@ -196,7 +416,7 @@ def extract_telemetry(
 
         clean_rows.append(
             ExtractionRow(
-                frame_index=frame_index,
+                frame_index=frame_data.frame_index,
                 sample_time_s=sample_time_s,
                 mission_elapsed_time_s=mission_elapsed_time_s,
                 stage1_velocity_mps=stage1_velocity,
@@ -205,31 +425,7 @@ def extract_telemetry(
                 stage2_altitude_m=stage2_altitude,
             ).to_dict()
         )
-
-        if sample_number % 25 == 0 or sample_number == len(frames):
-            print(
-                f"[webcalyzer] processed {sample_number}/{len(frames)} samples "
-                f"(video t={sample_time_s:.1f}s, met={mission_elapsed_time_s if mission_elapsed_time_s is not None else 'n/a'})"
-            )
-
-    raw_df = pd.DataFrame(raw_rows)
-    clean_df = pd.DataFrame(clean_rows)
-    raw_df.to_csv(output_path / "telemetry_raw.csv", index=False)
-    clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
-    pd.DataFrame(columns=clean_df.columns).to_csv(output_path / "telemetry_rejected.csv", index=False)
-    save_profile(profile, output_path / "config_resolved.yaml")
-    (output_path / "run_metadata.json").write_text(
-        json.dumps(
-            {
-                "video": metadata.to_dict(),
-                "sample_fps_requested": effective_fps,
-                "sample_count": len(sample_indices),
-                "profile_name": profile.profile_name,
-            },
-            indent=2,
-        )
-    )
-    return raw_df, clean_df
+    return raw_rows, clean_rows
 
 
 def _build_strip_union_box(profile: ProfileConfig) -> Box:
@@ -256,10 +452,10 @@ def _assign_strip_detections(
 
     for detection in detections:
         global_box = (
-            int(round(detection.x0 / 2)) + strip_x0,
-            int(round(detection.y0 / 2)) + strip_y0,
-            int(round(detection.x1 / 2)) + strip_x0,
-            int(round(detection.y1 / 2)) + strip_y0,
+            detection.x0 + strip_x0,
+            detection.y0 + strip_y0,
+            detection.x1 + strip_x0,
+            detection.y1 + strip_y0,
         )
         best_field = None
         best_overlap = 0

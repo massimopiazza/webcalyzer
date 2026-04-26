@@ -10,7 +10,8 @@ import pandas as pd
 from webcalyzer.config import load_profile
 from webcalyzer.extract import _build_strip_union_box, _field_specific_option_is_valid
 from webcalyzer.models import Box, ProfileConfig
-from webcalyzer.ocr import OCRRunner, RescueOCR
+from webcalyzer.ocr import RescueOCR
+from webcalyzer.ocr_factory import OCRBackendOptions, make_backend
 from webcalyzer.sanitize import (
     MeasurementOption,
     choose_best_measurement,
@@ -187,9 +188,10 @@ def rescue_raw_dataframe(
     video_path: str | Path,
     profile: ProfileConfig,
     log_prefix: str = "[rescue]",
+    backend_options: OCRBackendOptions | None = None,
 ) -> pd.DataFrame:
-    runner = OCRRunner()
-    rescue = RescueOCR(runner)
+    backend = make_backend(backend_options or OCRBackendOptions())
+    rescue = RescueOCR(backend)
     raw_df = raw_df.copy()
 
     capture = open_capture(video_path)
@@ -345,11 +347,17 @@ def rescue_output_dir(
     output_dir: str | Path,
     video_path: str | Path,
     profile: ProfileConfig | None = None,
+    backend_options: OCRBackendOptions | None = None,
 ) -> pd.DataFrame:
     output_path = Path(output_dir)
     raw_df = pd.read_csv(output_path / "telemetry_raw.csv")
     if profile is None:
         profile = load_profile(output_path / "config_resolved.yaml")
-    rescued = rescue_raw_dataframe(raw_df=raw_df, video_path=video_path, profile=profile)
+    rescued = rescue_raw_dataframe(
+        raw_df=raw_df,
+        video_path=video_path,
+        profile=profile,
+        backend_options=backend_options,
+    )
     rescued.to_csv(output_path / "telemetry_raw.csv", index=False)
     return rescued

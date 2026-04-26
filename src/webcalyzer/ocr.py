@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import cv2
 import numpy as np
-from rapidocr_onnxruntime import RapidOCR
 
 
 @dataclass(slots=True)
@@ -23,12 +23,58 @@ class OCRDetection:
     y1: int
 
 
-class OCRRunner:
-    def __init__(self) -> None:
-        self.engine = RapidOCR()
+class OCRBackend(Protocol):
+    """Backend-neutral OCR surface used by the extraction pipeline."""
+
+    name: str
+
+    def extract_detections(self, image: np.ndarray, mode: str) -> list[OCRDetection]:
+        """Run a detection-driven OCR pass and return per-region detections.
+
+        ``mode`` is one of ``"strip"`` (single-variant, used for the unioned
+        telemetry strip) or ``"field:<kind>"`` (multi-variant fallback for a
+        single field crop).
+        """
+
+    def extract_text(self, image: np.ndarray, field_kind: str) -> list[OCRCandidate]:
+        """Run the per-field multi-variant fallback used when strip OCR fails."""
+
+    def recognize_field_crops(
+        self, crops: dict[str, np.ndarray]
+    ) -> dict[str, list[OCRCandidate]]:
+        """Recognition-only path that bypasses detection.
+
+        Each crop is fed straight to the recognition step (no detection),
+        which is much cheaper than a full OCR pass when bounding boxes are
+        already known. Returns one candidate per field (variant ``"recog"``).
+        """
+
+    def detect_image_text(self, image: np.ndarray) -> list[OCRDetection]:
+        """Run OCR on ``image`` exactly as given, without applying any further
+        preprocessing variants. Used by the rescue path which produces its
+        own preprocessed variants and just wants the OCR engine to read
+        them verbatim.
+        """
+
+
+class RapidOCRBackend:
+    """ONNXRuntime-backed RapidOCR backend, available on every platform."""
+
+    name = "rapidocr"
+
+    def __init__(self, *, intra_op_num_threads: int = -1, inter_op_num_threads: int = 1) -> None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        # RapidOCR's UpdateParameters propagates Global thread settings to
+        # Det/Cls/Rec automatically, so a single pair of kwargs is enough.
+        self.engine = RapidOCR(
+            intra_op_num_threads=intra_op_num_threads,
+            inter_op_num_threads=inter_op_num_threads,
+        )
 
     def extract_detections(self, image: np.ndarray, mode: str) -> list[OCRDetection]:
         variants = build_variants(image=image, mode=mode)
+        scale = _strip_resize_scale(mode)
         detections: list[OCRDetection] = []
         for variant_name, variant_image in variants:
             result, _elapsed = self.engine(variant_image)
@@ -38,8 +84,8 @@ class OCRRunner:
                 normalized = " ".join(str(text).strip().split())
                 if not normalized:
                     continue
-                xs = [int(round(point[0])) for point in polygon]
-                ys = [int(round(point[1])) for point in polygon]
+                xs = [int(round(point[0] / scale)) for point in polygon]
+                ys = [int(round(point[1] / scale)) for point in polygon]
                 detections.append(
                     OCRDetection(
                         text=normalized,
@@ -72,11 +118,85 @@ class OCRRunner:
             candidates.append(OCRCandidate(text=normalized, variant=variant_name))
         return candidates
 
+    def detect_image_text(self, image: np.ndarray) -> list[OCRDetection]:
+        result, _elapsed = self.engine(ensure_color(image))
+        if not result:
+            return []
+        detections: list[OCRDetection] = []
+        for polygon, text, _score in result:
+            normalized = " ".join(str(text).strip().split())
+            if not normalized:
+                continue
+            xs = [int(round(point[0])) for point in polygon]
+            ys = [int(round(point[1])) for point in polygon]
+            detections.append(
+                OCRDetection(
+                    text=normalized,
+                    variant="raw",
+                    x0=min(xs),
+                    y0=min(ys),
+                    x1=max(xs),
+                    y1=max(ys),
+                )
+            )
+        return detections
+
+    def recognize_field_crops(
+        self, crops: dict[str, np.ndarray]
+    ) -> dict[str, list[OCRCandidate]]:
+        if not crops:
+            return {}
+        prepared: list[np.ndarray] = []
+        keys: list[str] = []
+        for field_name, crop in crops.items():
+            color = ensure_color(crop)
+            prepared.append(_resize_for_rec(color))
+            keys.append(field_name)
+        results, _elapsed = self.engine.text_rec(prepared)
+        per_field: dict[str, list[OCRCandidate]] = {field_name: [] for field_name in crops}
+        for field_name, (text, _score) in zip(keys, results, strict=True):
+            normalized = " ".join(str(text).strip().split())
+            if not normalized:
+                continue
+            per_field[field_name] = [OCRCandidate(text=normalized, variant="recog")]
+        return per_field
+
+
+# Back-compat alias: existing call sites used ``OCRRunner`` before backends.
+OCRRunner = RapidOCRBackend
+
 
 def ensure_color(image: np.ndarray) -> np.ndarray:
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
+
+
+def _strip_resize_scale(mode: str) -> int:
+    """Match the upscale used inside :func:`build_variants` so detection
+    coordinates can be mapped back to the original crop space."""
+
+    if mode == "strip":
+        return 2
+    field_kind = mode.split(":", 1)[1] if ":" in mode else ""
+    return 2 if field_kind == "met" else 3
+
+
+def _resize_for_rec(image: np.ndarray, target_height: int = 48) -> np.ndarray:
+    """Resize a crop so it matches the height that the rec model expects.
+
+    The PP-OCRv4 recognizer takes ``[3, 48, W]`` inputs. We pre-resize to
+    ``target_height`` while preserving aspect ratio so the rec preprocessor
+    has a consistent input.
+    """
+
+    color = ensure_color(image)
+    h, w = color.shape[:2]
+    if h == 0 or w == 0:
+        return color
+    scale = target_height / float(h)
+    new_w = max(target_height, int(round(w * scale)))
+    return cv2.resize(color, (new_w, target_height), interpolation=cv2.INTER_LINEAR)
 
 
 def build_variants(image: np.ndarray, mode: str) -> list[tuple[str, np.ndarray]]:
@@ -159,8 +279,8 @@ def build_rescue_variants(
 
 
 class RescueOCR:
-    def __init__(self, runner: OCRRunner) -> None:
-        self.runner = runner
+    def __init__(self, backend: OCRBackend) -> None:
+        self.backend = backend
 
     def _run_variants(
         self, variants: list[tuple[str, np.ndarray]]
@@ -168,21 +288,16 @@ class RescueOCR:
         candidates: list[OCRCandidate] = []
         seen: set[tuple[str, str]] = set()
         for variant_name, variant_image in variants:
-            result, _elapsed = self.runner.engine(variant_image)
-            if not result:
+            # Rescue variants are already preprocessed (padded, scaled,
+            # thresholded), so run OCR on them verbatim instead of layering
+            # another set of variants on top.
+            detections = self.backend.detect_image_text(variant_image)
+            if not detections:
                 continue
-            parts: list[tuple[int, int, str]] = []
-            for polygon, text, _score in result:
-                normalized = " ".join(str(text).strip().split())
-                if not normalized:
-                    continue
-                ys = [int(round(point[1])) for point in polygon]
-                xs = [int(round(point[0])) for point in polygon]
-                parts.append((min(ys), min(xs), normalized))
-            if not parts:
+            ordered = sorted(detections, key=lambda d: (d.y0, d.x0))
+            joined = " ".join(d.text for d in ordered if d.text)
+            if not joined:
                 continue
-            parts.sort()
-            joined = " ".join(text for _y, _x, text in parts)
             key = (variant_name, joined)
             if key in seen:
                 continue

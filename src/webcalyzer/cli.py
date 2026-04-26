@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,7 +9,8 @@ from webcalyzer.calibration import launch_calibration_ui
 from webcalyzer.config import load_profile
 from webcalyzer.extract import extract_telemetry
 from webcalyzer.fixtures import generate_review_frames
-from webcalyzer.models import ProfileConfig, VideoOverlayConfig
+from webcalyzer.models import ProfileConfig, TrajectoryConfig, VideoOverlayConfig
+from webcalyzer.ocr_factory import OCRBackendOptions, resolve_backend_name
 from webcalyzer.overlay import render_telemetry_overlay_video
 from webcalyzer.plotting import create_plots
 from webcalyzer.postprocess import (
@@ -16,6 +18,12 @@ from webcalyzer.postprocess import (
     rebuild_clean_in_output_dir,
 )
 from webcalyzer.rescue import rescue_output_dir
+from webcalyzer.trajectory import (
+    INTEGRATION_METHODS,
+    INTERPOLATION_METHODS,
+    TRAJECTORY_FILENAME,
+    write_trajectory_outputs,
+)
 from webcalyzer.video import get_video_metadata
 
 
@@ -36,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_video_config_args(extract_parser)
     extract_parser.add_argument("--output", required=True, help="Directory for extraction outputs.")
     extract_parser.add_argument("--sample-fps", type=float, default=None, help="Sampling cadence in frames per second.")
+    _add_ocr_args(extract_parser)
+    _add_trajectory_args(extract_parser)
 
     plot_parser = subparsers.add_parser("plot", help="Generate plots from an extraction output folder.")
     plot_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_clean.csv.")
@@ -50,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     rescue_parser.add_argument("--video", required=True, help="Path to the source video.")
     rescue_parser.add_argument("--output", required=True, help="Extraction output directory.")
     rescue_parser.add_argument("--config", required=False, help="Optional YAML profile override.")
+    _add_ocr_args(rescue_parser, include_workers=False, include_skip_detection=False)
 
     outlier_parser = subparsers.add_parser(
         "reject-outliers",
@@ -59,10 +70,20 @@ def build_parser() -> argparse.ArgumentParser:
     outlier_parser.add_argument("--chi2", type=float, default=36.0, help="Per-field squared residual threshold.")
     outlier_parser.add_argument("--window-s", type=float, default=40.0, help="Neighbor window in seconds.")
 
+    trajectory_parser = subparsers.add_parser(
+        "reconstruct-trajectory",
+        help="Reconstruct downrange trajectory from telemetry_clean.csv.",
+    )
+    trajectory_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_clean.csv.")
+    trajectory_parser.add_argument("--config", required=False, help="Optional YAML profile override.")
+    _add_trajectory_args(trajectory_parser)
+
     run_parser = subparsers.add_parser("run", help="Run extraction and plotting.")
     _add_video_config_args(run_parser)
     run_parser.add_argument("--output", required=True, help="Directory for extraction outputs.")
     run_parser.add_argument("--sample-fps", type=float, default=None, help="Sampling cadence in frames per second.")
+    _add_ocr_args(run_parser)
+    _add_trajectory_args(run_parser)
     _add_video_overlay_args(run_parser)
 
     overlay_parser = subparsers.add_parser("render-overlay", help="Render a video copy with synchronized telemetry plot overlay.")
@@ -83,9 +104,73 @@ def _add_video_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", required=True, help="YAML profile path.")
 
 
+def _add_ocr_args(
+    parser: argparse.ArgumentParser,
+    *,
+    include_workers: bool = True,
+    include_skip_detection: bool = True,
+) -> None:
+    parser.add_argument(
+        "--ocr-backend",
+        choices=["auto", "rapidocr", "vision"],
+        default="auto",
+        help=(
+            "OCR backend selection. 'auto' picks Vision on macOS when available "
+            "and RapidOCR everywhere else. Use 'rapidocr' to force the portable "
+            "ONNX path even on macOS, or 'vision' to require Apple Vision."
+        ),
+    )
+    parser.add_argument(
+        "--ocr-recognition-level",
+        choices=["accurate", "fast"],
+        default="accurate",
+        help="Vision recognition level. Ignored when the resolved backend is RapidOCR.",
+    )
+    if include_workers:
+        parser.add_argument(
+            "--ocr-workers",
+            default="auto",
+            help=(
+                "Number of worker processes for OCR Phase A. 'auto' picks "
+                "max(1, physical_cores - 1) for RapidOCR and 1 for Vision."
+            ),
+        )
+    if include_skip_detection:
+        parser.add_argument(
+            "--ocr-skip-detection",
+            action="store_true",
+            help=(
+                "Opt-in: skip text detection and run recognition only on each "
+                "calibrated field crop. Faster but loses the rescue net for "
+                "frames where the overlay drifts; default off."
+            ),
+        )
+
+
 def _add_video_overlay_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-video-overlay", action="store_true", help="Do not render the configured video overlay copy.")
     parser.add_argument("--overlay-plot-mode", choices=["filtered", "with_rejected"], default=None)
+
+
+def _add_trajectory_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--trajectory-interpolation",
+        choices=sorted(INTERPOLATION_METHODS),
+        default=None,
+        help="Override trajectory.interpolation_method for reconstruction.",
+    )
+    parser.add_argument(
+        "--trajectory-integration",
+        choices=sorted(INTEGRATION_METHODS),
+        default=None,
+        help="Override trajectory.integration_method for fixed-step reconstruction.",
+    )
+    parser.add_argument(
+        "--trajectory-step-s",
+        type=float,
+        default=None,
+        help="Override trajectory.integration_step_s.",
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -97,19 +182,26 @@ def main(argv: list[str] | None = None) -> None:
 
         output_dir = Path(args.output)
         clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
-        create_plots(clean_df, output_dir)
+        create_plots(clean_df, output_dir, trajectory_df=_read_trajectory_df(output_dir))
         return
 
     if args.command == "rebuild-clean":
         clean_df = rebuild_clean_in_output_dir(args.output)
-        create_plots(clean_df, args.output)
+        clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=None)
+        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
         return
 
     if args.command == "rescue":
         profile = load_profile(args.config) if args.config else None
-        rescue_output_dir(output_dir=args.output, video_path=args.video, profile=profile)
+        rescue_output_dir(
+            output_dir=args.output,
+            video_path=args.video,
+            profile=profile,
+            backend_options=_ocr_backend_options(args),
+        )
         clean_df = rebuild_clean_in_output_dir(args.output)
-        create_plots(clean_df, args.output)
+        clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
+        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
         return
 
     if args.command == "reject-outliers":
@@ -118,7 +210,18 @@ def main(argv: list[str] | None = None) -> None:
             chi2_threshold=args.chi2,
             window_s=args.window_s,
         )
-        create_plots(cleaned, args.output)
+        cleaned, trajectory_df = _write_trajectory_for_output(cleaned, args.output, profile=None)
+        create_plots(cleaned, args.output, trajectory_df=trajectory_df)
+        return
+
+    if args.command == "reconstruct-trajectory":
+        import pandas as pd
+
+        output_dir = Path(args.output)
+        profile = load_profile(args.config) if args.config else _profile_from_output(output_dir)
+        clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
+        clean_df, trajectory_df = _write_trajectory_for_output(clean_df, output_dir, profile=profile, args=args)
+        create_plots(clean_df, output_dir, trajectory_df=trajectory_df)
         return
 
     if args.command == "render-overlay":
@@ -134,6 +237,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=output_dir,
             config=overlay_config,
             rejected_df=_read_rejected_df(output_dir),
+            trajectory_df=_read_trajectory_df(output_dir),
         )
         return
 
@@ -155,14 +259,36 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "extract":
-        extract_telemetry(args.video, profile, args.output, sample_fps=args.sample_fps)
+        profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
+        backend_options = _ocr_backend_options(args)
+        _raw_df, clean_df = extract_telemetry(
+            args.video,
+            profile,
+            args.output,
+            sample_fps=args.sample_fps,
+            backend_options=backend_options,
+            workers=_resolve_workers(args, backend_options),
+            skip_detection=getattr(args, "ocr_skip_detection", False),
+        )
+        _write_trajectory_for_output(clean_df, args.output, profile=profile)
         return
 
     if args.command == "run":
         generate_review_frames(args.video, profile, Path(args.output) / "review")
-        _raw_df, clean_df = extract_telemetry(args.video, profile, args.output, sample_fps=args.sample_fps)
-        create_plots(clean_df, args.output)
-        _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args)
+        profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
+        backend_options = _ocr_backend_options(args)
+        _raw_df, clean_df = extract_telemetry(
+            args.video,
+            profile,
+            args.output,
+            sample_fps=args.sample_fps,
+            backend_options=backend_options,
+            workers=_resolve_workers(args, backend_options),
+            skip_detection=getattr(args, "ocr_skip_detection", False),
+        )
+        clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
+        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
+        _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args, trajectory_df=trajectory_df)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")
@@ -176,6 +302,47 @@ def _read_rejected_df(output_dir: str | Path):
         return None
     rejected_df = pd.read_csv(rejected_path)
     return rejected_df if not rejected_df.empty else None
+
+
+def _read_trajectory_df(output_dir: str | Path):
+    import pandas as pd
+
+    trajectory_path = Path(output_dir) / TRAJECTORY_FILENAME
+    if not trajectory_path.exists():
+        return None
+    trajectory_df = pd.read_csv(trajectory_path)
+    return trajectory_df if not trajectory_df.empty else None
+
+
+def _profile_from_output(output_dir: str | Path) -> ProfileConfig | None:
+    profile_path = Path(output_dir) / "config_resolved.yaml"
+    if not profile_path.exists():
+        return None
+    return load_profile(profile_path)
+
+
+def _trajectory_config_from_args(config: TrajectoryConfig, args: argparse.Namespace | None = None) -> TrajectoryConfig:
+    resolved = replace(config)
+    if args is None:
+        return resolved
+    if getattr(args, "trajectory_interpolation", None):
+        resolved.interpolation_method = args.trajectory_interpolation
+    if getattr(args, "trajectory_integration", None):
+        resolved.integration_method = args.trajectory_integration
+    if getattr(args, "trajectory_step_s", None) is not None:
+        resolved.integration_step_s = args.trajectory_step_s
+    return resolved
+
+
+def _write_trajectory_for_output(
+    clean_df,
+    output_dir: str | Path,
+    profile: ProfileConfig | None,
+    args: argparse.Namespace | None = None,
+):
+    profile = profile or _profile_from_output(output_dir)
+    config = _trajectory_config_from_args(profile.trajectory if profile else TrajectoryConfig(), args)
+    return write_trajectory_outputs(clean_df, output_dir, config)
 
 
 def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Namespace) -> VideoOverlayConfig:
@@ -197,12 +364,38 @@ def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Name
     return config
 
 
+def _ocr_backend_options(args: argparse.Namespace) -> OCRBackendOptions:
+    return OCRBackendOptions(
+        backend=getattr(args, "ocr_backend", "auto"),
+        recognition_level=getattr(args, "ocr_recognition_level", "accurate"),
+    )
+
+
+def _resolve_workers(args: argparse.Namespace, backend_options: OCRBackendOptions) -> int:
+    raw_value = getattr(args, "ocr_workers", "auto")
+    if isinstance(raw_value, int):
+        return max(1, raw_value)
+    if raw_value is None:
+        raw_value = "auto"
+    text = str(raw_value).strip().lower()
+    if text == "auto":
+        if resolve_backend_name(backend_options.backend) == "vision":
+            return 1
+        cpu_count = os.cpu_count() or 1
+        return max(1, cpu_count - 1)
+    try:
+        return max(1, int(text))
+    except ValueError as exc:
+        raise SystemExit(f"--ocr-workers must be an integer or 'auto'; got {raw_value!r}") from exc
+
+
 def _render_overlay_if_enabled(
     video_path: str | Path,
     clean_df,
     output_dir: str | Path,
     profile: ProfileConfig,
     args: argparse.Namespace,
+    trajectory_df=None,
 ) -> None:
     overlay_config = _overlay_config_from_args(profile, args)
     if not overlay_config.enabled:
@@ -213,4 +406,5 @@ def _render_overlay_if_enabled(
         output_dir=output_dir,
         config=overlay_config,
         rejected_df=_read_rejected_df(output_dir),
+        trajectory_df=trajectory_df if trajectory_df is not None else _read_trajectory_df(output_dir),
     )

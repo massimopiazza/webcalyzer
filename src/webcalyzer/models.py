@@ -75,6 +75,55 @@ class VideoOverlayConfig:
 
 
 @dataclass(slots=True)
+class LaunchSiteConfig:
+    latitude_deg: float | None = None
+    longitude_deg: float | None = None
+    azimuth_deg: float | None = None
+
+    def is_complete(self) -> bool:
+        return (
+            self.latitude_deg is not None
+            and self.longitude_deg is not None
+            and self.azimuth_deg is not None
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "latitude_deg": self.latitude_deg,
+            "longitude_deg": self.longitude_deg,
+            "azimuth_deg": self.azimuth_deg,
+        }
+
+
+@dataclass(slots=True)
+class TrajectoryConfig:
+    enabled: bool = True
+    interpolation_method: str = "pchip"
+    integration_method: str = "rk4"
+    integration_step_s: float = 0.25
+    outlier_preconditioning_enabled: bool = True
+    coarse_step_smoothing_enabled: bool = True
+    coarse_step_max_gap_s: float = 10.0
+    coarse_altitude_threshold_m: float = 500.0
+    coarse_velocity_threshold_mps: float = 50.0
+    launch_site: LaunchSiteConfig = field(default_factory=LaunchSiteConfig)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "interpolation_method": self.interpolation_method,
+            "integration_method": self.integration_method,
+            "integration_step_s": self.integration_step_s,
+            "outlier_preconditioning_enabled": self.outlier_preconditioning_enabled,
+            "coarse_step_smoothing_enabled": self.coarse_step_smoothing_enabled,
+            "coarse_step_max_gap_s": self.coarse_step_max_gap_s,
+            "coarse_altitude_threshold_m": self.coarse_altitude_threshold_m,
+            "coarse_velocity_threshold_mps": self.coarse_velocity_threshold_mps,
+            "launch_site": self.launch_site.to_dict(),
+        }
+
+
+@dataclass(slots=True)
 class ProfileConfig:
     profile_name: str
     description: str
@@ -84,6 +133,7 @@ class ProfileConfig:
     fixture_frame_count: int
     fixture_time_range_s: tuple[float, float] | None
     video_overlay: VideoOverlayConfig = field(default_factory=VideoOverlayConfig)
+    trajectory: TrajectoryConfig = field(default_factory=TrajectoryConfig)
     fields: dict[str, FieldConfig] = field(default_factory=dict)
 
     def ordered_field_names(self) -> list[str]:
@@ -101,6 +151,7 @@ class ProfileConfig:
             "fixture_frame_count": self.fixture_frame_count,
             "fixture_time_range_s": list(self.fixture_time_range_s) if self.fixture_time_range_s is not None else None,
             "video_overlay": self.video_overlay.to_dict(),
+            "trajectory": self.trajectory.to_dict(),
             "fields": {name: field_cfg.to_dict() for name, field_cfg in self.fields.items()},
         }
 

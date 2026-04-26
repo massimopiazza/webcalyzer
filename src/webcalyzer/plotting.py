@@ -11,46 +11,74 @@ ALTITUDE_SCALE = 0.001
 
 SUMMARY_COLORS = {
     "stage1": "#1f77b4",
-    "stage2": "#ff7f0e",
+    "stage2": "#d62728",
 }
+
+INTERPOLATED_COLORS = SUMMARY_COLORS
 
 STAGE_COLORS = {
     "velocity": "#1f77b4",
     "altitude": "#d62728",
 }
 
+FILTERED_ALPHA = 0.75
+FILTERED_LINEWIDTH = 1.4
+INTERPOLATED_LINEWIDTH = 0.4
+
 
 def create_plots(
     clean_df: pd.DataFrame,
     output_dir: str | Path,
     rejected_df: pd.DataFrame | None = None,
+    trajectory_df: pd.DataFrame | None = None,
 ) -> None:
     output_path = Path(output_dir)
     if rejected_df is None:
         rejected_path = output_path / "telemetry_rejected.csv"
         if rejected_path.exists():
             rejected_df = pd.read_csv(rejected_path)
+    if trajectory_df is None:
+        trajectory_path = output_path / "trajectory.csv"
+        if trajectory_path.exists():
+            trajectory_df = pd.read_csv(trajectory_path)
 
     plots_dir = output_path / "plots"
-    for stale_name in ("summary.pdf", "coverage.pdf", "stage1.pdf", "stage2.pdf"):
+    for stale_name in ("summary.pdf", "coverage.pdf", "stage1.pdf", "stage2.pdf", "trajectory.pdf", "downrange.pdf"):
         stale_path = plots_dir / stale_name
         if stale_path.exists():
             stale_path.unlink()
-    _create_plot_set(clean_df, plots_dir / "filtered", rejected_df=None)
-    _create_plot_set(clean_df, plots_dir / "with_rejected", rejected_df=rejected_df)
+    _create_plot_set(clean_df, plots_dir / "filtered", rejected_df=None, trajectory_df=trajectory_df)
+    _create_plot_set(clean_df, plots_dir / "with_rejected", rejected_df=rejected_df, trajectory_df=trajectory_df)
 
 
-def _create_plot_set(clean_df: pd.DataFrame, plots_dir: Path, rejected_df: pd.DataFrame | None) -> None:
+def _create_plot_set(
+    clean_df: pd.DataFrame,
+    plots_dir: Path,
+    rejected_df: pd.DataFrame | None,
+    trajectory_df: pd.DataFrame | None,
+) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
-    _create_summary_pdf(clean_df, plots_dir / "summary.pdf", rejected_df=rejected_df)
+    stale_trajectory_path = plots_dir / "trajectory.pdf"
+    if stale_trajectory_path.exists():
+        stale_trajectory_path.unlink()
+    _create_summary_pdf(clean_df, plots_dir / "summary.pdf", rejected_df=rejected_df, trajectory_df=trajectory_df)
     _create_coverage_pdf(clean_df, plots_dir / "coverage.pdf")
     _create_stage_pdf(clean_df, stage="stage1", path=plots_dir / "stage1.pdf", rejected_df=rejected_df)
     _create_stage_pdf(clean_df, stage="stage2", path=plots_dir / "stage2.pdf", rejected_df=rejected_df)
+    if trajectory_df is not None and not trajectory_df.empty:
+        _create_downrange_pdf(trajectory_df, plots_dir / "downrange.pdf")
 
 
-def _create_summary_pdf(df: pd.DataFrame, path: Path, rejected_df: pd.DataFrame | None) -> None:
+def _create_summary_pdf(
+    df: pd.DataFrame,
+    path: Path,
+    rejected_df: pd.DataFrame | None,
+    trajectory_df: pd.DataFrame | None,
+) -> None:
     with PdfPages(path) as pdf:
-        fig, axes = plt.subplots(2, 1, figsize=(11, 8.5), sharex=True)
+        has_trajectory = trajectory_df is not None and not trajectory_df.empty
+        row_count = 3 if has_trajectory else 2
+        fig, axes = plt.subplots(row_count, 1, figsize=(11, 8.5), sharex=True)
         _plot_metric(
             axes[0],
             df,
@@ -58,6 +86,8 @@ def _create_summary_pdf(df: pd.DataFrame, path: Path, rejected_df: pd.DataFrame 
             "stage2_velocity_mps",
             ylabel="Velocity [m/s]",
             rejected_df=rejected_df,
+            trajectory_df=trajectory_df,
+            metric_name="velocity",
         )
         _plot_metric(
             axes[1],
@@ -66,8 +96,14 @@ def _create_summary_pdf(df: pd.DataFrame, path: Path, rejected_df: pd.DataFrame 
             "stage2_altitude_m",
             ylabel="Altitude [km]",
             rejected_df=rejected_df,
+            trajectory_df=trajectory_df,
+            metric_name="altitude",
         )
-        axes[1].set_xlabel("Mission Elapsed Time [s]")
+        bottom_axis = axes[1]
+        if has_trajectory:
+            _plot_downrange(axes[2], trajectory_df)
+            bottom_axis = axes[2]
+        bottom_axis.set_xlabel("Mission Elapsed Time [s]")
         fig.suptitle("Telemetry Summary")
         fig.tight_layout()
         pdf.savefig(fig)
@@ -123,6 +159,17 @@ def _create_stage_pdf(df: pd.DataFrame, stage: str, path: Path, rejected_df: pd.
         plt.close(fig)
 
 
+def _create_downrange_pdf(trajectory_df: pd.DataFrame, path: Path) -> None:
+    with PdfPages(path) as pdf:
+        fig, axis = plt.subplots(1, 1, figsize=(11, 5.5))
+        _plot_downrange(axis, trajectory_df)
+        axis.set_xlabel("Mission Elapsed Time [s]")
+        fig.suptitle("Downrange Reconstruction")
+        fig.tight_layout()
+        pdf.savefig(fig)
+        plt.close(fig)
+
+
 def _plot_metric(
     axis: plt.Axes,
     df: pd.DataFrame,
@@ -130,23 +177,30 @@ def _plot_metric(
     stage2_column: str,
     ylabel: str,
     rejected_df: pd.DataFrame | None,
+    trajectory_df: pd.DataFrame | None,
+    metric_name: str,
 ) -> None:
     _plot_line_with_rejected(
         axis=axis,
         df=df,
         column=stage1_column,
         color=SUMMARY_COLORS["stage1"],
-        label="Stage 1",
+        label="Stage 1 filtered",
         rejected_df=rejected_df,
+        alpha=FILTERED_ALPHA,
+        linewidth=FILTERED_LINEWIDTH,
     )
     _plot_line_with_rejected(
         axis=axis,
         df=df,
         column=stage2_column,
         color=SUMMARY_COLORS["stage2"],
-        label="Stage 2",
+        label="Stage 2 filtered",
         rejected_df=rejected_df,
+        alpha=FILTERED_ALPHA,
+        linewidth=FILTERED_LINEWIDTH,
     )
+    _plot_interpolated_metric(axis, trajectory_df, metric_name)
     axis.set_ylabel(ylabel)
     axis.grid(alpha=0.25)
     axis.legend()
@@ -159,9 +213,18 @@ def _plot_line_with_rejected(
     color: str,
     label: str,
     rejected_df: pd.DataFrame | None,
+    alpha: float = 1.0,
+    linewidth: float = 1.2,
 ) -> None:
     y_values = _plot_values(df[column], column)
-    axis.plot(df["mission_elapsed_time_s"], y_values, color=color, label=label, linewidth=1.2)
+    axis.plot(
+        df["mission_elapsed_time_s"],
+        y_values,
+        color=color,
+        alpha=alpha,
+        label=label,
+        linewidth=linewidth,
+    )
     if rejected_df is None or column not in rejected_df.columns:
         return
 
@@ -174,9 +237,52 @@ def _plot_line_with_rejected(
         s=16,
         facecolors="none",
         edgecolors=color,
+        alpha=alpha,
         linewidths=0.8,
         label=f"{label} rejected",
     )
+
+
+def _plot_interpolated_metric(
+    axis: plt.Axes,
+    trajectory_df: pd.DataFrame | None,
+    metric_name: str,
+) -> None:
+    if trajectory_df is None or trajectory_df.empty:
+        return
+    value_column = "velocity_mps" if metric_name == "velocity" else "altitude_m"
+    for stage, color in INTERPOLATED_COLORS.items():
+        stage_df = trajectory_df[trajectory_df["stage"] == stage]
+        if stage_df.empty:
+            continue
+        x = pd.to_numeric(stage_df["mission_elapsed_time_s"], errors="coerce")
+        y = pd.to_numeric(stage_df[value_column], errors="coerce")
+        if value_column == "altitude_m":
+            y = y * ALTITUDE_SCALE
+        axis.plot(
+            x,
+            y,
+            color=color,
+            alpha=1.0,
+            linewidth=INTERPOLATED_LINEWIDTH,
+            label=f"{stage.title()} interpolated",
+        )
+
+
+def _plot_downrange(axis: plt.Axes, trajectory_df: pd.DataFrame | None) -> None:
+    if trajectory_df is None or trajectory_df.empty:
+        return
+    for stage, color in SUMMARY_COLORS.items():
+        stage_df = trajectory_df[trajectory_df["stage"] == stage]
+        if stage_df.empty:
+            continue
+        x = pd.to_numeric(stage_df["mission_elapsed_time_s"], errors="coerce")
+        downrange_km = pd.to_numeric(stage_df["downrange_m"], errors="coerce") * ALTITUDE_SCALE
+        axis.plot(x, downrange_km, color=color, label=stage.title(), linewidth=1.2)
+    axis.set_ylabel("Downrange [km]")
+    axis.set_title("Reconstructed Downrange")
+    axis.grid(alpha=0.25)
+    axis.legend()
 
 
 def _plot_values(values: pd.Series, column: str) -> pd.Series:
@@ -186,8 +292,8 @@ def _plot_values(values: pd.Series, column: str) -> pd.Series:
 
 
 def _plot_coverage(axis: plt.Axes, df: pd.DataFrame, velocity_column: str, altitude_column: str, title: str) -> None:
-    axis.scatter(df["mission_elapsed_time_s"], df[velocity_column].notna().astype(int), s=4, label="velocity")
-    axis.scatter(df["mission_elapsed_time_s"], df[altitude_column].notna().astype(int), s=4, label="altitude")
+    axis.scatter(df["mission_elapsed_time_s"], df[velocity_column].notna().astype(int), s=4, alpha=0.6, label="velocity")
+    axis.scatter(df["mission_elapsed_time_s"], df[altitude_column].notna().astype(int), s=4, alpha=0.6, label="altitude")
     axis.set_yticks([0, 1])
     axis.set_yticklabels(["missing", "present"])
     axis.set_title(title)

@@ -1,6 +1,6 @@
 import numpy as np
 
-from webcalyzer.overlay import BACKGROUND, Y_TICK_TARGET, _draw_rounded_rect, _nice_range, _nice_ticks
+from webcalyzer.overlay import BACKGROUND, Y_TICK_TARGET, _axis_layout, _draw_rounded_rect, _nice_range, _nice_ticks
 
 
 def test_overlay_ticks_do_not_label_values_outside_axis_range() -> None:
@@ -25,3 +25,10 @@ def test_overlay_background_is_transparent_rounded_rectangle() -> None:
 
     assert tuple(image[40, 50]) == BACKGROUND
     assert image[0, 0, 3] == 0
+
+
+def test_overlay_three_axis_layout_stays_inside_panel() -> None:
+    axes = _axis_layout(320, 120, include_trajectory=True)
+
+    assert axes[2] is not None
+    assert max(axis.y + axis.height for axis in axes if axis is not None) < 120
