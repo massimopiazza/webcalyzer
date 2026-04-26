@@ -75,6 +75,7 @@ def rebuild_clean_in_output_dir(output_dir: str | Path) -> pd.DataFrame:
     raw_df = pd.read_csv(output_path / "telemetry_raw.csv")
     clean_df = rebuild_clean_from_raw(raw_df)
     clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
+    _empty_rejected_frame(clean_df).dropna(how="all").to_csv(output_path / "telemetry_rejected.csv", index=False)
     return clean_df
 
 
@@ -93,6 +94,27 @@ def apply_mahalanobis_outlier_rejection(
     min_variance: tuple[float, float] = (25.0, 2500.0),
     passes: int = 2,
 ) -> pd.DataFrame:
+    cleaned, _rejected = apply_mahalanobis_outlier_rejection_with_rejected(
+        clean_df=clean_df,
+        chi2_threshold=chi2_threshold,
+        window_s=window_s,
+        min_neighbors=min_neighbors,
+        min_side_neighbors=min_side_neighbors,
+        min_variance=min_variance,
+        passes=passes,
+    )
+    return cleaned
+
+
+def apply_mahalanobis_outlier_rejection_with_rejected(
+    clean_df: pd.DataFrame,
+    chi2_threshold: float = 13.82,
+    window_s: float = 40.0,
+    min_neighbors: int = 6,
+    min_side_neighbors: int = 2,
+    min_variance: tuple[float, float] = (25.0, 2500.0),
+    passes: int = 2,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reject outliers using Mahalanobis distance in (velocity, altitude) per stage.
 
     For each sample we fit a local quadratic to the surrounding window (excluding
@@ -102,6 +124,7 @@ def apply_mahalanobis_outlier_rejection(
     times because removing one outlier can reveal another.
     """
     df = clean_df.copy()
+    rejected_df = _empty_rejected_frame(clean_df)
     met = df["mission_elapsed_time_s"].to_numpy(dtype=float)
 
     for _ in range(passes):
@@ -171,12 +194,32 @@ def apply_mahalanobis_outlier_rejection(
             if flagged:
                 rejected_any = True
                 for idx in flagged:
-                    df.at[idx, v_col] = np.nan
-                    df.at[idx, h_col] = np.nan
+                    row_label = df.index[idx]
+                    rejected_df.at[row_label, "frame_index"] = df.at[row_label, "frame_index"]
+                    rejected_df.at[row_label, "sample_time_s"] = df.at[row_label, "sample_time_s"]
+                    rejected_df.at[row_label, "mission_elapsed_time_s"] = df.at[row_label, "mission_elapsed_time_s"]
+                    rejected_df.at[row_label, v_col] = df.at[row_label, v_col]
+                    rejected_df.at[row_label, h_col] = df.at[row_label, h_col]
+                    df.at[row_label, v_col] = np.nan
+                    df.at[row_label, h_col] = np.nan
 
         if not rejected_any:
             break
-    return df
+    return df, rejected_df
+
+
+def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "frame_index",
+        "sample_time_s",
+        "mission_elapsed_time_s",
+        "stage1_velocity_mps",
+        "stage1_altitude_m",
+        "stage2_velocity_mps",
+        "stage2_altitude_m",
+    ]
+    available_columns = [column for column in columns if column in clean_df.columns]
+    return pd.DataFrame(index=clean_df.index, columns=available_columns, dtype="float64")
 
 
 def apply_outlier_rejection_in_output_dir(
@@ -186,8 +229,12 @@ def apply_outlier_rejection_in_output_dir(
 ) -> pd.DataFrame:
     output_path = Path(output_dir)
     clean_df = pd.read_csv(output_path / "telemetry_clean.csv")
-    cleaned = apply_mahalanobis_outlier_rejection(
+    cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
         clean_df, chi2_threshold=chi2_threshold, window_s=window_s
     )
     cleaned.to_csv(output_path / "telemetry_clean.csv", index=False)
+    rejected.dropna(how="all", subset=list(STAGE_COLUMNS["stage1"] + STAGE_COLUMNS["stage2"])).to_csv(
+        output_path / "telemetry_rejected.csv",
+        index=False,
+    )
     return cleaned

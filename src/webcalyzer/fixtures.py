@@ -11,7 +11,7 @@ def generate_review_frames(video_path: str | Path, profile: ProfileConfig, outpu
     output_path.mkdir(parents=True, exist_ok=True)
     metadata = get_video_metadata(video_path)
     sample_count = int(count or profile.fixture_frame_count)
-    indices = evenly_spaced_indices(metadata, sample_count)
+    indices = evenly_spaced_indices(metadata, sample_count, time_range_s=profile.fixture_time_range_s)
     frames = iterate_frames(video_path, indices)
     saved_frames = []
     labels = []

@@ -48,16 +48,35 @@ webcalyzer run \
   --output outputs/ng3
 ```
 
+Re-render the synchronized video overlay after outlier rejection:
+
+```bash
+webcalyzer render-overlay \
+  --video BlueOrigin_NG-3.mp4 \
+  --output outputs/ng3 \
+  --config configs/blue_origin/new_glenn_ng3.yaml \
+  --plot-mode with_rejected
+```
+
 ## Output files
 
 - `telemetry_raw.csv`
 - `telemetry_clean.csv`
+- `telemetry_rejected.csv`
 - `run_metadata.json`
 - `config_resolved.yaml`
-- `plots/summary.pdf`
-- `plots/stage1.pdf`
-- `plots/stage2.pdf`
+- `telemetry_overlay.mp4`
+- `plots/filtered/summary.pdf`
+- `plots/filtered/coverage.pdf`
+- `plots/filtered/stage1.pdf`
+- `plots/filtered/stage2.pdf`
+- `plots/with_rejected/` mirrored plot set with hollow rejected outlier points
 - `review/` sampled frames and contact sheets
+
+The YAML profile uses `fixture_frame_count` plus `fixture_time_range_s` for
+representative calibration/review frames. Field boxes are normalized
+`bbox_x1y1x2y2: [x1, y1, x2, y2]` arrays. `video_overlay` controls the rendered
+video copy, including `plot_mode`, `width_fraction`, and `height_fraction`.
 
 ## Calibration controls
 

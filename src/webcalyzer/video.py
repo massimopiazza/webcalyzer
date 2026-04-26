@@ -51,13 +51,23 @@ def build_sample_indices(metadata: VideoMetadata, target_fps: float, start_s: fl
     return deduped
 
 
-def evenly_spaced_indices(metadata: VideoMetadata, count: int) -> list[int]:
+def evenly_spaced_indices(
+    metadata: VideoMetadata,
+    count: int,
+    time_range_s: tuple[float, float] | None = None,
+) -> list[int]:
     if count <= 0:
         raise ValueError("count must be positive")
+    start_s = 0.0
+    end_s = metadata.duration_s
+    if time_range_s is not None:
+        lower, upper = sorted((float(time_range_s[0]), float(time_range_s[1])))
+        start_s = max(0.0, min(lower, metadata.duration_s))
+        end_s = max(start_s, min(upper, metadata.duration_s))
     if count == 1:
-        return [0]
-    values = np.linspace(0, metadata.frame_count - 1, num=count)
-    return [int(round(value)) for value in values]
+        return [int(round(start_s * metadata.fps))]
+    values = np.linspace(start_s * metadata.fps, end_s * metadata.fps, num=count)
+    return [max(0, min(metadata.frame_count - 1, int(round(value)))) for value in values]
 
 
 def read_frame(video_path: str | Path, frame_index: int) -> np.ndarray:

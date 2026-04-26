@@ -216,6 +216,7 @@ def extract_telemetry(
     clean_df = pd.DataFrame(clean_rows)
     raw_df.to_csv(output_path / "telemetry_raw.csv", index=False)
     clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
+    pd.DataFrame(columns=clean_df.columns).to_csv(output_path / "telemetry_rejected.csv", index=False)
     save_profile(profile, output_path / "config_resolved.yaml")
     (output_path / "run_metadata.json").write_text(
         json.dumps(

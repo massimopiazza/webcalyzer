@@ -50,7 +50,27 @@ class FieldConfig:
         return {
             "kind": self.kind,
             "stage": self.stage,
-            "box": list(self.box.normalized_tuple()),
+            "bbox_x1y1x2y2": list(self.box.normalized_tuple()),
+        }
+
+
+@dataclass(slots=True)
+class VideoOverlayConfig:
+    enabled: bool = True
+    plot_mode: str = "filtered"
+    width_fraction: float = 0.5
+    height_fraction: float = 0.4
+    output_filename: str = "telemetry_overlay.mp4"
+    include_audio: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "plot_mode": self.plot_mode,
+            "width_fraction": self.width_fraction,
+            "height_fraction": self.height_fraction,
+            "output_filename": self.output_filename,
+            "include_audio": self.include_audio,
         }
 
 
@@ -62,7 +82,8 @@ class ProfileConfig:
     reference_height: int
     default_sample_fps: float
     fixture_frame_count: int
-    fixture_reference_times_s: list[float]
+    fixture_time_range_s: tuple[float, float] | None
+    video_overlay: VideoOverlayConfig = field(default_factory=VideoOverlayConfig)
     fields: dict[str, FieldConfig] = field(default_factory=dict)
 
     def ordered_field_names(self) -> list[str]:
@@ -78,7 +99,8 @@ class ProfileConfig:
             },
             "default_sample_fps": self.default_sample_fps,
             "fixture_frame_count": self.fixture_frame_count,
-            "fixture_reference_times_s": list(self.fixture_reference_times_s),
+            "fixture_time_range_s": list(self.fixture_time_range_s) if self.fixture_time_range_s is not None else None,
+            "video_overlay": self.video_overlay.to_dict(),
             "fields": {name: field_cfg.to_dict() for name, field_cfg in self.fields.items()},
         }
 

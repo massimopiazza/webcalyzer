@@ -27,13 +27,26 @@ class _MouseState:
     current: tuple[int, int] | None = None
 
 
-def _build_fixture_frame_indices(video_frame_count: int, fps: float, reference_times_s: list[float], fallback_count: int) -> list[int]:
-    if reference_times_s:
-        indices = [int(round(time_s * fps)) for time_s in reference_times_s]
-        return [max(0, min(video_frame_count - 1, index)) for index in indices]
+def _build_fixture_frame_indices(
+    video_frame_count: int,
+    fps: float,
+    time_range_s: tuple[float, float] | None,
+    fallback_count: int,
+) -> list[int]:
     if fallback_count <= 1:
-        return [0]
-    return [int(round(index)) for index in np.linspace(0, video_frame_count - 1, fallback_count)]
+        start_s = min(time_range_s) if time_range_s is not None else 0.0
+        return [max(0, min(video_frame_count - 1, int(round(start_s * fps))))]
+
+    duration_s = video_frame_count / fps if fps else 0.0
+    start_s = 0.0
+    end_s = duration_s
+    if time_range_s is not None:
+        lower, upper = sorted((float(time_range_s[0]), float(time_range_s[1])))
+        start_s = max(0.0, min(lower, duration_s))
+        end_s = max(start_s, min(upper, duration_s))
+
+    indices = [int(round(index)) for index in np.linspace(start_s * fps, end_s * fps, fallback_count)]
+    return [max(0, min(video_frame_count - 1, index)) for index in indices]
 
 
 def launch_calibration_ui(
@@ -46,7 +59,7 @@ def launch_calibration_ui(
     frame_indices = _build_fixture_frame_indices(
         video_frame_count=video_frame_count,
         fps=video_fps,
-        reference_times_s=profile.fixture_reference_times_s,
+        time_range_s=profile.fixture_time_range_s,
         fallback_count=profile.fixture_frame_count,
     )
     fixtures = iterate_frames(video_path, frame_indices)

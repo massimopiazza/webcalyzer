@@ -205,3 +205,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Outputs folder - keep folder but ignore all contents except .gitkeep
+outputs/*
+!outputs/.gitkeep

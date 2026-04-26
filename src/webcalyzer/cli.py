@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from webcalyzer.calibration import launch_calibration_ui
 from webcalyzer.config import load_profile
 from webcalyzer.extract import extract_telemetry
 from webcalyzer.fixtures import generate_review_frames
+from webcalyzer.models import ProfileConfig, VideoOverlayConfig
+from webcalyzer.overlay import render_telemetry_overlay_video
 from webcalyzer.plotting import create_plots
 from webcalyzer.postprocess import (
     apply_outlier_rejection_in_output_dir,
@@ -60,6 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_video_config_args(run_parser)
     run_parser.add_argument("--output", required=True, help="Directory for extraction outputs.")
     run_parser.add_argument("--sample-fps", type=float, default=None, help="Sampling cadence in frames per second.")
+    _add_video_overlay_args(run_parser)
+
+    overlay_parser = subparsers.add_parser("render-overlay", help="Render a video copy with synchronized telemetry plot overlay.")
+    overlay_parser.add_argument("--video", required=True, help="Path to the source video.")
+    overlay_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_clean.csv.")
+    overlay_parser.add_argument("--config", required=False, help="Optional YAML profile with video_overlay settings.")
+    overlay_parser.add_argument("--plot-mode", choices=["filtered", "with_rejected"], default=None)
+    overlay_parser.add_argument("--width-fraction", type=float, default=None)
+    overlay_parser.add_argument("--height-fraction", type=float, default=None)
+    overlay_parser.add_argument("--output-filename", default=None)
+    overlay_parser.add_argument("--no-audio", action="store_true", help="Do not mux the original audio into the rendered copy.")
 
     return parser
 
@@ -67,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _add_video_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--video", required=True, help="Path to the source video.")
     parser.add_argument("--config", required=True, help="YAML profile path.")
+
+
+def _add_video_overlay_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--skip-video-overlay", action="store_true", help="Do not render the configured video overlay copy.")
+    parser.add_argument("--overlay-plot-mode", choices=["filtered", "with_rejected"], default=None)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -102,6 +121,22 @@ def main(argv: list[str] | None = None) -> None:
         create_plots(cleaned, args.output)
         return
 
+    if args.command == "render-overlay":
+        import pandas as pd
+
+        output_dir = Path(args.output)
+        profile = load_profile(args.config) if args.config else None
+        overlay_config = _overlay_config_from_args(profile, args)
+        clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
+        render_telemetry_overlay_video(
+            video_path=args.video,
+            clean_df=clean_df,
+            output_dir=output_dir,
+            config=overlay_config,
+            rejected_df=_read_rejected_df(output_dir),
+        )
+        return
+
     profile = load_profile(args.config)
 
     if args.command == "sample-frames":
@@ -127,6 +162,55 @@ def main(argv: list[str] | None = None) -> None:
         generate_review_frames(args.video, profile, Path(args.output) / "review")
         _raw_df, clean_df = extract_telemetry(args.video, profile, args.output, sample_fps=args.sample_fps)
         create_plots(clean_df, args.output)
+        _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")
+
+
+def _read_rejected_df(output_dir: str | Path):
+    import pandas as pd
+
+    rejected_path = Path(output_dir) / "telemetry_rejected.csv"
+    if not rejected_path.exists():
+        return None
+    rejected_df = pd.read_csv(rejected_path)
+    return rejected_df if not rejected_df.empty else None
+
+
+def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Namespace) -> VideoOverlayConfig:
+    config = replace(profile.video_overlay) if profile is not None else VideoOverlayConfig()
+    if getattr(args, "skip_video_overlay", False):
+        config.enabled = False
+    if getattr(args, "overlay_plot_mode", None):
+        config.plot_mode = args.overlay_plot_mode
+    if getattr(args, "plot_mode", None):
+        config.plot_mode = args.plot_mode
+    if getattr(args, "width_fraction", None) is not None:
+        config.width_fraction = args.width_fraction
+    if getattr(args, "height_fraction", None) is not None:
+        config.height_fraction = args.height_fraction
+    if getattr(args, "output_filename", None):
+        config.output_filename = args.output_filename
+    if getattr(args, "no_audio", False):
+        config.include_audio = False
+    return config
+
+
+def _render_overlay_if_enabled(
+    video_path: str | Path,
+    clean_df,
+    output_dir: str | Path,
+    profile: ProfileConfig,
+    args: argparse.Namespace,
+) -> None:
+    overlay_config = _overlay_config_from_args(profile, args)
+    if not overlay_config.enabled:
+        return
+    render_telemetry_overlay_video(
+        video_path=video_path,
+        clean_df=clean_df,
+        output_dir=output_dir,
+        config=overlay_config,
+        rejected_df=_read_rejected_df(output_dir),
+    )
