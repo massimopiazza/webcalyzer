@@ -8,7 +8,11 @@ from webcalyzer.config import load_profile
 from webcalyzer.extract import extract_telemetry
 from webcalyzer.fixtures import generate_review_frames
 from webcalyzer.plotting import create_plots
-from webcalyzer.postprocess import rebuild_clean_in_output_dir
+from webcalyzer.postprocess import (
+    apply_outlier_rejection_in_output_dir,
+    rebuild_clean_in_output_dir,
+)
+from webcalyzer.rescue import rescue_output_dir
 from webcalyzer.video import get_video_metadata
 
 
@@ -35,6 +39,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     rebuild_parser = subparsers.add_parser("rebuild-clean", help="Rebuild telemetry_clean.csv from telemetry_raw.csv.")
     rebuild_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_raw.csv.")
+
+    rescue_parser = subparsers.add_parser(
+        "rescue",
+        help="Re-OCR samples whose raw parse failed (multi-variant, multi-frame).",
+    )
+    rescue_parser.add_argument("--video", required=True, help="Path to the source video.")
+    rescue_parser.add_argument("--output", required=True, help="Extraction output directory.")
+    rescue_parser.add_argument("--config", required=False, help="Optional YAML profile override.")
+
+    outlier_parser = subparsers.add_parser(
+        "reject-outliers",
+        help="Apply Mahalanobis-distance outlier rejection to telemetry_clean.csv.",
+    )
+    outlier_parser.add_argument("--output", required=True, help="Extraction output directory.")
+    outlier_parser.add_argument("--chi2", type=float, default=13.82, help="Chi^2 threshold (default 13.82 for 99.9%% / 2 DoF).")
+    outlier_parser.add_argument("--window-s", type=float, default=40.0, help="Neighbor window in seconds.")
 
     run_parser = subparsers.add_parser("run", help="Run extraction and plotting.")
     _add_video_config_args(run_parser)
@@ -64,6 +84,22 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "rebuild-clean":
         clean_df = rebuild_clean_in_output_dir(args.output)
         create_plots(clean_df, args.output)
+        return
+
+    if args.command == "rescue":
+        profile = load_profile(args.config) if args.config else None
+        rescue_output_dir(output_dir=args.output, video_path=args.video, profile=profile)
+        clean_df = rebuild_clean_in_output_dir(args.output)
+        create_plots(clean_df, args.output)
+        return
+
+    if args.command == "reject-outliers":
+        cleaned = apply_outlier_rejection_in_output_dir(
+            output_dir=args.output,
+            chi2_threshold=args.chi2,
+            window_s=args.window_s,
+        )
+        create_plots(cleaned, args.output)
         return
 
     profile = load_profile(args.config)
