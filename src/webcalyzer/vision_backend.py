@@ -29,7 +29,7 @@ def is_available() -> bool:
     return True
 
 
-_TELEMETRY_CUSTOM_WORDS = (
+_DEFAULT_TELEMETRY_CUSTOM_WORDS: tuple[str, ...] = (
     "MPH",
     "FT",
     "MI",
@@ -52,7 +52,12 @@ class VisionBackend:
 
     name = "vision"
 
-    def __init__(self, *, recognition_level: str = "accurate") -> None:
+    def __init__(
+        self,
+        *,
+        recognition_level: str = "accurate",
+        custom_words: Iterable[str] | None = None,
+    ) -> None:
         if not is_available():
             raise RuntimeError(
                 "Vision backend requires macOS with pyobjc-framework-Vision "
@@ -69,6 +74,9 @@ class VisionBackend:
             raise ValueError(
                 f"Unknown recognition_level={recognition_level!r}; expected 'accurate' or 'fast'."
             )
+        if custom_words is None:
+            custom_words = _DEFAULT_TELEMETRY_CUSTOM_WORDS
+        self._custom_words = tuple(str(word) for word in custom_words if str(word).strip())
 
     def extract_detections(self, image: np.ndarray, mode: str) -> list[OCRDetection]:
         observations = self._recognize(image)
@@ -133,7 +141,7 @@ class VisionBackend:
         request.setRecognitionLevel_(self._recognition_level)
         request.setUsesLanguageCorrection_(False)
         request.setRecognitionLanguages_(["en-US"])
-        request.setCustomWords_(list(_TELEMETRY_CUSTOM_WORDS))
+        request.setCustomWords_(list(self._custom_words))
         request.setMinimumTextHeight_(0.0)
         success, _error = handler.performRequests_error_([request], None)
         if not success:

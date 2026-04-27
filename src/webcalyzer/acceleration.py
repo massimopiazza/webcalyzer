@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.interpolate import UnivariateSpline
+from scipy.signal import savgol_filter
 
 
 G0_MPS2 = 9.80665
 ACCELERATION_SOURCE_GAP_THRESHOLD_S = 10.0
-DERIVATIVE_SMOOTHING_STRENGTH = 300.0
+
+# Savitzky-Golay default parameters. The window length is expressed in
+# seconds so the smoothing is FPS-independent: at higher sampling rates,
+# more samples fall inside the same time window, automatically improving
+# noise rejection. A polyorder of 3 captures the cubic-in-time behaviour
+# of constant-jerk segments without over-fitting to OCR jitter — see
+# Savitzky & Golay (1964) and Schafer (2011) "What Is a Savitzky-Golay
+# Filter?".
+DEFAULT_DERIVATIVE_WINDOW_S = 5.0
+SMOOTHING_POLYORDER = 3
+MIN_WINDOW_SAMPLES = SMOOTHING_POLYORDER + 2  # spline-style guard band
 
 
 def acceleration_profile(
@@ -16,6 +26,7 @@ def acceleration_profile(
     trajectory_df: pd.DataFrame,
     stage: str,
     max_source_gap_s: float = ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+    derivative_window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
 ) -> tuple[np.ndarray, np.ndarray]:
     stage_df = trajectory_df[trajectory_df["stage"] == stage]
     times, velocity = _trajectory_velocity_points(stage_df)
@@ -34,7 +45,11 @@ def acceleration_profile(
             continue
         segment_times = times[start:end]
         segment_velocity = velocity[start:end]
-        smoothed_velocity, derivative_mps2 = smoothed_velocity_and_derivative(segment_times, segment_velocity)
+        _smoothed, derivative_mps2 = smoothed_velocity_and_derivative(
+            segment_times,
+            segment_velocity,
+            window_s=derivative_window_s,
+        )
         acceleration_g[start:end] = derivative_mps2 / G0_MPS2
     return times, acceleration_g
 
@@ -45,6 +60,7 @@ def smoothed_velocity_profile(
     trajectory_df: pd.DataFrame,
     stage: str,
     max_source_gap_s: float = ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+    derivative_window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
 ) -> tuple[np.ndarray, np.ndarray]:
     stage_df = trajectory_df[trajectory_df["stage"] == stage]
     times, velocity = _trajectory_velocity_points(stage_df)
@@ -63,8 +79,12 @@ def smoothed_velocity_profile(
             continue
         segment_times = times[start:end]
         segment_velocity = velocity[start:end]
-        smoothed_velocity, _derivative_mps2 = smoothed_velocity_and_derivative(segment_times, segment_velocity)
-        smoothed[start:end] = smoothed_velocity
+        smoothed_segment, _derivative_mps2 = smoothed_velocity_and_derivative(
+            segment_times,
+            segment_velocity,
+            window_s=derivative_window_s,
+        )
+        smoothed[start:end] = smoothed_segment
     return times, smoothed
 
 
@@ -86,44 +106,82 @@ def _trajectory_velocity_points(stage_df: pd.DataFrame) -> tuple[np.ndarray, np.
     return points["time"].to_numpy(dtype=float), points["velocity"].to_numpy(dtype=float)
 
 
-def smoothed_velocity_for_derivative(times: np.ndarray, velocity_mps: np.ndarray) -> np.ndarray:
+def smoothed_velocity_for_derivative(
+    times: np.ndarray,
+    velocity_mps: np.ndarray,
+    window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
+) -> np.ndarray:
     """Return a hidden smoothed velocity series used only for derivatives."""
 
-    smoothed_velocity, _derivative_mps2 = smoothed_velocity_and_derivative(times, velocity_mps)
+    smoothed_velocity, _derivative_mps2 = smoothed_velocity_and_derivative(
+        times, velocity_mps, window_s=window_s
+    )
     return smoothed_velocity
 
 
 def smoothed_velocity_and_derivative(
     times: np.ndarray,
     velocity_mps: np.ndarray,
+    *,
+    window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return derivative-ready velocity and its time derivative.
 
-    The smoothing factor is automatic: estimate high-frequency velocity
-    scatter robustly from the segment itself, then allow a middle-ground
-    residual budget around that scatter. This intentionally smooths more
-    aggressively than GCV, which was too willing to chase OCR jitter.
+    Uses a Savitzky-Golay filter sized in seconds. A textbook approach for
+    differentiating a noisy uniformly-sampled signal: fit a local polynomial
+    of degree ``polyorder`` over a sliding window, then evaluate the
+    polynomial (or its analytical derivative) at the centre. Sizing the
+    window in seconds rather than samples keeps the smoothing FPS-independent
+    while letting denser sampling automatically buy more noise rejection.
     """
 
-    if times.size < 5:
+    times = np.asarray(times, dtype=float)
+    velocity_mps = np.asarray(velocity_mps, dtype=float)
+    if times.size < MIN_WINDOW_SAMPLES:
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
 
-    smoothing_factor = _automatic_smoothing_factor(times, velocity_mps)
+    median_dt = _median_positive_dt(times)
+    if median_dt is None:
+        velocity = velocity_mps.astype(float, copy=True)
+        return velocity, velocity_derivative(times, velocity)
+
+    target_samples = max(MIN_WINDOW_SAMPLES, int(round(window_s / median_dt)))
+    window_length = target_samples if target_samples % 2 == 1 else target_samples + 1
+    if window_length > times.size:
+        # Fall back to the largest odd window the segment can support.
+        window_length = times.size if times.size % 2 == 1 else times.size - 1
+    if window_length < MIN_WINDOW_SAMPLES:
+        velocity = velocity_mps.astype(float, copy=True)
+        return velocity, velocity_derivative(times, velocity)
+
+    polyorder = min(SMOOTHING_POLYORDER, window_length - 1)
+
     try:
-        spline = UnivariateSpline(times, velocity_mps, s=smoothing_factor, k=3)
+        smoothed = savgol_filter(
+            velocity_mps,
+            window_length=window_length,
+            polyorder=polyorder,
+            delta=median_dt,
+            mode="interp",
+        )
+        derivative = savgol_filter(
+            velocity_mps,
+            window_length=window_length,
+            polyorder=polyorder,
+            delta=median_dt,
+            deriv=1,
+            mode="interp",
+        )
     except ValueError:
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
 
-    smoothed = np.asarray(spline(times), dtype=float)
-    if smoothed.shape != velocity_mps.shape or not np.isfinite(smoothed).all():
+    if not np.isfinite(smoothed).all() or not np.isfinite(derivative).all():
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
-    derivative = np.asarray(spline.derivative()(times), dtype=float)
-    if derivative.shape != velocity_mps.shape or not np.isfinite(derivative).all():
-        derivative = velocity_derivative(times, smoothed)
-    return smoothed, derivative
+
+    return np.asarray(smoothed, dtype=float), np.asarray(derivative, dtype=float)
 
 
 def velocity_derivative(times: np.ndarray, velocity_mps: np.ndarray) -> np.ndarray:
@@ -131,41 +189,17 @@ def velocity_derivative(times: np.ndarray, velocity_mps: np.ndarray) -> np.ndarr
     return np.gradient(velocity_mps, times, edge_order=edge_order)
 
 
-def _automatic_smoothing_factor(times: np.ndarray, velocity_mps: np.ndarray) -> float:
-    del times
-    sigma = _robust_velocity_noise(velocity_mps)
-    return max(float(velocity_mps.size) * sigma * sigma * DERIVATIVE_SMOOTHING_STRENGTH, 1e-9)
-
-
-def _robust_velocity_noise(values: np.ndarray) -> float:
-    if values.size < 5:
-        return 1e-6
-
-    rolling_window = max(7, min(101, (values.size // 12) | 1))
-    if rolling_window % 2 == 0:
-        rolling_window += 1
-    local_trend = (
-        pd.Series(values)
-        .rolling(rolling_window, center=True, min_periods=1)
-        .median()
-        .to_numpy(dtype=float)
-    )
-    residual = values - local_trend
-    residual_sigma = _mad_sigma(residual)
-
-    # Dense interpolation can make pointwise residuals look deceptively
-    # small. First differences give a second estimate of local jitter.
-    diff_sigma = float(np.std(np.diff(values))) * 0.15 if values.size >= 2 else 0.0
-    return max(residual_sigma, diff_sigma, 1e-6)
-
-
-def _mad_sigma(values: np.ndarray) -> float:
-    finite = values[np.isfinite(values)]
-    if finite.size == 0:
-        return 0.0
-    median = float(np.median(finite))
-    mad = float(np.median(np.abs(finite - median)))
-    return 1.4826 * mad
+def _median_positive_dt(times: np.ndarray) -> float | None:
+    if times.size < 2:
+        return None
+    diffs = np.diff(times)
+    positive = diffs[diffs > 1e-9]
+    if positive.size == 0:
+        return None
+    median = float(np.median(positive))
+    if not np.isfinite(median) or median <= 0.0:
+        return None
+    return median
 
 
 def source_velocity_times(clean_df: pd.DataFrame, stage: str) -> np.ndarray:

@@ -112,7 +112,7 @@ the cross-platform RapidOCR backend.
 |                          | `--config` | path | no | `<output>/config_resolved.yaml` | — | Optional YAML profile override. |
 |                          | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | |
 |                          | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | `simpson` is accepted as an alias for `rk4`. |
-|                          | `--trajectory-step-s` | float | no | profile's `trajectory.integration_step_s` | any positive float | Fixed integration step in seconds. |
+|                          | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Savitzky-Golay window length (seconds) for the acceleration plot. |
 | `render-overlay` | `--video` | path | yes | — | — | |
 |                  | `--output` | path | yes | — | — | |
 |                  | `--config` | path | no | — | — | Optional YAML profile with `video_overlay` settings. |
@@ -392,7 +392,7 @@ video_overlay:
   enabled: true
   plot_mode: filtered           # 'filtered' or 'with_rejected'
   width_fraction: 0.5           # overlay panel width as fraction of frame width
-  height_fraction: 0.4
+  height_fraction: 0.65
   output_filename: telemetry_overlay.mp4
   include_audio: true
 
@@ -400,16 +400,44 @@ trajectory:
   enabled: true
   interpolation_method: pchip     # linear, pchip, akima, cubic
   integration_method: rk4         # euler, midpoint, trapezoid, rk4
-  integration_step_s: 0.25
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0
   coarse_altitude_threshold_m: 500.0
   coarse_velocity_threshold_mps: 50.0
+  derivative_smoothing_window_s: 5.0   # Savitzky-Golay window for d/dt(velocity)
   launch_site:
     latitude_deg: null            # WGS84 inputs are optional
     longitude_deg: null
     azimuth_deg: null
+
+# Optional. When omitted, the built-in MPH/FT/MI/T+ vocabulary is used.
+# Add this block to retarget the OCR pipeline to a feed that uses different
+# units, language, or timestamp formatting without code changes. customWords
+# (Apple Vision) are auto-derived from the alias list below.
+parsing:
+  velocity:
+    default_unit: MPH
+    inferred_units_with_separator: [MPH]      # used when no explicit unit label
+    inferred_units_without_separator: [MPH]
+    units:
+      MPH: { aliases: [MPH, MPN, MРН, MPI, M/H], si_factor: 0.44704 }
+      KPH: { aliases: [KPH, KMH, KM/H, KMPH], si_factor: 0.27777777777777778 }
+      MPS: { aliases: [M/S, MPS], si_factor: 1.0 }
+  altitude:
+    default_unit: FT
+    ambiguous_default_unit: FT                # ties prefer the smaller value
+    inferred_units_with_separator: [FT, MI]   # 6-digit FT vs 3-digit MI
+    inferred_units_without_separator: [FT]
+    units:
+      FT: { aliases: [FT, F7, FI, ET, E7, EI], si_factor: 0.3048 }
+      MI: { aliases: [MI, ML, M1], si_factor: 1609.344 }
+      KM: { aliases: [KM], si_factor: 1000.0 }
+      M:  { aliases: [M], si_factor: 1.0 }
+  met:
+    timestamp_patterns:
+      - 'T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?'
+      - '([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?'
 
 hardcoded_raw_data_points:       # optional synthetic raw points keyed by MET
   - mission_elapsed_time_s: 560.0
@@ -493,14 +521,25 @@ Interpolation options:
   and is best reserved for very clean telemetry.
 - `linear`: most conservative and least smooth; useful for debugging.
 
-Integration is fixed-step. `rk4` is the default; for this time-only
-telemetry integration it is equivalent to Simpson-style quadrature over
-each step. `trapezoid`, `midpoint`, and `euler` are available for simpler
-comparisons.
+Integration is fixed-step at the OCR sample period (`1 / sample_fps`),
+so the trajectory grid stays consistent with the input cadence and there
+is no separate `integration_step_s` to keep in sync. `rk4` is the
+default integrator; for this time-only telemetry integration it is
+equivalent to Simpson-style quadrature over each step. `trapezoid`,
+`midpoint`, and `euler` are available for simpler comparisons.
 
 The `--trajectory-interpolation`, `--trajectory-integration`, and
-`--trajectory-step-s` overrides are accepted by `extract`, `run`, and
-`reconstruct-trajectory`.
+`--trajectory-derivative-window-s` overrides are accepted by `extract`,
+`run`, and `reconstruct-trajectory`.
+
+For the acceleration estimate, velocity is differentiated with a
+Savitzky-Golay filter sized in seconds (`derivative_smoothing_window_s`,
+default 5 s). Specifying the smoothing window in time rather than samples
+makes derivative quality FPS-independent: at higher OCR sample rates more
+samples fall inside the same time window, automatically improving noise
+rejection. Sav-Gol with polyorder 3 over a few-second window is a
+textbook approach for differentiating noisy uniformly-sampled sensor
+data — see Schafer (2011), *What Is a Savitzky-Golay Filter?*.
 
 If `trajectory.launch_site.latitude_deg`, `longitude_deg`, and
 `azimuth_deg` are all present, downrange is projected along a WGS84

@@ -6,7 +6,12 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 
-from webcalyzer.acceleration import ACCELERATION_SOURCE_GAP_THRESHOLD_S, acceleration_profile, smoothed_velocity_profile
+from webcalyzer.acceleration import (
+    ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+    DEFAULT_DERIVATIVE_WINDOW_S,
+    acceleration_profile,
+    smoothed_velocity_profile,
+)
 
 ALTITUDE_SCALE = 0.001
 

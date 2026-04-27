@@ -10,7 +10,7 @@ def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> 
     assert profile.fixture_time_range_s == (0.0, 840.0)
     assert len(profile.fields["stage1_velocity"].box.normalized_tuple()) == 4
     assert profile.video_overlay.width_fraction == 0.5
-    assert profile.video_overlay.height_fraction == 0.4
+    assert profile.video_overlay.height_fraction == 0.55
     assert profile.trajectory.interpolation_method == "pchip"
     assert profile.trajectory.integration_method == "rk4"
     assert profile.trajectory.outlier_preconditioning_enabled is True

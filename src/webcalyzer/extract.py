@@ -67,6 +67,15 @@ def extract_telemetry(
     if not sample_indices:
         raise RuntimeError("No frames selected for extraction; check the video and sample_fps.")
     backend_options = (backend_options or OCRBackendOptions()).validate()
+    if profile.parsing is not None and not backend_options.custom_words:
+        # Inject the OCR vocabulary derived from the parsing profile so the
+        # OCR engine can be steered without code changes.
+        from dataclasses import replace as dataclass_replace
+
+        backend_options = dataclass_replace(
+            backend_options,
+            custom_words=tuple(profile.parsing.custom_words_list()),
+        ).validate()
     workers = max(1, int(workers))
 
     resolved_backend = resolve_backend_name(backend_options.backend)
@@ -235,16 +244,19 @@ def _ocr_with_detection(
     # cannot produce a usable measurement (or, for MET, a usable timestamp).
     # This mirrors the original sequential pipeline; the parse is cheap and
     # stateless, so it stays in Phase A.
+    parsing = profile.parsing
     for field_name, field_cfg in profile.fields.items():
         candidates = ocr_candidates_by_field.get(field_name, [])
         if field_cfg.kind == "met":
-            if parse_met_candidates(candidates) is not None:
+            if parse_met_candidates(candidates, parsing=parsing) is not None:
                 continue
         else:
             options = [
                 option
                 for raw_text, variant in candidates
-                for option in parse_measurement_options(raw_text, kind=field_cfg.kind, variant=variant)
+                for option in parse_measurement_options(
+                    raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+                )
                 if _field_specific_option_is_valid(field_name, option)
             ]
             if options:
@@ -302,6 +314,7 @@ def _run_phase_b(
     }
     met_observations: list[tuple[float, float]] = []
 
+    parsing = profile.parsing
     for frame_data in raw_frames:
         per_field_obs: dict[str, OCRObservation] = {}
         ocr_candidates_by_field = {
@@ -310,7 +323,7 @@ def _run_phase_b(
         }
         sample_time_s = frame_data.sample_time_s
 
-        met_choice = parse_met_candidates(ocr_candidates_by_field.get("met", []))
+        met_choice = parse_met_candidates(ocr_candidates_by_field.get("met", []), parsing=parsing)
         mission_elapsed_time_s = met_choice.value if met_choice else None
         if mission_elapsed_time_s is not None and met_observations:
             previous_met = met_observations[-1][0]
@@ -354,8 +367,16 @@ def _run_phase_b(
             field_state = stage_state.fields.setdefault(field_name, FieldState())
             options: list[MeasurementOption] = []
             for raw_text, variant in ocr_candidates_by_field.get(field_name, []):
-                options.extend(parse_measurement_options(raw_text, kind=field_cfg.kind, variant=variant))
-            options = [option for option in options if _field_specific_option_is_valid(field_name, option)]
+                options.extend(
+                    parse_measurement_options(
+                        raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+                    )
+                )
+            options = [
+                option
+                for option in options
+                if _field_specific_option_is_valid(field_name, option, mission_elapsed_time_s)
+            ]
             chosen = choose_best_measurement(
                 options=options,
                 kind=field_cfg.kind,
@@ -501,7 +522,21 @@ def _stage2_measurement_is_active(velocity_mps: float | None, altitude_m: float 
     return any(thresholds)
 
 
-def _field_specific_option_is_valid(field_name: str, option: MeasurementOption) -> bool:
+def _field_specific_option_is_valid(
+    field_name: str,
+    option: MeasurementOption,
+    mission_elapsed_time_s: float | None = None,
+) -> bool:
+    """Cheap physical-plausibility gate applied per option.
+
+    The hard upper bound is the long-flight ceiling. The MET-aware bound is
+    a kinematic ceiling: a chemical-rocket vehicle can't realistically be
+    above ``0.5 * g * (3 * MET)^2`` in altitude, nor above ``3 * g * MET``
+    in velocity. The factor 3 leaves comfortable headroom around real
+    launch profiles while still rejecting cases where OCR misreads "FT" as
+    "MI" right after liftoff and wraps a 50 ft reading into 90 km.
+    """
+
     upper_bounds = {
         "stage1_velocity": 2500.0,
         "stage1_altitude": 150000.0,
@@ -511,7 +546,40 @@ def _field_specific_option_is_valid(field_name: str, option: MeasurementOption) 
     upper_bound = upper_bounds.get(field_name)
     if upper_bound is None:
         return True
-    return 0.0 <= option.value_si <= upper_bound
+    if not (0.0 <= option.value_si <= upper_bound):
+        return False
+    if (
+        mission_elapsed_time_s is None
+        or not isinstance(mission_elapsed_time_s, (int, float))
+        or mission_elapsed_time_s <= 0.0
+    ):
+        return True
+    kind = field_name.rsplit("_", 1)[-1]
+    met_bound = _met_kinematic_bound(kind=kind, mission_elapsed_time_s=float(mission_elapsed_time_s))
+    if met_bound is None:
+        return True
+    return option.value_si <= met_bound
+
+
+def _met_kinematic_bound(*, kind: str, mission_elapsed_time_s: float) -> float | None:
+    """Return a generous physical upper bound at the given MET, or None.
+
+    Only applied during the first minute after liftoff, where OCR
+    confusion between FT and MI on a 3-digit reading can otherwise mint a
+    value 5000× larger than reality. Past 60 s the static field-specific
+    upper bounds already box in any real launch profile and this gate
+    adds no value.
+    """
+
+    if mission_elapsed_time_s > 60.0:
+        return None
+    g0 = 9.80665
+    effective_acceleration_g = 5.0
+    if kind == "altitude":
+        return 0.5 * effective_acceleration_g * g0 * mission_elapsed_time_s * mission_elapsed_time_s
+    if kind == "velocity":
+        return effective_acceleration_g * g0 * mission_elapsed_time_s
+    return None
 
 
 def _update_field_state(stage_state: StageState, field_name: str, value_si: float | None, mission_elapsed_time_s: float | None) -> None:

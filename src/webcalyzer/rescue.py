@@ -9,7 +9,7 @@ import pandas as pd
 
 from webcalyzer.config import load_profile
 from webcalyzer.extract import _build_strip_union_box, _field_specific_option_is_valid
-from webcalyzer.models import Box, ProfileConfig
+from webcalyzer.models import Box, ParsingProfile, ProfileConfig
 from webcalyzer.ocr import RescueOCR
 from webcalyzer.ocr_factory import OCRBackendOptions, make_backend
 from webcalyzer.sanitize import (
@@ -134,11 +134,16 @@ def _parse_for_field(
     previous_value_si: float | None,
     previous_met_s: float | None,
     current_met_s: float | None,
+    parsing: ParsingProfile | None = None,
 ) -> MeasurementOption | None:
     options: list[MeasurementOption] = []
     for text, variant in candidates:
-        options.extend(parse_measurement_options(text, kind=kind, variant=variant))
-    options = [opt for opt in options if _field_specific_option_is_valid(field_name, opt)]
+        options.extend(parse_measurement_options(text, kind=kind, variant=variant, parsing=parsing))
+    options = [
+        opt
+        for opt in options
+        if _field_specific_option_is_valid(field_name, opt, current_met_s)
+    ]
     options = [opt for opt in options if _rescue_option_is_acceptable(opt)]
     if not options:
         return None
@@ -151,13 +156,16 @@ def _parse_for_field(
     )
 
 
-def _parse_met_candidates(candidates: list[tuple[str, str]]) -> tuple[float | None, str | None, str | None]:
+def _parse_met_candidates(
+    candidates: list[tuple[str, str]],
+    parsing: ParsingProfile | None = None,
+) -> tuple[float | None, str | None, str | None]:
     best_value: float | None = None
     best_text: str | None = None
     best_variant: str | None = None
     best_score = -1.0
     for text, variant in candidates:
-        parsed = parse_met(text)
+        parsed = parse_met(text, parsing=parsing)
         if parsed is None:
             continue
         upper = text.upper()
@@ -190,9 +198,15 @@ def rescue_raw_dataframe(
     log_prefix: str = "[rescue]",
     backend_options: OCRBackendOptions | None = None,
 ) -> pd.DataFrame:
-    backend = make_backend(backend_options or OCRBackendOptions())
+    options = backend_options or OCRBackendOptions()
+    if profile.parsing is not None and not options.custom_words:
+        from dataclasses import replace as dataclass_replace
+
+        options = dataclass_replace(options, custom_words=tuple(profile.parsing.custom_words_list()))
+    backend = make_backend(options)
     rescue = RescueOCR(backend)
     raw_df = raw_df.copy()
+    parsing = profile.parsing
 
     capture = open_capture(video_path)
     frame_count = int(round(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
@@ -294,7 +308,7 @@ def rescue_raw_dataframe(
                             continue
 
                         if target.kind == "met":
-                            value, text, variant = _parse_met_candidates(candidates)
+                            value, text, variant = _parse_met_candidates(candidates, parsing=parsing)
                             if value is None:
                                 continue
                             if current_met_val is not None and abs(value - current_met_val) > 5:
@@ -320,6 +334,7 @@ def rescue_raw_dataframe(
                             previous_value_si=prev_val,
                             previous_met_s=prev_met,
                             current_met_s=current_met_val,
+                            parsing=parsing,
                         )
                         if chosen is None:
                             continue

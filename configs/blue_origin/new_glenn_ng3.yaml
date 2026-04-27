@@ -3,26 +3,26 @@ description: Default New Glenn telemetry profile derived from BlueOrigin_NG-3.mp
 reference_resolution:
   width: 1920
   height: 1080
-default_sample_fps: 0.5
+default_sample_fps: 4.0
 fixture_frame_count: 20
 fixture_time_range_s: [0.0, 840.0]
 video_overlay:
   enabled: true
   plot_mode: filtered
   width_fraction: 0.5
-  height_fraction: 0.4
+  height_fraction: 0.65
   output_filename: telemetry_overlay.mp4
   include_audio: true
 trajectory:
   enabled: true
   interpolation_method: pchip
   integration_method: rk4
-  integration_step_s: 0.25
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0
   coarse_altitude_threshold_m: 500.0
   coarse_velocity_threshold_mps: 50.0
+  derivative_smoothing_window_s: 5.0
   launch_site:
     latitude_deg: 28.47056
     longitude_deg: -80.54

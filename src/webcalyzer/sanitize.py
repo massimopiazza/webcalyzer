@@ -4,7 +4,11 @@ from dataclasses import dataclass
 import math
 import re
 
+from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, UnitAlias
 
+
+# Legacy hard-coded conversions; kept for backward compatibility with call
+# sites that don't pass an explicit ParsingProfile.
 MPH_TO_MPS = 0.44704
 FT_TO_M = 0.3048
 MI_TO_M = 1609.344
@@ -51,26 +55,84 @@ def normalize_numeric_token(token: str) -> str:
     return token.translate(TEXT_TRANSLATION)
 
 
-def detect_unit(text: str, kind: str) -> str | None:
-    upper = normalize_text(text)
+def _default_velocity_units() -> tuple[UnitAlias, ...]:
+    return (
+        UnitAlias(name="MPH", aliases=("MPH", "MPN", "MРН", "MPI", "M/H"), si_factor=MPH_TO_MPS),
+    )
+
+
+def _default_altitude_units() -> tuple[UnitAlias, ...]:
+    return (
+        UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), si_factor=FT_TO_M),
+        UnitAlias(name="MI", aliases=("MI", "ML", "M1"), si_factor=MI_TO_M),
+    )
+
+
+def _default_kind_parsing(kind: str) -> FieldKindParsing:
     if kind == "velocity":
-        if re.search(r"M[PFR][HNR]", upper) or "MPH" in upper:
-            return "MPH"
-        return None
+        return FieldKindParsing(units=_default_velocity_units(), default_unit="MPH")
     if kind == "altitude":
-        if re.search(r"\b[FE][T7I]\b", upper):
-            return "FT"
-        if re.search(r"\bM[IL1]\b", upper):
-            return "MI"
-        return None
+        return FieldKindParsing(
+            units=_default_altitude_units(),
+            default_unit="FT",
+            ambiguous_default_unit="FT",
+            inferred_units_with_separator=("FT", "MI"),
+            inferred_units_without_separator=("FT",),
+        )
+    raise ValueError(f"Unsupported measurement kind: {kind}")
+
+
+def _default_met_parsing() -> MetParsing:
+    return MetParsing(
+        timestamp_patterns=(
+            r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",
+            r"([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",
+        )
+    )
+
+
+def _resolve_kind_parsing(kind: str, parsing: ParsingProfile | None) -> FieldKindParsing:
+    if parsing is None:
+        return _default_kind_parsing(kind)
+    return parsing.kind(kind)
+
+
+def _resolve_met_parsing(parsing: ParsingProfile | None) -> MetParsing:
+    if parsing is None:
+        return _default_met_parsing()
+    return parsing.met
+
+
+def detect_unit(text: str, kind: str, parsing: ParsingProfile | None = None) -> str | None:
+    """Look for an explicit unit token in ``text`` for the given kind.
+
+    The match is alias-driven: each alias is checked as a whole-word token
+    (``\\b``-bounded) to avoid bleeding "M" from "MPH" into altitude
+    detection or "FT" from "GIFT" into something larger. Aliases are
+    tested in declaration order so a profile can encode a preferred match
+    order (e.g. specific multi-letter aliases before single-letter ones).
+    """
+
+    upper = normalize_text(text)
+    kind_parsing = _resolve_kind_parsing(kind, parsing)
+    for unit in kind_parsing.units:
+        for alias in unit.aliases:
+            if not alias:
+                continue
+            pattern = rf"(?<![A-Z0-9]){re.escape(alias)}(?![A-Z0-9])"
+            if re.search(pattern, upper):
+                return unit.name
     return None
 
 
-def parse_met_candidates(candidates: list[tuple[str, str]]) -> TimedValue | None:
+def parse_met_candidates(
+    candidates: list[tuple[str, str]],
+    parsing: ParsingProfile | None = None,
+) -> TimedValue | None:
     best: TimedValue | None = None
     best_score = -math.inf
     for raw_text, variant in candidates:
-        parsed = parse_met(raw_text)
+        parsed = parse_met(raw_text, parsing=parsing)
         if parsed is None:
             continue
         score = 2 if "T" in normalize_text(raw_text) else 1
@@ -80,20 +142,23 @@ def parse_met_candidates(candidates: list[tuple[str, str]]) -> TimedValue | None
     return best
 
 
-def parse_met(text: str) -> float | None:
+def parse_met(text: str, parsing: ParsingProfile | None = None) -> float | None:
     upper = normalize_text(text)
     upper = upper.replace(";", ":").replace(".", ":")
     upper = re.sub(r"\s*:\s*", ":", upper)
     upper = upper.replace("T ", "T")
-    match = re.search(r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?", upper)
-    if not match:
-        match = re.search(r"([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?", upper)
-    if not match:
+    met_parsing = _resolve_met_parsing(parsing)
+    match = None
+    for pattern in met_parsing.timestamp_patterns:
+        match = re.search(pattern, upper)
+        if match is not None:
+            break
+    if match is None:
         return None
     sign_token = match.group(1) or "+"
     first = int(match.group(2))
     second = int(match.group(3))
-    third = match.group(4)
+    third = match.group(4) if match.lastindex and match.lastindex >= 4 else None
     if third is None:
         total_seconds = first * 60 + second
     else:
@@ -118,26 +183,37 @@ def _extract_numeric_tokens(text: str) -> list[str]:
     return tokens
 
 
-def parse_measurement_options(text: str, kind: str, variant: str) -> list[MeasurementOption]:
+def parse_measurement_options(
+    text: str,
+    kind: str,
+    variant: str,
+    parsing: ParsingProfile | None = None,
+) -> list[MeasurementOption]:
     tokens = _extract_numeric_tokens(text)
     if not tokens:
         return []
 
-    explicit_unit = detect_unit(text, kind=kind)
+    kind_parsing = _resolve_kind_parsing(kind, parsing)
+    explicit_unit = detect_unit(text, kind=kind, parsing=parsing)
     options: list[MeasurementOption] = []
     for token in tokens:
-        inferred_units = [explicit_unit] if explicit_unit else _infer_units(kind=kind, token=token)
-        for unit in inferred_units:
-            raw_value = _parse_token(token=token, unit=unit, kind=kind)
+        inferred_unit_names = (
+            [explicit_unit] if explicit_unit else _infer_unit_names(kind_parsing=kind_parsing, token=token)
+        )
+        for unit_name in inferred_unit_names:
+            unit = _lookup_unit(kind_parsing, unit_name)
+            if unit is None:
+                continue
+            raw_value = _parse_token_to_number(token=token, unit=unit, kind=kind)
             if raw_value is None:
                 continue
-            value_si = _to_si(raw_value=raw_value, unit=unit, kind=kind)
+            value_si = float(raw_value) * unit.si_factor
             options.append(
                 MeasurementOption(
                     raw_text=text,
                     raw_token=token,
                     raw_value=raw_value,
-                    unit=unit,
+                    unit=unit.name,
                     value_si=value_si,
                     explicit_unit=explicit_unit is not None,
                     variant=variant,
@@ -147,44 +223,46 @@ def parse_measurement_options(text: str, kind: str, variant: str) -> list[Measur
     return options
 
 
-def _infer_units(kind: str, token: str) -> list[str]:
-    if kind == "velocity":
-        return ["MPH"]
-    if kind == "altitude":
-        if "," in token or "." in token or ":" in token:
-            return ["MI", "FT"]
-        return ["FT"]
-    raise ValueError(f"Unsupported measurement kind: {kind}")
-
-
-def _parse_token(token: str, unit: str, kind: str) -> float | None:
-    token = normalize_numeric_token(token)
-    if kind == "velocity":
-        return float(token.replace(",", "").replace(".", "").replace(":", ""))
-    if kind == "altitude":
-        if unit == "MI":
-            cleaned = token.replace(",", "").replace(".", "").replace(":", "")
-            try:
-                return float(cleaned)
-            except ValueError:
-                return None
-        cleaned = token.replace(",", "").replace(".", "").replace(":", "")
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
+def _lookup_unit(kind_parsing: FieldKindParsing, unit_name: str) -> UnitAlias | None:
+    target = unit_name.upper()
+    for unit in kind_parsing.units:
+        if unit.name == target:
+            return unit
     return None
 
 
-def _to_si(raw_value: float, unit: str, kind: str) -> float:
-    if kind == "velocity":
-        return raw_value * MPH_TO_MPS
-    if kind == "altitude":
-        if unit == "FT":
-            return raw_value * FT_TO_M
-        if unit == "MI":
-            return raw_value * MI_TO_M
-    raise ValueError(f"Unsupported conversion: kind={kind}, unit={unit}")
+def _infer_unit_names(kind_parsing: FieldKindParsing, token: str) -> list[str]:
+    """Pick which unit candidates to try when the OCR text has no explicit unit.
+
+    The candidate set is profile-driven: a feed where velocity is only ever
+    MPH stays a single-option case (no false alternatives), while altitude
+    keeps multiple candidates so a "000,056" reading whose unit label was
+    lost in OCR noise can still be disambiguated. The
+    ``ambiguous_default_unit`` is moved to the front so it wins on ties.
+    """
+
+    has_separator = any(separator in token for separator in ",.:")
+    available = {unit.name for unit in kind_parsing.units}
+    candidates = (
+        kind_parsing.inferred_units_with_separator
+        if has_separator
+        else kind_parsing.inferred_units_without_separator
+    )
+    candidates = [name.upper() for name in candidates if name.upper() in available]
+    primary = kind_parsing.ambiguous_default_unit
+    if primary and primary in candidates:
+        candidates = [primary] + [name for name in candidates if name != primary]
+    return candidates
+
+
+def _parse_token_to_number(token: str, unit: UnitAlias, kind: str) -> float | None:
+    cleaned = normalize_numeric_token(token).replace(",", "").replace(".", "").replace(":", "")
+    if not cleaned:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def choose_best_measurement(
@@ -209,6 +287,7 @@ def choose_best_measurement(
     lower, upper = bounds[kind]
     best: MeasurementOption | None = None
     best_score = -math.inf
+    best_value: float = math.inf
     for option in options:
         if not (lower <= option.value_si <= upper):
             continue
@@ -229,7 +308,11 @@ def choose_best_measurement(
             else:
                 score -= min(5.0, rate / max_rate[kind])
 
-        if best is None or score > best_score:
+        # Tie-breaker: prefer the smaller |value_si|. With no previous value,
+        # ambiguous unit pairs (e.g. FT vs MI) score equally; the smaller
+        # interpretation is the safer one to commit to.
+        if best is None or score > best_score or (score == best_score and option.value_si < best_value):
             best = option
             best_score = score
+            best_value = option.value_si
     return best

@@ -203,10 +203,13 @@ def _add_trajectory_args(parser: argparse.ArgumentParser) -> None:
         help="Override trajectory.integration_method for fixed-step reconstruction.",
     )
     parser.add_argument(
-        "--trajectory-step-s",
+        "--trajectory-derivative-window-s",
         type=float,
         default=None,
-        help="Override trajectory.integration_step_s.",
+        help=(
+            "Override trajectory.derivative_smoothing_window_s — Savitzky-Golay "
+            "window length in seconds used for the acceleration plot."
+        ),
     )
 
 
@@ -300,6 +303,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "extract":
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
         backend_options = _ocr_backend_options(args)
+        effective_fps = float(args.sample_fps or profile.default_sample_fps)
         _raw_df, clean_df = extract_telemetry(
             args.video,
             profile,
@@ -309,13 +313,14 @@ def main(argv: list[str] | None = None) -> None:
             workers=_resolve_workers(args, backend_options),
             skip_detection=getattr(args, "ocr_skip_detection", False),
         )
-        _write_trajectory_for_output(clean_df, args.output, profile=profile)
+        _write_trajectory_for_output(clean_df, args.output, profile=profile, sample_fps=effective_fps)
         return
 
     if args.command == "run":
         generate_review_frames(args.video, profile, Path(args.output) / "review")
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
         backend_options = _ocr_backend_options(args)
+        effective_fps = float(args.sample_fps or profile.default_sample_fps)
         _raw_df, clean_df = extract_telemetry(
             args.video,
             profile,
@@ -325,7 +330,9 @@ def main(argv: list[str] | None = None) -> None:
             workers=_resolve_workers(args, backend_options),
             skip_detection=getattr(args, "ocr_skip_detection", False),
         )
-        clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
+        clean_df, trajectory_df = _write_trajectory_for_output(
+            clean_df, args.output, profile=profile, sample_fps=effective_fps
+        )
         create_plots(clean_df, args.output, trajectory_df=trajectory_df)
         _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args, trajectory_df=trajectory_df)
         return
@@ -368,9 +375,30 @@ def _trajectory_config_from_args(config: TrajectoryConfig, args: argparse.Namesp
         resolved.interpolation_method = args.trajectory_interpolation
     if getattr(args, "trajectory_integration", None):
         resolved.integration_method = args.trajectory_integration
-    if getattr(args, "trajectory_step_s", None) is not None:
-        resolved.integration_step_s = args.trajectory_step_s
+    if getattr(args, "trajectory_derivative_window_s", None) is not None:
+        resolved.derivative_smoothing_window_s = args.trajectory_derivative_window_s
     return resolved
+
+
+def _sample_fps_for_output(output_dir: str | Path) -> float | None:
+    """Read the requested sample FPS from ``run_metadata.json`` if present."""
+
+    import json
+
+    metadata_path = Path(output_dir) / "run_metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        data = json.loads(metadata_path.read_text())
+    except (OSError, ValueError):
+        return None
+    value = data.get("sample_fps_requested")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _write_trajectory_for_output(
@@ -378,10 +406,13 @@ def _write_trajectory_for_output(
     output_dir: str | Path,
     profile: ProfileConfig | None,
     args: argparse.Namespace | None = None,
+    sample_fps: float | None = None,
 ):
     profile = profile or _profile_from_output(output_dir)
     config = _trajectory_config_from_args(profile.trajectory if profile else TrajectoryConfig(), args)
-    return write_trajectory_outputs(clean_df, output_dir, config)
+    if sample_fps is None:
+        sample_fps = _sample_fps_for_output(output_dir)
+    return write_trajectory_outputs(clean_df, output_dir, config, sample_fps=sample_fps)
 
 
 def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Namespace) -> VideoOverlayConfig:

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from webcalyzer.models import LaunchSiteConfig, TrajectoryConfig
-from webcalyzer.trajectory import reconstruct_trajectory
+from webcalyzer.trajectory import infer_sample_fps, reconstruct_trajectory
 
 
 def _clean_frame(times: np.ndarray, velocity: np.ndarray, altitude: np.ndarray) -> pd.DataFrame:
@@ -27,7 +27,8 @@ def test_reconstructs_downrange_from_integrated_total_speed() -> None:
 
     augmented, trajectory = reconstruct_trajectory(
         _clean_frame(times, velocity, altitude),
-        TrajectoryConfig(interpolation_method="linear", integration_method="rk4", integration_step_s=1.0),
+        TrajectoryConfig(interpolation_method="linear", integration_method="rk4"),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -44,7 +45,8 @@ def test_missing_velocity_and_altitude_are_only_interpolated_for_trajectory() ->
 
     augmented, trajectory = reconstruct_trajectory(
         clean_df,
-        TrajectoryConfig(interpolation_method="linear", integration_method="trapezoid", integration_step_s=1.0),
+        TrajectoryConfig(interpolation_method="linear", integration_method="trapezoid"),
+        sample_fps=1.0,
     )
 
     assert np.isnan(augmented.loc[2, "stage1_velocity_mps"])
@@ -65,9 +67,9 @@ def test_coarse_altitude_plateaus_are_smoothed_only_for_reconstruction() -> None
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -88,9 +90,9 @@ def test_coarse_velocity_plateaus_are_smoothed_for_reconstruction() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_velocity_threshold_mps=50.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -110,9 +112,9 @@ def test_subthreshold_changes_keep_original_sample_timing_even_with_later_platea
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_velocity_threshold_mps=50.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -132,9 +134,9 @@ def test_subthreshold_plateaus_are_not_smoothed() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -155,9 +157,9 @@ def test_large_non_plateau_changes_are_not_treated_as_coarse_steps() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -177,10 +179,10 @@ def test_coarse_plateaus_are_not_smoothed_across_long_gaps() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_step_max_gap_s=10.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -201,10 +203,10 @@ def test_coarse_step_max_gap_can_be_relaxed() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_step_max_gap_s=200.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -225,9 +227,9 @@ def test_isolated_altitude_outlier_is_removed_only_for_reconstruction() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -249,10 +251,10 @@ def test_outlier_preconditioning_can_be_disabled() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="trapezoid",
-            integration_step_s=1.0,
             outlier_preconditioning_enabled=False,
             coarse_altitude_threshold_m=500.0,
         ),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -276,7 +278,8 @@ def test_stage2_starts_at_its_first_real_interval_and_inherits_stage1_downrange(
 
     augmented, trajectory = reconstruct_trajectory(
         clean_df,
-        TrajectoryConfig(interpolation_method="linear", integration_method="rk4", integration_step_s=1.0),
+        TrajectoryConfig(interpolation_method="linear", integration_method="rk4"),
+        sample_fps=1.0,
     )
 
     stage1 = trajectory[trajectory["stage"] == "stage1"]
@@ -298,9 +301,9 @@ def test_partial_launch_site_falls_back_to_flat_coordinates() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="rk4",
-            integration_step_s=1.0,
             launch_site=LaunchSiteConfig(latitude_deg=28.0),
         ),
+        sample_fps=1.0,
     )
 
     assert set(trajectory["coordinate_model"]) == {"flat"}
@@ -317,11 +320,82 @@ def test_complete_launch_site_uses_wgs84_coordinates() -> None:
         TrajectoryConfig(
             interpolation_method="linear",
             integration_method="rk4",
-            integration_step_s=1.0,
             launch_site=LaunchSiteConfig(latitude_deg=0.0, longitude_deg=0.0, azimuth_deg=90.0),
         ),
+        sample_fps=1.0,
     )
 
     assert set(trajectory["coordinate_model"]) == {"wgs84"}
     assert trajectory["latitude_deg"].abs().max() < 1e-8
     assert trajectory["longitude_deg"].iloc[-1] > 0.0
+
+
+def test_infer_sample_fps_uses_median_step() -> None:
+    df = pd.DataFrame(
+        {
+            "sample_time_s": np.arange(0.0, 10.0, 0.25),
+            "mission_elapsed_time_s": np.arange(0.0, 10.0, 0.25),
+        }
+    )
+    assert abs(infer_sample_fps(df) - 4.0) < 1e-9
+
+
+def test_integration_step_matches_inferred_sample_fps() -> None:
+    """The trajectory grid spacing equals the OCR sample period: at 4 fps
+    the integration step is 0.25 s, so the result has ~4× as many rows as
+    a 1 fps run over the same MET window."""
+
+    times = np.arange(0.0, 11.0, 0.25)
+    velocity = np.full_like(times, 10.0)
+    velocity[0] = 0.0
+    altitude = np.zeros_like(times)
+    clean_df = pd.DataFrame(
+        {
+            "frame_index": np.arange(times.size),
+            "sample_time_s": times,
+            "mission_elapsed_time_s": times,
+            "stage1_velocity_mps": velocity,
+            "stage1_altitude_m": altitude,
+            "stage2_velocity_mps": np.nan,
+            "stage2_altitude_m": np.nan,
+        }
+    )
+
+    _, trajectory = reconstruct_trajectory(
+        clean_df,
+        TrajectoryConfig(interpolation_method="linear", integration_method="rk4"),
+    )
+
+    stage1 = trajectory[trajectory["stage"] == "stage1"]
+    inferred_step = float(stage1["integration_step_s"].iloc[0])
+    assert abs(inferred_step - 0.25) < 1e-6
+    assert float(stage1["sample_fps"].iloc[0]) == 4.0
+
+
+def test_savgol_smoothing_is_fps_independent() -> None:
+    """Same time window of noisy velocity, sampled at 1 Hz vs 4 Hz, should
+    yield comparable smoothed derivatives. Specifying the smoothing
+    window in seconds (Savitzky-Golay over a fixed time span) is the
+    textbook way to make derivative estimates independent of sample rate
+    while still benefiting from denser sampling."""
+
+    from webcalyzer.acceleration import smoothed_velocity_and_derivative
+
+    rng_high = np.linspace(0.0, 20.0, 81)  # 4 Hz
+    rng_low = np.linspace(0.0, 20.0, 21)  # 1 Hz
+    trend_high = 10.0 * rng_high
+    trend_low = 10.0 * rng_low
+    jitter_high = np.where(np.arange(rng_high.size) % 2 == 0, 50.0, -50.0)
+    jitter_low = np.where(np.arange(rng_low.size) % 2 == 0, 50.0, -50.0)
+
+    _, deriv_high = smoothed_velocity_and_derivative(
+        rng_high, trend_high + jitter_high, window_s=5.0
+    )
+    _, deriv_low = smoothed_velocity_and_derivative(
+        rng_low, trend_low + jitter_low, window_s=5.0
+    )
+
+    # Both should converge to the underlying slope of 10 m/s² regardless
+    # of sample rate.
+    assert abs(np.mean(deriv_high) - 10.0) < 0.5
+    assert abs(np.mean(deriv_low) - 10.0) < 0.5

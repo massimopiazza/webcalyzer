@@ -59,7 +59,7 @@ class VideoOverlayConfig:
     enabled: bool = True
     plot_mode: str = "filtered"
     width_fraction: float = 0.5
-    height_fraction: float = 0.4
+    height_fraction: float = 0.55
     output_filename: str = "telemetry_overlay.mp4"
     include_audio: bool = True
 
@@ -100,12 +100,12 @@ class TrajectoryConfig:
     enabled: bool = True
     interpolation_method: str = "pchip"
     integration_method: str = "rk4"
-    integration_step_s: float = 0.25
     outlier_preconditioning_enabled: bool = True
     coarse_step_smoothing_enabled: bool = True
     coarse_step_max_gap_s: float = 10.0
     coarse_altitude_threshold_m: float = 500.0
     coarse_velocity_threshold_mps: float = 50.0
+    derivative_smoothing_window_s: float = 5.0
     launch_site: LaunchSiteConfig = field(default_factory=LaunchSiteConfig)
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,13 +113,108 @@ class TrajectoryConfig:
             "enabled": self.enabled,
             "interpolation_method": self.interpolation_method,
             "integration_method": self.integration_method,
-            "integration_step_s": self.integration_step_s,
             "outlier_preconditioning_enabled": self.outlier_preconditioning_enabled,
             "coarse_step_smoothing_enabled": self.coarse_step_smoothing_enabled,
             "coarse_step_max_gap_s": self.coarse_step_max_gap_s,
             "coarse_altitude_threshold_m": self.coarse_altitude_threshold_m,
             "coarse_velocity_threshold_mps": self.coarse_velocity_threshold_mps,
+            "derivative_smoothing_window_s": self.derivative_smoothing_window_s,
             "launch_site": self.launch_site.to_dict(),
+        }
+
+
+@dataclass(slots=True)
+class UnitAlias:
+    """A surface unit token plus its conversion to SI for one measurement kind."""
+
+    name: str
+    aliases: tuple[str, ...]
+    si_factor: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "aliases": list(self.aliases),
+            "si_factor": self.si_factor,
+        }
+
+
+@dataclass(slots=True)
+class FieldKindParsing:
+    """Parsing rules applicable to a measurement kind (velocity / altitude).
+
+    ``inferred_units_with_separator`` and ``inferred_units_without_separator``
+    are the unit candidates tried when the OCR text has no explicit unit
+    label. They default to ``(default_unit,)`` so a single-unit feed (e.g.
+    velocity-as-MPH only) doesn't see false alternatives. Altitude
+    overrides ``inferred_units_with_separator`` with both MI and FT so a
+    "000,056" reading whose unit label was lost in OCR noise can still be
+    disambiguated.
+    """
+
+    units: tuple[UnitAlias, ...]
+    default_unit: str
+    ambiguous_default_unit: str | None = None
+    inferred_units_with_separator: tuple[str, ...] = ()
+    inferred_units_without_separator: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.inferred_units_with_separator:
+            self.inferred_units_with_separator = (self.default_unit,)
+        if not self.inferred_units_without_separator:
+            self.inferred_units_without_separator = (self.default_unit,)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "default_unit": self.default_unit,
+            "units": {unit.name: unit.to_dict() for unit in self.units},
+            "inferred_units_with_separator": list(self.inferred_units_with_separator),
+            "inferred_units_without_separator": list(self.inferred_units_without_separator),
+        }
+        if self.ambiguous_default_unit is not None:
+            data["ambiguous_default_unit"] = self.ambiguous_default_unit
+        return data
+
+
+@dataclass(slots=True)
+class MetParsing:
+    """Parsing rules for the mission elapsed time field."""
+
+    timestamp_patterns: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"timestamp_patterns": list(self.timestamp_patterns)}
+
+
+@dataclass(slots=True)
+class ParsingProfile:
+    """Profile-driven OCR vocabulary and unit parsing rules.
+
+    Built from YAML so the OCR vocabulary (Apple Vision custom words),
+    accepted unit aliases, unit-to-SI conversions and timestamp patterns
+    can all be tuned per webcast without code changes.
+    """
+
+    velocity: FieldKindParsing
+    altitude: FieldKindParsing
+    met: MetParsing
+    custom_words: tuple[str, ...]
+
+    def custom_words_list(self) -> list[str]:
+        return list(self.custom_words)
+
+    def kind(self, kind: str) -> FieldKindParsing:
+        if kind == "velocity":
+            return self.velocity
+        if kind == "altitude":
+            return self.altitude
+        raise ValueError(f"Unsupported measurement kind: {kind}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "velocity": self.velocity.to_dict(),
+            "altitude": self.altitude.to_dict(),
+            "met": self.met.to_dict(),
+            "custom_words": list(self.custom_words),
         }
 
 
@@ -169,6 +264,7 @@ class ProfileConfig:
     fixture_time_range_s: tuple[float, float] | None
     video_overlay: VideoOverlayConfig = field(default_factory=VideoOverlayConfig)
     trajectory: TrajectoryConfig = field(default_factory=TrajectoryConfig)
+    parsing: "ParsingProfile | None" = None
     hardcoded_raw_data_points: list[HardcodedRawDataPoint] = field(default_factory=list)
     fields: dict[str, FieldConfig] = field(default_factory=dict)
 
@@ -189,6 +285,8 @@ class ProfileConfig:
             "video_overlay": self.video_overlay.to_dict(),
             "trajectory": self.trajectory.to_dict(),
         }
+        if self.parsing is not None:
+            data["parsing"] = self.parsing.to_dict()
         if self.hardcoded_raw_data_points:
             data["hardcoded_raw_data_points"] = [
                 point.to_dict() for point in self.hardcoded_raw_data_points

@@ -27,10 +27,13 @@ TRAJECTORY_COLUMNS = [
     "interpolation_method",
     "integration_method",
     "integration_step_s",
+    "sample_fps",
 ]
 
 INTERPOLATION_METHODS = {"linear", "pchip", "akima", "cubic"}
 INTEGRATION_METHODS = {"euler", "midpoint", "trapezoid", "rk4", "simpson"}
+DEFAULT_INFERRED_FPS = 4.0
+MIN_INFERRED_FPS = 0.05
 
 WGS84_A_M = 6378137.0
 WGS84_F = 1 / 298.257223563
@@ -43,8 +46,14 @@ ScalarFunction = Callable[[float], float]
 def reconstruct_trajectory(
     clean_df: pd.DataFrame,
     config: TrajectoryConfig | None = None,
+    *,
+    sample_fps: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reconstruct total and downrange distance for each extracted stage.
+
+    The integration grid step is the OCR sample period (``1 / sample_fps``)
+    so the trajectory grid stays consistent with the input cadence.
+    ``sample_fps`` is inferred from ``clean_df`` when not supplied.
 
     Velocity and altitude interpolation is intentionally internal to this
     module. The returned clean dataframe keeps the original velocity/altitude
@@ -59,13 +68,25 @@ def reconstruct_trajectory(
     if not config.enabled:
         return augmented, _empty_trajectory_frame()
 
+    effective_fps = _resolve_sample_fps(clean_df, sample_fps)
+    integration_step_s = 1.0 / effective_fps
+
     trajectory_frames: list[pd.DataFrame] = []
-    stage1_trajectory = _reconstruct_stage(clean_df, "stage1", config)
+    stage1_trajectory = _reconstruct_stage(
+        clean_df, "stage1", config, integration_step_s=integration_step_s, sample_fps=effective_fps
+    )
     if not stage1_trajectory.empty:
         trajectory_frames.append(stage1_trajectory)
         _append_stage_trajectory_columns(augmented, "stage1", stage1_trajectory)
 
-    stage2_trajectory = _reconstruct_stage(clean_df, "stage2", config, reference_trajectory=stage1_trajectory)
+    stage2_trajectory = _reconstruct_stage(
+        clean_df,
+        "stage2",
+        config,
+        integration_step_s=integration_step_s,
+        sample_fps=effective_fps,
+        reference_trajectory=stage1_trajectory,
+    )
     if not stage2_trajectory.empty:
         trajectory_frames.append(stage2_trajectory)
         _append_stage_trajectory_columns(augmented, "stage2", stage2_trajectory)
@@ -79,12 +100,53 @@ def write_trajectory_outputs(
     clean_df: pd.DataFrame,
     output_dir: str | Path,
     config: TrajectoryConfig | None = None,
+    *,
+    sample_fps: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    augmented, trajectory_df = reconstruct_trajectory(clean_df, config=config)
+    augmented, trajectory_df = reconstruct_trajectory(
+        clean_df, config=config, sample_fps=sample_fps
+    )
     output_path = Path(output_dir)
     augmented.to_csv(output_path / "telemetry_clean.csv", index=False)
     trajectory_df.to_csv(output_path / TRAJECTORY_FILENAME, index=False)
     return augmented, trajectory_df
+
+
+def infer_sample_fps(clean_df: pd.DataFrame) -> float | None:
+    """Estimate the OCR sample FPS from ``clean_df``.
+
+    Uses the median positive difference of ``sample_time_s`` if present,
+    otherwise of ``mission_elapsed_time_s``. Returns None when there is
+    no usable cadence (single sample, etc.).
+    """
+
+    for column in ("sample_time_s", "mission_elapsed_time_s"):
+        if column not in clean_df.columns:
+            continue
+        times = pd.to_numeric(clean_df[column], errors="coerce").to_numpy(dtype=float)
+        times = times[np.isfinite(times)]
+        if times.size < 2:
+            continue
+        diffs = np.diff(np.sort(times))
+        positive = diffs[diffs > 1e-6]
+        if positive.size == 0:
+            continue
+        median_dt = float(np.median(positive))
+        if median_dt <= 0 or not isfinite(median_dt):
+            continue
+        return 1.0 / median_dt
+    return None
+
+
+def _resolve_sample_fps(clean_df: pd.DataFrame, sample_fps: float | None) -> float:
+    if sample_fps is not None:
+        if not isfinite(sample_fps) or sample_fps <= 0.0:
+            raise ValueError("sample_fps must be a positive finite value")
+        return float(sample_fps)
+    inferred = infer_sample_fps(clean_df)
+    if inferred is None:
+        return DEFAULT_INFERRED_FPS
+    return max(float(inferred), MIN_INFERRED_FPS)
 
 
 def _validated_config(config: TrajectoryConfig) -> TrajectoryConfig:
@@ -100,14 +162,14 @@ def _validated_config(config: TrajectoryConfig) -> TrajectoryConfig:
             f"trajectory.integration_method must be one of {sorted(INTEGRATION_METHODS)}; "
             f"got {config.integration_method!r}"
         )
-    if config.integration_step_s <= 0 or not isfinite(config.integration_step_s):
-        raise ValueError("trajectory.integration_step_s must be a positive finite value")
     if config.coarse_altitude_threshold_m <= 0 or not isfinite(config.coarse_altitude_threshold_m):
         raise ValueError("trajectory.coarse_altitude_threshold_m must be a positive finite value")
     if config.coarse_velocity_threshold_mps <= 0 or not isfinite(config.coarse_velocity_threshold_mps):
         raise ValueError("trajectory.coarse_velocity_threshold_mps must be a positive finite value")
     if config.coarse_step_max_gap_s <= 0 or not isfinite(config.coarse_step_max_gap_s):
         raise ValueError("trajectory.coarse_step_max_gap_s must be a positive finite value")
+    if config.derivative_smoothing_window_s <= 0 or not isfinite(config.derivative_smoothing_window_s):
+        raise ValueError("trajectory.derivative_smoothing_window_s must be a positive finite value")
     return replace(
         config,
         interpolation_method=interpolation_method,
@@ -132,6 +194,9 @@ def _reconstruct_stage(
     clean_df: pd.DataFrame,
     stage: str,
     config: TrajectoryConfig,
+    *,
+    integration_step_s: float,
+    sample_fps: float,
     reference_trajectory: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     time_column = "mission_elapsed_time_s"
@@ -171,7 +236,7 @@ def _reconstruct_stage(
 
     velocity = _make_interpolator(*velocity_points, method=config.interpolation_method)
     altitude = _make_interpolator(*altitude_points, method=config.interpolation_method)
-    grid = _fixed_time_grid(start_time_s, end_time_s, config.integration_step_s)
+    grid = _fixed_time_grid(start_time_s, end_time_s, integration_step_s)
     velocity_values = np.array([velocity(float(time_s)) for time_s in grid], dtype=float)
     altitude_values = np.array([altitude(float(time_s)) for time_s in grid], dtype=float)
 
@@ -202,7 +267,8 @@ def _reconstruct_stage(
             "coordinate_model": coordinate_model,
             "interpolation_method": config.interpolation_method,
             "integration_method": config.integration_method,
-            "integration_step_s": config.integration_step_s,
+            "integration_step_s": integration_step_s,
+            "sample_fps": sample_fps,
         },
         columns=TRAJECTORY_COLUMNS,
     )

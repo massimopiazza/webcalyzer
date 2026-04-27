@@ -9,6 +9,70 @@ from webcalyzer.postprocess import (
 )
 
 
+def test_outlier_rejection_flags_first_sample_when_grossly_inconsistent() -> None:
+    """Boundary fallback: an outlier on the first sample with no left
+    neighbors must still be evaluated. Without the boundary fallback the
+    bilateral side-count check skipped index 0 entirely, letting a 90 km
+    spike at MET=1 reach the trajectory module."""
+
+    times = np.array([1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0, 21.0, 23.0])
+    altitude = np.array([90123.264, 60.0, 90.0, 130.0, 180.0, 250.0, 350.0, 470.0, 620.0, 800.0, 1010.0, 1260.0])
+    velocity = np.linspace(0.0, 25.0, len(times))
+    clean_df = pd.DataFrame(
+        {
+            "frame_index": np.arange(times.size),
+            "sample_time_s": times,
+            "mission_elapsed_time_s": times,
+            "stage1_velocity_mps": velocity,
+            "stage1_altitude_m": altitude,
+            "stage2_velocity_mps": np.nan,
+            "stage2_altitude_m": np.nan,
+        }
+    )
+
+    cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(clean_df, window_s=40.0)
+
+    assert pd.isna(cleaned.at[0, "stage1_altitude_m"])
+    assert rejected.at[0, "stage1_altitude_m"] == 90123.264
+
+
+def test_outlier_rejection_scales_neighbor_count_with_fps() -> None:
+    """When `min_neighbors` is left as default the threshold scales with FPS:
+    at high FPS each window contains many more samples, so we ask for more
+    of them before trusting the local fit."""
+
+    # 10-second window at 4 fps => 40 expected neighbors. At 0.5 fps => 5.
+    # The function should not raise and should return more flagged samples
+    # at the higher rate, demonstrating the scaling kicked in.
+    high_fps_times = np.arange(0.0, 50.0, 0.25)
+    low_fps_times = np.arange(0.0, 50.0, 2.0)
+
+    def _make_df(times: np.ndarray, spike_index: int) -> pd.DataFrame:
+        altitude = np.linspace(0.0, 5000.0, times.size)
+        altitude[spike_index] = 100000.0  # gross outlier
+        return pd.DataFrame(
+            {
+                "frame_index": np.arange(times.size),
+                "sample_time_s": times,
+                "mission_elapsed_time_s": times,
+                "stage1_velocity_mps": np.linspace(0.0, 100.0, times.size),
+                "stage1_altitude_m": altitude,
+                "stage2_velocity_mps": np.nan,
+                "stage2_altitude_m": np.nan,
+            }
+        )
+
+    high_cleaned, _ = apply_mahalanobis_outlier_rejection_with_rejected(
+        _make_df(high_fps_times, spike_index=20), window_s=40.0
+    )
+    low_cleaned, _ = apply_mahalanobis_outlier_rejection_with_rejected(
+        _make_df(low_fps_times, spike_index=5), window_s=40.0
+    )
+
+    assert pd.isna(high_cleaned.at[20, "stage1_altitude_m"])
+    assert pd.isna(low_cleaned.at[5, "stage1_altitude_m"])
+
+
 def test_outlier_rejection_scores_velocity_and_altitude_independently() -> None:
     times = np.arange(0, 42, 2, dtype=float)
     clean_df = pd.DataFrame(

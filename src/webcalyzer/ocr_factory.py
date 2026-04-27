@@ -7,7 +7,7 @@ for parallel OCR can reconstruct the exact same backend by passing
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from webcalyzer.ocr import OCRBackend, RapidOCRBackend
 
@@ -22,6 +22,7 @@ class OCRBackendOptions:
     recognition_level: str = "accurate"
     intra_op_num_threads: int = -1
     inter_op_num_threads: int = 1
+    custom_words: tuple[str, ...] = field(default_factory=tuple)
 
     def validate(self) -> "OCRBackendOptions":
         if self.backend not in _VALID_BACKENDS:
@@ -72,7 +73,10 @@ def make_backend(options: OCRBackendOptions) -> OCRBackend:
                 "Vision requires macOS with pyobjc-framework-Vision and pyobjc-framework-Quartz "
                 "installed."
             )
-        return VisionBackend(recognition_level=options.recognition_level)
+        return VisionBackend(
+            recognition_level=options.recognition_level,
+            custom_words=options.custom_words or None,
+        )
     return RapidOCRBackend(
         intra_op_num_threads=options.intra_op_num_threads,
         inter_op_num_threads=options.inter_op_num_threads,
