@@ -350,6 +350,11 @@ webcalyzer render-overlay \
   --plot-mode with_rejected
 ```
 
+When the overlay video is written, webcalyzer also writes a same-stem GIF
+preview, for example `telemetry_overlay.gif`. The preview remaps the full
+source duration to 15 seconds, samples it at 4 fps, and scales it down to
+fit within 1280×720.
+
 ## Output files
 
 Every successful `extract` / `run` writes the following into the output
@@ -366,6 +371,7 @@ directory:
 | `plots/filtered/{summary,coverage,stage1,stage2,downrange}.pdf` | Plots driven by `telemetry_clean.csv` and `trajectory.csv`. |
 | `plots/with_rejected/…` | Mirrored plot set with hollow circles for rejected samples. |
 | `telemetry_overlay.mp4` | Source video copy with a translucent telemetry plot composited into the top-left corner (margins are symmetric). |
+| `telemetry_overlay.gif` | 15-second looping preview of the overlay video, sampled across the full clip at 4 fps and scaled down to 720p. |
 | `review/` | Representative frame JPEGs and the contact sheet, produced by `sample-frames`. |
 
 ## YAML profile
@@ -446,8 +452,16 @@ derives each downrange increment from the integrated path-length increment
 and altitude change. The interpolated velocity/altitude samples are written
 only to `trajectory.csv`; stage plots still show gaps in the original
 telemetry. The summary plot overlays those interpolated series on top of
-the filtered telemetry from `telemetry_clean.csv` and adds downrange as the
-bottom subplot.
+the filtered telemetry from `telemetry_clean.csv`, adds reconstructed
+downrange as the third subplot, and adds estimated acceleration in g as the
+bottom subplot. The acceleration subplot also shows the hidden smoothed
+velocity series on a second y-axis. The video overlay uses the same
+downrange/acceleration order and the same acceleration series. For
+acceleration only, each source-supported interpolated velocity segment is
+passed through a cubic smoothing spline with an automatically estimated
+robust smoothing factor before the derivative is taken. Acceleration is
+masked across source velocity gaps longer than 10 seconds, so long telemetry
+outages do not produce derivative spikes.
 
 Before interpolation, reconstruction preconditions the filtered values for
 trajectory use only. With `outlier_preconditioning_enabled`, isolated

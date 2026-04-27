@@ -9,6 +9,11 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from webcalyzer.acceleration import (
+    ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+    acceleration_profile,
+    smoothed_velocity_profile,
+)
 from webcalyzer.models import VideoOverlayConfig
 from webcalyzer.video import get_video_metadata, open_capture
 
@@ -51,6 +56,10 @@ Y_TICK_TARGET = 4
 # this are imperceptible at typical playback fps and just multiply the
 # panel cache + concat list size with no visual benefit.
 REVEAL_QUANTIZE_STEP_S = 0.5
+PREVIEW_GIF_DURATION_S = 15.0
+PREVIEW_GIF_FPS = 4
+PREVIEW_GIF_MAX_WIDTH = 1280
+PREVIEW_GIF_MAX_HEIGHT = 720
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,11 +112,12 @@ def render_telemetry_overlay_video(
     )
 
     selected_engine = _resolve_overlay_engine(engine)
+    rendered_path: Path | None = None
     if selected_engine == "ffmpeg":
         from webcalyzer.overlay_ffmpeg import render_via_ffmpeg
 
         try:
-            return render_via_ffmpeg(
+            rendered_path = render_via_ffmpeg(
                 source_path=source_path,
                 output_path=output_path,
                 plan=plan,
@@ -117,12 +127,20 @@ def render_telemetry_overlay_video(
         except Exception as exc:  # pragma: no cover - safety fallback
             print(f"[webcalyzer] ffmpeg overlay engine failed ({exc}); falling back to opencv")
 
-    return _render_via_opencv(
-        source_path=source_path,
-        output_path=output_path,
-        plan=plan,
-        include_audio=config.include_audio,
-    )
+    if rendered_path is None:
+        rendered_path = _render_via_opencv(
+            source_path=source_path,
+            output_path=output_path,
+            plan=plan,
+            include_audio=config.include_audio,
+        )
+
+    if rendered_path is not None:
+        _render_preview_gif(
+            source_video=rendered_path,
+            source_duration_s=float(plan.metadata.duration_s),
+        )
+    return rendered_path
 
 
 def _resolve_overlay_engine(engine: str) -> str:
@@ -189,11 +207,23 @@ def _build_overlay_plan(
         ),
         target_count=Y_TICK_TARGET,
     )
+    acceleration_range = _nice_range(
+        _range_for_acceleration(clean_df, trajectory_df),
+        target_count=Y_TICK_TARGET,
+    )
+    smoothed_velocity_range = _nice_range(
+        _range_for_smoothed_velocity(clean_df, trajectory_df),
+        target_count=Y_TICK_TARGET,
+    )
     downrange_range = _nice_range(
         _range_for_trajectory(trajectory_df, lower_floor=0.0),
         target_count=Y_TICK_TARGET,
     )
-    velocity_axis, altitude_axis, downrange_axis = _axis_layout(overlay_width, overlay_height, include_trajectory)
+    velocity_axis, altitude_axis, acceleration_axis, downrange_axis = _axis_layout(
+        overlay_width,
+        overlay_height,
+        include_trajectory,
+    )
     font_scale = _font_scale(overlay_width, overlay_height)
     base_overlay = _draw_base_overlay(
         width=overlay_width,
@@ -201,9 +231,12 @@ def _build_overlay_plan(
         x_range=x_range,
         velocity_range=velocity_range,
         altitude_range=altitude_range,
+        acceleration_range=acceleration_range,
+        smoothed_velocity_range=smoothed_velocity_range,
         downrange_range=downrange_range,
         velocity_axis=velocity_axis,
         altitude_axis=altitude_axis,
+        acceleration_axis=acceleration_axis,
         downrange_axis=downrange_axis,
         include_rejected=include_rejected,
     )
@@ -215,6 +248,9 @@ def _build_overlay_plan(
     trajectory_series = (
         _build_trajectory_series(trajectory_df, x_range, downrange_range) if include_trajectory and trajectory_df is not None else {}
     )
+    if include_trajectory and trajectory_df is not None:
+        trajectory_series.update(_build_acceleration_series(clean_df, trajectory_df))
+        trajectory_series.update(_build_smoothed_velocity_series(clean_df, trajectory_df))
     reveal_times = _build_reveal_times(retained_series, rejected_series, trajectory_series)
 
     panel_cache = _build_panel_cache(
@@ -223,9 +259,12 @@ def _build_overlay_plan(
         x_range=x_range,
         velocity_range=velocity_range,
         altitude_range=altitude_range,
+        acceleration_range=acceleration_range,
+        smoothed_velocity_range=smoothed_velocity_range,
         downrange_range=downrange_range,
         velocity_axis=velocity_axis,
         altitude_axis=altitude_axis,
+        acceleration_axis=acceleration_axis,
         downrange_axis=downrange_axis,
         retained_series=retained_series,
         rejected_series=rejected_series,
@@ -260,9 +299,12 @@ def _build_panel_cache(
     x_range: tuple[float, float],
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
+    acceleration_range: tuple[float, float],
+    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
+    acceleration_axis: AxisRect | None,
     downrange_axis: AxisRect | None,
     retained_series: dict[str, "PlotSeries"],
     rejected_series: dict[str, "PlotSeries"],
@@ -287,6 +329,7 @@ def _build_panel_cache(
             current_x=threshold_x,
             velocity_axis=velocity_axis,
             altitude_axis=altitude_axis,
+            acceleration_axis=acceleration_axis,
             downrange_axis=downrange_axis,
             retained_series=retained_series,
             rejected_series=rejected_series,
@@ -294,6 +337,8 @@ def _build_panel_cache(
             x_range=x_range,
             velocity_range=velocity_range,
             altitude_range=altitude_range,
+            acceleration_range=acceleration_range,
+            smoothed_velocity_range=smoothed_velocity_range,
             downrange_range=downrange_range,
             font_scale=font_scale,
             include_rejected=include_rejected,
@@ -452,27 +497,28 @@ def _open_video_writer(path: Path, fps: float, size: tuple[int, int]) -> cv2.Vid
     raise RuntimeError(f"Failed to open video writer: {path}")
 
 
-def _axis_layout(width: int, height: int, include_trajectory: bool = False) -> tuple[AxisRect, AxisRect, AxisRect | None]:
+def _axis_layout(width: int, height: int, include_trajectory: bool = False) -> tuple[AxisRect, AxisRect, AxisRect | None, AxisRect | None]:
     left = max(64, int(round(width * 0.10)))
-    right = max(18, int(round(width * 0.03)))
+    right = max(72, int(round(width * 0.10))) if include_trajectory else max(18, int(round(width * 0.03)))
     axis_width = max(80, width - left - right)
     if include_trajectory:
         top = max(16, int(round(height * 0.05)))
         bottom = max(34, int(round(height * 0.10)))
-        gap = max(12, int(round(height * 0.04)))
-        available_height = max(54, height - top - bottom - 2 * gap)
-        axis_height = max(18, int(available_height / 3))
+        gap = max(10, int(round(height * 0.03)))
+        available_height = max(56, height - top - bottom - 3 * gap)
+        axis_height = max(14, int(available_height / 4))
         velocity_axis = AxisRect(left, top, axis_width, axis_height)
         altitude_axis = AxisRect(left, top + axis_height + gap, axis_width, axis_height)
         downrange_axis = AxisRect(left, top + 2 * (axis_height + gap), axis_width, axis_height)
-        return velocity_axis, altitude_axis, downrange_axis
+        acceleration_axis = AxisRect(left, top + 3 * (axis_height + gap), axis_width, axis_height)
+        return velocity_axis, altitude_axis, acceleration_axis, downrange_axis
     top = max(22, int(round(height * 0.06)))
     bottom = max(42, int(round(height * 0.12)))
     gap = max(22, int(round(height * 0.06)))
     axis_height = max(48, int((height - top - bottom - gap) / 2))
     velocity_axis = AxisRect(left, top, axis_width, axis_height)
     altitude_axis = AxisRect(left, top + axis_height + gap, axis_width, axis_height)
-    return velocity_axis, altitude_axis, None
+    return velocity_axis, altitude_axis, None, None
 
 
 def _draw_base_overlay(
@@ -481,9 +527,12 @@ def _draw_base_overlay(
     x_range: tuple[float, float],
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
+    acceleration_range: tuple[float, float],
+    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
+    acceleration_axis: AxisRect | None,
     downrange_axis: AxisRect | None,
     include_rejected: bool,
 ) -> np.ndarray:
@@ -503,6 +552,10 @@ def _draw_base_overlay(
     if downrange_axis is not None:
         _draw_axis(overlay, downrange_axis, x_range, downrange_range, "Downrange [km]", font_scale)
         bottom_axis = downrange_axis
+    if acceleration_axis is not None:
+        _draw_axis(overlay, acceleration_axis, x_range, acceleration_range, "Estimated acceleration [g]", font_scale)
+        _draw_right_axis(overlay, acceleration_axis, smoothed_velocity_range, "Smoothed velocity [m/s]", font_scale)
+        bottom_axis = acceleration_axis
     _put_text(
         overlay,
         "Mission Elapsed Time [s]",
@@ -541,6 +594,28 @@ def _draw_axis(
         _put_text(overlay, _format_tick(float(tick)), (max(1, rect.x - int(126 * font_scale)), y + int(8 * font_scale)), font_scale * 0.82)
 
     _put_text(overlay, label, (rect.x + 4, max(12, rect.y - 6)), font_scale)
+
+
+def _draw_right_axis(
+    overlay: np.ndarray,
+    rect: AxisRect,
+    y_range: tuple[float, float],
+    label: str,
+    font_scale: float,
+) -> None:
+    axis_thickness = max(1, int(round(font_scale * 2.0)))
+    x = rect.x + rect.width
+    _line(overlay, (x, rect.y), (x, rect.y + rect.height), WHITE, thickness=axis_thickness)
+    for tick in _nice_ticks(y_range[0], y_range[1], target_count=Y_TICK_TARGET):
+        y = _map_y(float(tick), rect, y_range)
+        _line(overlay, (x - max(3, int(8 * font_scale)), y), (x, y), WHITE, thickness=axis_thickness)
+        _put_text(
+            overlay,
+            _format_tick(float(tick)),
+            (x + int(10 * font_scale), y + int(8 * font_scale)),
+            font_scale * 0.82,
+        )
+    _put_text(overlay, label, (x - int(132 * font_scale), max(12, rect.y - 6)), font_scale)
 
 
 def _draw_legend(overlay: np.ndarray, rect: AxisRect, font_scale: float, include_rejected: bool) -> None:
@@ -626,6 +701,63 @@ def _build_trajectory_series(
     return result
 
 
+def _build_acceleration_series(
+    clean_df: pd.DataFrame,
+    trajectory_df: pd.DataFrame,
+) -> dict[str, PlotSeries]:
+    result: dict[str, PlotSeries] = {}
+    for stage_name, color in STAGE_COLORS_BGRA.items():
+        x, y = acceleration_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage_name,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        if x.size == 0:
+            continue
+        finite_x = np.isfinite(x)
+        order = np.argsort(x[finite_x])
+        ordered_x = x[finite_x][order]
+        ordered_y = y[finite_x][order]
+        finite = np.isfinite(ordered_y)
+        result[f"acceleration:{stage_name}"] = PlotSeries(
+            x=ordered_x[finite],
+            y=ordered_y[finite],
+            segments=_finite_segments(ordered_x, ordered_y),
+            color=color,
+        )
+    return result
+
+
+def _build_smoothed_velocity_series(
+    clean_df: pd.DataFrame,
+    trajectory_df: pd.DataFrame,
+) -> dict[str, PlotSeries]:
+    result: dict[str, PlotSeries] = {}
+    for stage_name, color in STAGE_COLORS_BGRA.items():
+        x, y = smoothed_velocity_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage_name,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        if x.size == 0:
+            continue
+        finite_x = np.isfinite(x)
+        order = np.argsort(x[finite_x])
+        ordered_x = x[finite_x][order]
+        ordered_y = y[finite_x][order]
+        finite = np.isfinite(ordered_y)
+        pale_color = (color[0], color[1], color[2], 155)
+        result[f"smoothed_velocity:{stage_name}"] = PlotSeries(
+            x=ordered_x[finite],
+            y=ordered_y[finite],
+            segments=_finite_segments(ordered_x, ordered_y),
+            color=pale_color,
+        )
+    return result
+
+
 def _display_values(values: np.ndarray, column: str) -> np.ndarray:
     if column.endswith("_altitude_m"):
         return values * ALTITUDE_SCALE
@@ -684,6 +816,7 @@ def _draw_summary_data(
     current_x: float,
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
+    acceleration_axis: AxisRect | None,
     downrange_axis: AxisRect | None,
     retained_series: dict[str, PlotSeries],
     rejected_series: dict[str, PlotSeries],
@@ -691,6 +824,8 @@ def _draw_summary_data(
     x_range: tuple[float, float],
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
+    acceleration_range: tuple[float, float],
+    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     font_scale: float,
     include_rejected: bool,
@@ -712,6 +847,23 @@ def _draw_summary_data(
             altitude_range,
             current_x,
         )
+        if acceleration_axis is not None:
+            _draw_retained_series(
+                overlay,
+                trajectory_series.get(f"acceleration:{stage}"),
+                acceleration_axis,
+                x_range,
+                acceleration_range,
+                current_x,
+            )
+            _draw_retained_series(
+                overlay,
+                trajectory_series.get(f"smoothed_velocity:{stage}"),
+                acceleration_axis,
+                x_range,
+                smoothed_velocity_range,
+                current_x,
+            )
         if downrange_axis is not None:
             _draw_retained_series(
                 overlay,
@@ -850,6 +1002,60 @@ def _range_for_trajectory(
     high = float(np.max(finite))
     if lower_floor is not None:
         low = min(lower_floor, low)
+    if high <= low:
+        high = low + 1.0
+    padding = (high - low) * 0.06
+    return (low, high + padding)
+
+
+def _range_for_acceleration(
+    clean_df: pd.DataFrame,
+    trajectory_df: pd.DataFrame | None,
+) -> tuple[float, float]:
+    if trajectory_df is None or trajectory_df.empty:
+        return (-1.0, 1.0)
+    arrays: list[np.ndarray] = []
+    for stage in STAGE_COLORS_BGRA:
+        _times, values = acceleration_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        arrays.append(values)
+    values = np.concatenate(arrays) if arrays else np.array([], dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (-1.0, 1.0)
+    low = min(0.0, float(np.min(finite)))
+    high = max(0.0, float(np.max(finite)))
+    if high <= low:
+        high = low + 1.0
+    padding = (high - low) * 0.08
+    return (low - padding, high + padding)
+
+
+def _range_for_smoothed_velocity(
+    clean_df: pd.DataFrame,
+    trajectory_df: pd.DataFrame | None,
+) -> tuple[float, float]:
+    if trajectory_df is None or trajectory_df.empty:
+        return (0.0, 1.0)
+    arrays: list[np.ndarray] = []
+    for stage in STAGE_COLORS_BGRA:
+        _times, values = smoothed_velocity_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        arrays.append(values)
+    values = np.concatenate(arrays) if arrays else np.array([], dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (0.0, 1.0)
+    low = min(0.0, float(np.min(finite)))
+    high = float(np.max(finite))
     if high <= low:
         high = low + 1.0
     padding = (high - low) * 0.06
@@ -1022,3 +1228,67 @@ def _mux_audio_if_available(
 
     rendered_video.unlink(missing_ok=True)
     return target_video
+
+
+def _render_preview_gif(
+    *,
+    source_video: Path,
+    source_duration_s: float,
+) -> Path | None:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        print("[webcalyzer] preview GIF skipped: ffmpeg is not on PATH")
+        return None
+
+    target_path = source_video.with_suffix(".gif")
+    if target_path.exists():
+        target_path.unlink()
+    command = _build_preview_gif_command(
+        ffmpeg=ffmpeg,
+        source_path=source_video,
+        target_path=target_path,
+        source_duration_s=source_duration_s,
+    )
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        stderr_tail = "\n".join(result.stderr.splitlines()[-20:])
+        print(f"[webcalyzer] preview GIF failed; keeping overlay video only:\n{stderr_tail}")
+        return None
+    print(f"[webcalyzer] preview GIF written → {target_path}")
+    return target_path
+
+
+def _build_preview_gif_command(
+    *,
+    ffmpeg: str,
+    source_path: Path,
+    target_path: Path,
+    source_duration_s: float,
+) -> list[str]:
+    duration_s = max(float(source_duration_s), 1.0 / PREVIEW_GIF_FPS)
+    setpts_multiplier = PREVIEW_GIF_DURATION_S / duration_s
+    filter_complex = (
+        f"[0:v]setpts={setpts_multiplier:.12g}*PTS,"
+        f"fps={PREVIEW_GIF_FPS},"
+        f"scale={PREVIEW_GIF_MAX_WIDTH}:{PREVIEW_GIF_MAX_HEIGHT}:"
+        "force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"trim=duration={PREVIEW_GIF_DURATION_S:.6f},setpts=PTS-STARTPTS,"
+        "split[gif][palette_src];"
+        "[palette_src]palettegen=max_colors=128:stats_mode=diff[palette];"
+        "[gif][palette]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
+    )
+    return [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source_path),
+        "-filter_complex",
+        filter_complex,
+        "-an",
+        "-loop",
+        "0",
+        str(target_path),
+    ]

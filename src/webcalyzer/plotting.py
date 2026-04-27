@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 
+from webcalyzer.acceleration import ACCELERATION_SOURCE_GAP_THRESHOLD_S, acceleration_profile, smoothed_velocity_profile
+
 ALTITUDE_SCALE = 0.001
 
 
@@ -77,8 +79,9 @@ def _create_summary_pdf(
 ) -> None:
     with PdfPages(path) as pdf:
         has_trajectory = trajectory_df is not None and not trajectory_df.empty
-        row_count = 3 if has_trajectory else 2
-        fig, axes = plt.subplots(row_count, 1, figsize=(11, 8.5), sharex=True)
+        row_count = 4 if has_trajectory else 2
+        fig_height = 10.5 if has_trajectory else 8.5
+        fig, axes = plt.subplots(row_count, 1, figsize=(11, fig_height), sharex=True)
         _plot_metric(
             axes[0],
             df,
@@ -102,7 +105,8 @@ def _create_summary_pdf(
         bottom_axis = axes[1]
         if has_trajectory:
             _plot_downrange(axes[2], trajectory_df)
-            bottom_axis = axes[2]
+            _plot_acceleration(axes[3], df, trajectory_df)
+            bottom_axis = axes[3]
         bottom_axis.set_xlabel("Mission Elapsed Time [s]")
         fig.suptitle("Telemetry Summary")
         fig.tight_layout()
@@ -283,6 +287,67 @@ def _plot_downrange(axis: plt.Axes, trajectory_df: pd.DataFrame | None) -> None:
     axis.set_title("Reconstructed Downrange")
     axis.grid(alpha=0.25)
     axis.legend()
+
+
+def _plot_acceleration(
+    axis: plt.Axes,
+    clean_df: pd.DataFrame,
+    trajectory_df: pd.DataFrame | None,
+) -> None:
+    if trajectory_df is None or trajectory_df.empty:
+        return
+    velocity_axis = axis.twinx()
+    plotted = False
+    legend_handles = []
+    legend_labels = []
+    for stage, color in SUMMARY_COLORS.items():
+        stage_label = _stage_label(stage)
+        x, acceleration_g = acceleration_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        if x.size == 0:
+            continue
+        (acceleration_line,) = axis.plot(
+            x,
+            acceleration_g,
+            color=color,
+            label=f"{stage_label} estimated acceleration",
+            linewidth=1.2,
+        )
+        velocity_x, smoothed_velocity = smoothed_velocity_profile(
+            clean_df=clean_df,
+            trajectory_df=trajectory_df,
+            stage=stage,
+            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        )
+        if velocity_x.size:
+            (velocity_line,) = velocity_axis.plot(
+                velocity_x,
+                smoothed_velocity,
+                color=color,
+                linestyle="--",
+                alpha=0.5,
+                linewidth=0.9,
+                label=f"{stage_label} smoothed velocity",
+            )
+            legend_handles.append(velocity_line)
+            legend_labels.append(velocity_line.get_label())
+        legend_handles.append(acceleration_line)
+        legend_labels.append(acceleration_line.get_label())
+        plotted = True
+    axis.set_ylabel("Estimated acceleration [g]")
+    velocity_axis.set_ylabel("Smoothed velocity [m/s]")
+    axis.set_title("Estimated Acceleration")
+    axis.grid(alpha=0.25)
+    if plotted:
+        axis.legend(legend_handles, legend_labels, loc="best")
+
+
+def _stage_label(stage: str) -> str:
+    return {"stage1": "Stage 1", "stage2": "Stage 2"}.get(stage, stage.title())
 
 
 def _plot_values(values: pd.Series, column: str) -> pd.Series:
