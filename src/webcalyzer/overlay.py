@@ -9,12 +9,8 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from webcalyzer.acceleration import (
-    ACCELERATION_SOURCE_GAP_THRESHOLD_S,
-    acceleration_profile,
-    smoothed_velocity_profile,
-)
-from webcalyzer.models import VideoOverlayConfig
+from webcalyzer.acceleration import acceleration_profile
+from webcalyzer.models import TrajectoryConfig, VideoOverlayConfig
 from webcalyzer.video import get_video_metadata, open_capture
 
 
@@ -87,6 +83,7 @@ def render_telemetry_overlay_video(
     config: VideoOverlayConfig,
     rejected_df: pd.DataFrame | None = None,
     trajectory_df: pd.DataFrame | None = None,
+    trajectory_config: TrajectoryConfig | None = None,
     *,
     engine: str = "auto",
     encoder: str = "auto",
@@ -107,6 +104,7 @@ def render_telemetry_overlay_video(
         clean_df=clean_df,
         rejected_df=rejected_df,
         trajectory_df=trajectory_df,
+        trajectory_config=trajectory_config,
         config=config,
         plot_mode=plot_mode,
     )
@@ -168,10 +166,12 @@ def _build_overlay_plan(
     clean_df: pd.DataFrame,
     rejected_df: pd.DataFrame | None,
     trajectory_df: pd.DataFrame | None,
+    trajectory_config: TrajectoryConfig | None,
     config: VideoOverlayConfig,
     plot_mode: str,
 ) -> OverlayPlan:
     metadata = get_video_metadata(source_path)
+    acceleration_config = trajectory_config or TrajectoryConfig()
     display_overlay_width = _scaled_dimension(metadata.width, config.width_fraction)
     display_overlay_height = _scaled_dimension(metadata.height, config.height_fraction)
     margin_px = _corner_margin_px(metadata.height)
@@ -208,11 +208,7 @@ def _build_overlay_plan(
         target_count=Y_TICK_TARGET,
     )
     acceleration_range = _nice_range(
-        _range_for_acceleration(clean_df, trajectory_df),
-        target_count=Y_TICK_TARGET,
-    )
-    smoothed_velocity_range = _nice_range(
-        _range_for_smoothed_velocity(clean_df, trajectory_df),
+        _range_for_acceleration(clean_df, trajectory_df, acceleration_config),
         target_count=Y_TICK_TARGET,
     )
     downrange_range = _nice_range(
@@ -232,7 +228,6 @@ def _build_overlay_plan(
         velocity_range=velocity_range,
         altitude_range=altitude_range,
         acceleration_range=acceleration_range,
-        smoothed_velocity_range=smoothed_velocity_range,
         downrange_range=downrange_range,
         velocity_axis=velocity_axis,
         altitude_axis=altitude_axis,
@@ -249,8 +244,7 @@ def _build_overlay_plan(
         _build_trajectory_series(trajectory_df, x_range, downrange_range) if include_trajectory and trajectory_df is not None else {}
     )
     if include_trajectory and trajectory_df is not None:
-        trajectory_series.update(_build_acceleration_series(clean_df, trajectory_df))
-        trajectory_series.update(_build_smoothed_velocity_series(clean_df, trajectory_df))
+        trajectory_series.update(_build_acceleration_series(clean_df, trajectory_df, acceleration_config))
     reveal_times = _build_reveal_times(retained_series, rejected_series, trajectory_series)
 
     panel_cache = _build_panel_cache(
@@ -260,7 +254,6 @@ def _build_overlay_plan(
         velocity_range=velocity_range,
         altitude_range=altitude_range,
         acceleration_range=acceleration_range,
-        smoothed_velocity_range=smoothed_velocity_range,
         downrange_range=downrange_range,
         velocity_axis=velocity_axis,
         altitude_axis=altitude_axis,
@@ -300,7 +293,6 @@ def _build_panel_cache(
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
     acceleration_range: tuple[float, float],
-    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
@@ -338,7 +330,6 @@ def _build_panel_cache(
             velocity_range=velocity_range,
             altitude_range=altitude_range,
             acceleration_range=acceleration_range,
-            smoothed_velocity_range=smoothed_velocity_range,
             downrange_range=downrange_range,
             font_scale=font_scale,
             include_rejected=include_rejected,
@@ -528,7 +519,6 @@ def _draw_base_overlay(
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
     acceleration_range: tuple[float, float],
-    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     velocity_axis: AxisRect,
     altitude_axis: AxisRect,
@@ -553,8 +543,7 @@ def _draw_base_overlay(
         _draw_axis(overlay, downrange_axis, x_range, downrange_range, "Downrange [km]", font_scale)
         bottom_axis = downrange_axis
     if acceleration_axis is not None:
-        _draw_axis(overlay, acceleration_axis, x_range, acceleration_range, "Estimated acceleration [g]", font_scale)
-        _draw_right_axis(overlay, acceleration_axis, smoothed_velocity_range, "Smoothed velocity [m/s]", font_scale)
+        _draw_axis(overlay, acceleration_axis, x_range, acceleration_range, "Acceleration [g]", font_scale)
         bottom_axis = acceleration_axis
     _put_text(
         overlay,
@@ -594,28 +583,6 @@ def _draw_axis(
         _put_text(overlay, _format_tick(float(tick)), (max(1, rect.x - int(126 * font_scale)), y + int(8 * font_scale)), font_scale * 0.82)
 
     _put_text(overlay, label, (rect.x + 4, max(12, rect.y - 6)), font_scale)
-
-
-def _draw_right_axis(
-    overlay: np.ndarray,
-    rect: AxisRect,
-    y_range: tuple[float, float],
-    label: str,
-    font_scale: float,
-) -> None:
-    axis_thickness = max(1, int(round(font_scale * 2.0)))
-    x = rect.x + rect.width
-    _line(overlay, (x, rect.y), (x, rect.y + rect.height), WHITE, thickness=axis_thickness)
-    for tick in _nice_ticks(y_range[0], y_range[1], target_count=Y_TICK_TARGET):
-        y = _map_y(float(tick), rect, y_range)
-        _line(overlay, (x - max(3, int(8 * font_scale)), y), (x, y), WHITE, thickness=axis_thickness)
-        _put_text(
-            overlay,
-            _format_tick(float(tick)),
-            (x + int(10 * font_scale), y + int(8 * font_scale)),
-            font_scale * 0.82,
-        )
-    _put_text(overlay, label, (x - int(132 * font_scale), max(12, rect.y - 6)), font_scale)
 
 
 def _draw_legend(overlay: np.ndarray, rect: AxisRect, font_scale: float, include_rejected: bool) -> None:
@@ -704,6 +671,7 @@ def _build_trajectory_series(
 def _build_acceleration_series(
     clean_df: pd.DataFrame,
     trajectory_df: pd.DataFrame,
+    trajectory_config: TrajectoryConfig,
 ) -> dict[str, PlotSeries]:
     result: dict[str, PlotSeries] = {}
     for stage_name, color in STAGE_COLORS_BGRA.items():
@@ -711,7 +679,11 @@ def _build_acceleration_series(
             clean_df=clean_df,
             trajectory_df=trajectory_df,
             stage=stage_name,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+            max_source_gap_s=trajectory_config.acceleration_source_gap_threshold_s,
+            derivative_window_s=trajectory_config.derivative_smoothing_window_s,
+            derivative_polyorder=trajectory_config.derivative_smoothing_polyorder,
+            derivative_min_window_samples=trajectory_config.derivative_min_window_samples,
+            derivative_mode=trajectory_config.derivative_smoothing_mode,
         )
         if x.size == 0:
             continue
@@ -725,35 +697,6 @@ def _build_acceleration_series(
             y=ordered_y[finite],
             segments=_finite_segments(ordered_x, ordered_y),
             color=color,
-        )
-    return result
-
-
-def _build_smoothed_velocity_series(
-    clean_df: pd.DataFrame,
-    trajectory_df: pd.DataFrame,
-) -> dict[str, PlotSeries]:
-    result: dict[str, PlotSeries] = {}
-    for stage_name, color in STAGE_COLORS_BGRA.items():
-        x, y = smoothed_velocity_profile(
-            clean_df=clean_df,
-            trajectory_df=trajectory_df,
-            stage=stage_name,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
-        )
-        if x.size == 0:
-            continue
-        finite_x = np.isfinite(x)
-        order = np.argsort(x[finite_x])
-        ordered_x = x[finite_x][order]
-        ordered_y = y[finite_x][order]
-        finite = np.isfinite(ordered_y)
-        pale_color = (color[0], color[1], color[2], 155)
-        result[f"smoothed_velocity:{stage_name}"] = PlotSeries(
-            x=ordered_x[finite],
-            y=ordered_y[finite],
-            segments=_finite_segments(ordered_x, ordered_y),
-            color=pale_color,
         )
     return result
 
@@ -825,7 +768,6 @@ def _draw_summary_data(
     velocity_range: tuple[float, float],
     altitude_range: tuple[float, float],
     acceleration_range: tuple[float, float],
-    smoothed_velocity_range: tuple[float, float],
     downrange_range: tuple[float, float],
     font_scale: float,
     include_rejected: bool,
@@ -854,14 +796,6 @@ def _draw_summary_data(
                 acceleration_axis,
                 x_range,
                 acceleration_range,
-                current_x,
-            )
-            _draw_retained_series(
-                overlay,
-                trajectory_series.get(f"smoothed_velocity:{stage}"),
-                acceleration_axis,
-                x_range,
-                smoothed_velocity_range,
                 current_x,
             )
         if downrange_axis is not None:
@@ -1011,6 +945,7 @@ def _range_for_trajectory(
 def _range_for_acceleration(
     clean_df: pd.DataFrame,
     trajectory_df: pd.DataFrame | None,
+    trajectory_config: TrajectoryConfig,
 ) -> tuple[float, float]:
     if trajectory_df is None or trajectory_df.empty:
         return (-1.0, 1.0)
@@ -1020,7 +955,11 @@ def _range_for_acceleration(
             clean_df=clean_df,
             trajectory_df=trajectory_df,
             stage=stage,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+            max_source_gap_s=trajectory_config.acceleration_source_gap_threshold_s,
+            derivative_window_s=trajectory_config.derivative_smoothing_window_s,
+            derivative_polyorder=trajectory_config.derivative_smoothing_polyorder,
+            derivative_min_window_samples=trajectory_config.derivative_min_window_samples,
+            derivative_mode=trajectory_config.derivative_smoothing_mode,
         )
         arrays.append(values)
     values = np.concatenate(arrays) if arrays else np.array([], dtype=float)
@@ -1035,31 +974,6 @@ def _range_for_acceleration(
     return (low - padding, high + padding)
 
 
-def _range_for_smoothed_velocity(
-    clean_df: pd.DataFrame,
-    trajectory_df: pd.DataFrame | None,
-) -> tuple[float, float]:
-    if trajectory_df is None or trajectory_df.empty:
-        return (0.0, 1.0)
-    arrays: list[np.ndarray] = []
-    for stage in STAGE_COLORS_BGRA:
-        _times, values = smoothed_velocity_profile(
-            clean_df=clean_df,
-            trajectory_df=trajectory_df,
-            stage=stage,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
-        )
-        arrays.append(values)
-    values = np.concatenate(arrays) if arrays else np.array([], dtype=float)
-    finite = values[np.isfinite(values)]
-    if finite.size == 0:
-        return (0.0, 1.0)
-    low = min(0.0, float(np.min(finite)))
-    high = float(np.max(finite))
-    if high <= low:
-        high = low + 1.0
-    padding = (high - low) * 0.06
-    return (low, high + padding)
 
 
 def _nice_range(value_range: tuple[float, float], target_count: int) -> tuple[float, float]:

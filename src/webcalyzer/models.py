@@ -105,7 +105,11 @@ class TrajectoryConfig:
     coarse_step_max_gap_s: float = 10.0
     coarse_altitude_threshold_m: float = 500.0
     coarse_velocity_threshold_mps: float = 50.0
-    derivative_smoothing_window_s: float = 5.0
+    acceleration_source_gap_threshold_s: float = 10.0
+    derivative_smoothing_window_s: float = 20.0
+    derivative_smoothing_polyorder: int = 3
+    derivative_min_window_samples: int = 5
+    derivative_smoothing_mode: str = "interp"
     launch_site: LaunchSiteConfig = field(default_factory=LaunchSiteConfig)
 
     def to_dict(self) -> dict[str, Any]:
@@ -118,7 +122,11 @@ class TrajectoryConfig:
             "coarse_step_max_gap_s": self.coarse_step_max_gap_s,
             "coarse_altitude_threshold_m": self.coarse_altitude_threshold_m,
             "coarse_velocity_threshold_mps": self.coarse_velocity_threshold_mps,
+            "acceleration_source_gap_threshold_s": self.acceleration_source_gap_threshold_s,
             "derivative_smoothing_window_s": self.derivative_smoothing_window_s,
+            "derivative_smoothing_polyorder": self.derivative_smoothing_polyorder,
+            "derivative_min_window_samples": self.derivative_min_window_samples,
+            "derivative_smoothing_mode": self.derivative_smoothing_mode,
             "launch_site": self.launch_site.to_dict(),
         }
 
@@ -257,8 +265,6 @@ class HardcodedRawDataPoint:
 class ProfileConfig:
     profile_name: str
     description: str
-    reference_width: int
-    reference_height: int
     default_sample_fps: float
     fixture_frame_count: int
     fixture_time_range_s: tuple[float, float] | None
@@ -275,10 +281,6 @@ class ProfileConfig:
         data = {
             "profile_name": self.profile_name,
             "description": self.description,
-            "reference_resolution": {
-                "width": self.reference_width,
-                "height": self.reference_height,
-            },
             "default_sample_fps": self.default_sample_fps,
             "fixture_frame_count": self.fixture_frame_count,
             "fixture_time_range_s": list(self.fixture_time_range_s) if self.fixture_time_range_s is not None else None,

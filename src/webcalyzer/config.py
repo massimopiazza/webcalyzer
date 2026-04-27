@@ -47,12 +47,9 @@ def load_profile(path: str | Path) -> ProfileConfig:
         )
         for name, field_data in data["fields"].items()
     }
-    reference_resolution = data["reference_resolution"]
     return ProfileConfig(
         profile_name=data["profile_name"],
         description=data.get("description", ""),
-        reference_width=int(reference_resolution["width"]),
-        reference_height=int(reference_resolution["height"]),
         default_sample_fps=float(data.get("default_sample_fps", 3.0)),
         fixture_frame_count=int(data.get("fixture_frame_count", 20)),
         fixture_time_range_s=_load_fixture_time_range(data),
@@ -175,7 +172,11 @@ def _load_trajectory(data: dict[str, Any] | None) -> TrajectoryConfig:
         coarse_step_max_gap_s=float(data.get("coarse_step_max_gap_s", 10.0)),
         coarse_altitude_threshold_m=float(data.get("coarse_altitude_threshold_m", 500.0)),
         coarse_velocity_threshold_mps=float(data.get("coarse_velocity_threshold_mps", 50.0)),
-        derivative_smoothing_window_s=float(data.get("derivative_smoothing_window_s", 5.0)),
+        acceleration_source_gap_threshold_s=float(data.get("acceleration_source_gap_threshold_s", 10.0)),
+        derivative_smoothing_window_s=float(data.get("derivative_smoothing_window_s", 20.0)),
+        derivative_smoothing_polyorder=int(data.get("derivative_smoothing_polyorder", 3)),
+        derivative_min_window_samples=int(data.get("derivative_min_window_samples", 5)),
+        derivative_smoothing_mode=str(data.get("derivative_smoothing_mode", "interp")),
         launch_site=LaunchSiteConfig(
             latitude_deg=_optional_float(
                 launch_site_data.get("latitude_deg", data.get("launch_latitude_deg"))

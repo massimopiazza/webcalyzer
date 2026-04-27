@@ -372,6 +372,52 @@ def test_integration_step_matches_inferred_sample_fps() -> None:
     assert float(stage1["sample_fps"].iloc[0]) == 4.0
 
 
+def test_default_derivative_window_is_20_seconds() -> None:
+    """Lock the post-sweep default. 20 s with polyorder 3 was chosen against
+    a synthetic rocket profile and the NG-3 dataset; halving it back to
+    5 s would regress noise rejection by ~3.5× in synthetic RMSE."""
+
+    from webcalyzer.acceleration import (
+        ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+        DEFAULT_DERIVATIVE_MODE,
+        DEFAULT_DERIVATIVE_POLYORDER,
+        DEFAULT_DERIVATIVE_WINDOW_S,
+        DEFAULT_MIN_WINDOW_SAMPLES,
+    )
+    from webcalyzer.models import TrajectoryConfig
+
+    assert DEFAULT_DERIVATIVE_WINDOW_S == 20.0
+    assert DEFAULT_DERIVATIVE_POLYORDER == 3
+    assert DEFAULT_MIN_WINDOW_SAMPLES == 5
+    assert DEFAULT_DERIVATIVE_MODE == "interp"
+    assert ACCELERATION_SOURCE_GAP_THRESHOLD_S == 10.0
+    config = TrajectoryConfig()
+    assert config.derivative_smoothing_window_s == 20.0
+    assert config.derivative_smoothing_polyorder == 3
+    assert config.derivative_min_window_samples == 5
+    assert config.derivative_smoothing_mode == "interp"
+    assert config.acceleration_source_gap_threshold_s == 10.0
+
+
+def test_longer_savgol_window_lowers_derivative_jitter() -> None:
+    """A longer Sav-Gol window must produce a smoother derivative on
+    noisy data — a sanity check that the new 20 s default is in the
+    right direction relative to the previous 5 s."""
+
+    from webcalyzer.acceleration import smoothed_velocity_and_derivative
+
+    times = np.linspace(0.0, 80.0, 321)  # 4 Hz, 80 s
+    truth_a = 30.0  # m/s² constant
+    truth_v = truth_a * times
+    rng = np.random.default_rng(7)
+    noisy_v = truth_v + rng.normal(0, 5.0, size=truth_v.shape)
+    _, deriv_short = smoothed_velocity_and_derivative(times, noisy_v, window_s=5.0)
+    _, deriv_long = smoothed_velocity_and_derivative(times, noisy_v, window_s=20.0)
+    short_rmse = float(np.sqrt(np.mean((deriv_short - truth_a) ** 2)))
+    long_rmse = float(np.sqrt(np.mean((deriv_long - truth_a) ** 2)))
+    assert long_rmse < 0.5 * short_rmse
+
+
 def test_savgol_smoothing_is_fps_independent() -> None:
     """Same time window of noisy velocity, sampled at 1 Hz vs 4 Hz, should
     yield comparable smoothed derivatives. Specifying the smoothing

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import Akima1DInterpolator, CubicSpline, PchipInterpolator, interp1d
 
+from webcalyzer.acceleration import SAVGOL_MODES
 from webcalyzer.models import LaunchSiteConfig, TrajectoryConfig
 
 
@@ -168,14 +169,31 @@ def _validated_config(config: TrajectoryConfig) -> TrajectoryConfig:
         raise ValueError("trajectory.coarse_velocity_threshold_mps must be a positive finite value")
     if config.coarse_step_max_gap_s <= 0 or not isfinite(config.coarse_step_max_gap_s):
         raise ValueError("trajectory.coarse_step_max_gap_s must be a positive finite value")
+    if config.acceleration_source_gap_threshold_s <= 0 or not isfinite(config.acceleration_source_gap_threshold_s):
+        raise ValueError("trajectory.acceleration_source_gap_threshold_s must be a positive finite value")
     if config.derivative_smoothing_window_s <= 0 or not isfinite(config.derivative_smoothing_window_s):
         raise ValueError("trajectory.derivative_smoothing_window_s must be a positive finite value")
+    if config.derivative_smoothing_polyorder < 1:
+        raise ValueError("trajectory.derivative_smoothing_polyorder must be at least 1")
+    if config.derivative_min_window_samples <= config.derivative_smoothing_polyorder:
+        raise ValueError(
+            "trajectory.derivative_min_window_samples must be greater than "
+            "trajectory.derivative_smoothing_polyorder"
+        )
+    if config.derivative_min_window_samples % 2 == 0:
+        raise ValueError("trajectory.derivative_min_window_samples must be odd")
+    derivative_smoothing_mode = config.derivative_smoothing_mode.strip().lower()
+    if derivative_smoothing_mode not in SAVGOL_MODES:
+        raise ValueError(f"trajectory.derivative_smoothing_mode must be one of {sorted(SAVGOL_MODES)}")
     return replace(
         config,
         interpolation_method=interpolation_method,
         integration_method="rk4" if integration_method == "simpson" else integration_method,
         outlier_preconditioning_enabled=bool(config.outlier_preconditioning_enabled),
         coarse_step_smoothing_enabled=bool(config.coarse_step_smoothing_enabled),
+        derivative_smoothing_polyorder=int(config.derivative_smoothing_polyorder),
+        derivative_min_window_samples=int(config.derivative_min_window_samples),
+        derivative_smoothing_mode=derivative_smoothing_mode,
     )
 
 

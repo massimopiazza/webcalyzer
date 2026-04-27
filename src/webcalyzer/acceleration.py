@@ -8,16 +8,17 @@ from scipy.signal import savgol_filter
 G0_MPS2 = 9.80665
 ACCELERATION_SOURCE_GAP_THRESHOLD_S = 10.0
 
-# Savitzky-Golay default parameters. The window length is expressed in
-# seconds so the smoothing is FPS-independent: at higher sampling rates,
-# more samples fall inside the same time window, automatically improving
-# noise rejection. A polyorder of 3 captures the cubic-in-time behaviour
-# of constant-jerk segments without over-fitting to OCR jitter — see
-# Savitzky & Golay (1964) and Schafer (2011) "What Is a Savitzky-Golay
-# Filter?".
-DEFAULT_DERIVATIVE_WINDOW_S = 5.0
-SMOOTHING_POLYORDER = 3
-MIN_WINDOW_SAMPLES = SMOOTHING_POLYORDER + 2  # spline-style guard band
+# Savitzky-Golay defaults. These are intentionally mirrored into
+# TrajectoryConfig/YAML so runs have explicit visibility and control.
+DEFAULT_DERIVATIVE_WINDOW_S = 20.0
+DEFAULT_DERIVATIVE_POLYORDER = 3
+DEFAULT_MIN_WINDOW_SAMPLES = DEFAULT_DERIVATIVE_POLYORDER + 2
+DEFAULT_DERIVATIVE_MODE = "interp"
+SAVGOL_MODES = frozenset({"mirror", "constant", "nearest", "wrap", "interp"})
+
+# Backward-compatible aliases for callers/tests that imported the old names.
+SMOOTHING_POLYORDER = DEFAULT_DERIVATIVE_POLYORDER
+MIN_WINDOW_SAMPLES = DEFAULT_MIN_WINDOW_SAMPLES
 
 
 def acceleration_profile(
@@ -27,7 +28,12 @@ def acceleration_profile(
     stage: str,
     max_source_gap_s: float = ACCELERATION_SOURCE_GAP_THRESHOLD_S,
     derivative_window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
+    derivative_polyorder: int = DEFAULT_DERIVATIVE_POLYORDER,
+    derivative_min_window_samples: int = DEFAULT_MIN_WINDOW_SAMPLES,
+    derivative_mode: str = DEFAULT_DERIVATIVE_MODE,
 ) -> tuple[np.ndarray, np.ndarray]:
+    if max_source_gap_s <= 0 or not np.isfinite(max_source_gap_s):
+        raise ValueError("acceleration_source_gap_threshold_s must be a positive finite value")
     stage_df = trajectory_df[trajectory_df["stage"] == stage]
     times, velocity = _trajectory_velocity_points(stage_df)
     if times.size < 2:
@@ -49,6 +55,9 @@ def acceleration_profile(
             segment_times,
             segment_velocity,
             window_s=derivative_window_s,
+            polyorder=derivative_polyorder,
+            min_window_samples=derivative_min_window_samples,
+            mode=derivative_mode,
         )
         acceleration_g[start:end] = derivative_mps2 / G0_MPS2
     return times, acceleration_g
@@ -61,7 +70,12 @@ def smoothed_velocity_profile(
     stage: str,
     max_source_gap_s: float = ACCELERATION_SOURCE_GAP_THRESHOLD_S,
     derivative_window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
+    derivative_polyorder: int = DEFAULT_DERIVATIVE_POLYORDER,
+    derivative_min_window_samples: int = DEFAULT_MIN_WINDOW_SAMPLES,
+    derivative_mode: str = DEFAULT_DERIVATIVE_MODE,
 ) -> tuple[np.ndarray, np.ndarray]:
+    if max_source_gap_s <= 0 or not np.isfinite(max_source_gap_s):
+        raise ValueError("acceleration_source_gap_threshold_s must be a positive finite value")
     stage_df = trajectory_df[trajectory_df["stage"] == stage]
     times, velocity = _trajectory_velocity_points(stage_df)
     if times.size < 2:
@@ -83,6 +97,9 @@ def smoothed_velocity_profile(
             segment_times,
             segment_velocity,
             window_s=derivative_window_s,
+            polyorder=derivative_polyorder,
+            min_window_samples=derivative_min_window_samples,
+            mode=derivative_mode,
         )
         smoothed[start:end] = smoothed_segment
     return times, smoothed
@@ -110,11 +127,19 @@ def smoothed_velocity_for_derivative(
     times: np.ndarray,
     velocity_mps: np.ndarray,
     window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
+    polyorder: int = DEFAULT_DERIVATIVE_POLYORDER,
+    min_window_samples: int = DEFAULT_MIN_WINDOW_SAMPLES,
+    mode: str = DEFAULT_DERIVATIVE_MODE,
 ) -> np.ndarray:
     """Return a hidden smoothed velocity series used only for derivatives."""
 
     smoothed_velocity, _derivative_mps2 = smoothed_velocity_and_derivative(
-        times, velocity_mps, window_s=window_s
+        times,
+        velocity_mps,
+        window_s=window_s,
+        polyorder=polyorder,
+        min_window_samples=min_window_samples,
+        mode=mode,
     )
     return smoothed_velocity
 
@@ -124,6 +149,9 @@ def smoothed_velocity_and_derivative(
     velocity_mps: np.ndarray,
     *,
     window_s: float = DEFAULT_DERIVATIVE_WINDOW_S,
+    polyorder: int = DEFAULT_DERIVATIVE_POLYORDER,
+    min_window_samples: int = DEFAULT_MIN_WINDOW_SAMPLES,
+    mode: str = DEFAULT_DERIVATIVE_MODE,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return derivative-ready velocity and its time derivative.
 
@@ -137,7 +165,14 @@ def smoothed_velocity_and_derivative(
 
     times = np.asarray(times, dtype=float)
     velocity_mps = np.asarray(velocity_mps, dtype=float)
-    if times.size < MIN_WINDOW_SAMPLES:
+    if window_s <= 0 or not np.isfinite(window_s):
+        raise ValueError("derivative_smoothing_window_s must be a positive finite value")
+    polyorder, min_window_samples, mode = _validated_savgol_settings(
+        polyorder=polyorder,
+        min_window_samples=min_window_samples,
+        mode=mode,
+    )
+    if times.size < min_window_samples:
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
 
@@ -146,16 +181,14 @@ def smoothed_velocity_and_derivative(
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
 
-    target_samples = max(MIN_WINDOW_SAMPLES, int(round(window_s / median_dt)))
+    target_samples = max(min_window_samples, int(round(window_s / median_dt)))
     window_length = target_samples if target_samples % 2 == 1 else target_samples + 1
     if window_length > times.size:
         # Fall back to the largest odd window the segment can support.
         window_length = times.size if times.size % 2 == 1 else times.size - 1
-    if window_length < MIN_WINDOW_SAMPLES:
+    if window_length < min_window_samples:
         velocity = velocity_mps.astype(float, copy=True)
         return velocity, velocity_derivative(times, velocity)
-
-    polyorder = min(SMOOTHING_POLYORDER, window_length - 1)
 
     try:
         smoothed = savgol_filter(
@@ -163,7 +196,7 @@ def smoothed_velocity_and_derivative(
             window_length=window_length,
             polyorder=polyorder,
             delta=median_dt,
-            mode="interp",
+            mode=mode,
         )
         derivative = savgol_filter(
             velocity_mps,
@@ -171,7 +204,7 @@ def smoothed_velocity_and_derivative(
             polyorder=polyorder,
             delta=median_dt,
             deriv=1,
-            mode="interp",
+            mode=mode,
         )
     except ValueError:
         velocity = velocity_mps.astype(float, copy=True)
@@ -182,6 +215,26 @@ def smoothed_velocity_and_derivative(
         return velocity, velocity_derivative(times, velocity)
 
     return np.asarray(smoothed, dtype=float), np.asarray(derivative, dtype=float)
+
+
+def _validated_savgol_settings(
+    *,
+    polyorder: int,
+    min_window_samples: int,
+    mode: str,
+) -> tuple[int, int, str]:
+    polyorder = int(polyorder)
+    min_window_samples = int(min_window_samples)
+    mode = str(mode).strip().lower()
+    if polyorder < 1:
+        raise ValueError("derivative_smoothing_polyorder must be at least 1")
+    if min_window_samples <= polyorder:
+        raise ValueError("derivative_min_window_samples must be greater than derivative_smoothing_polyorder")
+    if min_window_samples % 2 == 0:
+        raise ValueError("derivative_min_window_samples must be odd")
+    if mode not in SAVGOL_MODES:
+        raise ValueError(f"derivative_smoothing_mode must be one of {sorted(SAVGOL_MODES)}")
+    return polyorder, min_window_samples, mode
 
 
 def velocity_derivative(times: np.ndarray, velocity_mps: np.ndarray) -> np.ndarray:

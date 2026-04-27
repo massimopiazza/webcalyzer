@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -7,11 +8,10 @@ from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
 
 from webcalyzer.acceleration import (
-    ACCELERATION_SOURCE_GAP_THRESHOLD_S,
-    DEFAULT_DERIVATIVE_WINDOW_S,
     acceleration_profile,
     smoothed_velocity_profile,
 )
+from webcalyzer.models import TrajectoryConfig
 
 ALTITUDE_SCALE = 0.001
 
@@ -38,6 +38,8 @@ def create_plots(
     output_dir: str | Path,
     rejected_df: pd.DataFrame | None = None,
     trajectory_df: pd.DataFrame | None = None,
+    derivative_window_s: float | None = None,
+    trajectory_config: TrajectoryConfig | None = None,
 ) -> None:
     output_path = Path(output_dir)
     if rejected_df is None:
@@ -54,8 +56,22 @@ def create_plots(
         stale_path = plots_dir / stale_name
         if stale_path.exists():
             stale_path.unlink()
-    _create_plot_set(clean_df, plots_dir / "filtered", rejected_df=None, trajectory_df=trajectory_df)
-    _create_plot_set(clean_df, plots_dir / "with_rejected", rejected_df=rejected_df, trajectory_df=trajectory_df)
+    _create_plot_set(
+        clean_df,
+        plots_dir / "filtered",
+        rejected_df=None,
+        trajectory_df=trajectory_df,
+        derivative_window_s=derivative_window_s,
+        trajectory_config=trajectory_config,
+    )
+    _create_plot_set(
+        clean_df,
+        plots_dir / "with_rejected",
+        rejected_df=rejected_df,
+        trajectory_df=trajectory_df,
+        derivative_window_s=derivative_window_s,
+        trajectory_config=trajectory_config,
+    )
 
 
 def _create_plot_set(
@@ -63,12 +79,21 @@ def _create_plot_set(
     plots_dir: Path,
     rejected_df: pd.DataFrame | None,
     trajectory_df: pd.DataFrame | None,
+    derivative_window_s: float | None = None,
+    trajectory_config: TrajectoryConfig | None = None,
 ) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
     stale_trajectory_path = plots_dir / "trajectory.pdf"
     if stale_trajectory_path.exists():
         stale_trajectory_path.unlink()
-    _create_summary_pdf(clean_df, plots_dir / "summary.pdf", rejected_df=rejected_df, trajectory_df=trajectory_df)
+    _create_summary_pdf(
+        clean_df,
+        plots_dir / "summary.pdf",
+        rejected_df=rejected_df,
+        trajectory_df=trajectory_df,
+        derivative_window_s=derivative_window_s,
+        trajectory_config=trajectory_config,
+    )
     _create_coverage_pdf(clean_df, plots_dir / "coverage.pdf")
     _create_stage_pdf(clean_df, stage="stage1", path=plots_dir / "stage1.pdf", rejected_df=rejected_df)
     _create_stage_pdf(clean_df, stage="stage2", path=plots_dir / "stage2.pdf", rejected_df=rejected_df)
@@ -81,6 +106,8 @@ def _create_summary_pdf(
     path: Path,
     rejected_df: pd.DataFrame | None,
     trajectory_df: pd.DataFrame | None,
+    derivative_window_s: float | None = None,
+    trajectory_config: TrajectoryConfig | None = None,
 ) -> None:
     with PdfPages(path) as pdf:
         has_trajectory = trajectory_df is not None and not trajectory_df.empty
@@ -110,7 +137,13 @@ def _create_summary_pdf(
         bottom_axis = axes[1]
         if has_trajectory:
             _plot_downrange(axes[2], trajectory_df)
-            _plot_acceleration(axes[3], df, trajectory_df)
+            _plot_acceleration(
+                axes[3],
+                df,
+                trajectory_df,
+                derivative_window_s=derivative_window_s,
+                trajectory_config=trajectory_config,
+            )
             bottom_axis = axes[3]
         bottom_axis.set_xlabel("Mission Elapsed Time [s]")
         fig.suptitle("Telemetry Summary")
@@ -298,9 +331,12 @@ def _plot_acceleration(
     axis: plt.Axes,
     clean_df: pd.DataFrame,
     trajectory_df: pd.DataFrame | None,
+    derivative_window_s: float | None = None,
+    trajectory_config: TrajectoryConfig | None = None,
 ) -> None:
     if trajectory_df is None or trajectory_df.empty:
         return
+    config = _resolve_acceleration_config(trajectory_config, derivative_window_s)
     velocity_axis = axis.twinx()
     plotted = False
     legend_handles = []
@@ -311,7 +347,11 @@ def _plot_acceleration(
             clean_df=clean_df,
             trajectory_df=trajectory_df,
             stage=stage,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+            max_source_gap_s=config.acceleration_source_gap_threshold_s,
+            derivative_window_s=config.derivative_smoothing_window_s,
+            derivative_polyorder=config.derivative_smoothing_polyorder,
+            derivative_min_window_samples=config.derivative_min_window_samples,
+            derivative_mode=config.derivative_smoothing_mode,
         )
         if x.size == 0:
             continue
@@ -326,7 +366,11 @@ def _plot_acceleration(
             clean_df=clean_df,
             trajectory_df=trajectory_df,
             stage=stage,
-            max_source_gap_s=ACCELERATION_SOURCE_GAP_THRESHOLD_S,
+            max_source_gap_s=config.acceleration_source_gap_threshold_s,
+            derivative_window_s=config.derivative_smoothing_window_s,
+            derivative_polyorder=config.derivative_smoothing_polyorder,
+            derivative_min_window_samples=config.derivative_min_window_samples,
+            derivative_mode=config.derivative_smoothing_mode,
         )
         if velocity_x.size:
             (velocity_line,) = velocity_axis.plot(
@@ -349,6 +393,16 @@ def _plot_acceleration(
     axis.grid(alpha=0.25)
     if plotted:
         axis.legend(legend_handles, legend_labels, loc="best")
+
+
+def _resolve_acceleration_config(
+    trajectory_config: TrajectoryConfig | None,
+    derivative_window_s: float | None,
+) -> TrajectoryConfig:
+    config = trajectory_config or TrajectoryConfig()
+    if derivative_window_s is None:
+        return config
+    return replace(config, derivative_smoothing_window_s=float(derivative_window_s))
 
 
 def _stage_label(stage: str) -> str:

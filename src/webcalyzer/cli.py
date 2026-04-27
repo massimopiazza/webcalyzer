@@ -89,7 +89,14 @@ def build_parser() -> argparse.ArgumentParser:
     overlay_parser = subparsers.add_parser("render-overlay", help="Render a video copy with synchronized telemetry plot overlay.")
     overlay_parser.add_argument("--video", required=True, help="Path to the source video.")
     overlay_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_clean.csv.")
-    overlay_parser.add_argument("--config", required=False, help="Optional YAML profile with video_overlay settings.")
+    overlay_parser.add_argument(
+        "--config",
+        required=False,
+        help=(
+            "Optional YAML profile with video_overlay and trajectory acceleration "
+            "settings. Defaults to <output>/config_resolved.yaml when present."
+        ),
+    )
     overlay_parser.add_argument("--plot-mode", choices=["filtered", "with_rejected"], default=None)
     overlay_parser.add_argument("--width-fraction", type=float, default=None)
     overlay_parser.add_argument("--height-fraction", type=float, default=None)
@@ -222,13 +229,23 @@ def main(argv: list[str] | None = None) -> None:
 
         output_dir = Path(args.output)
         clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
-        create_plots(clean_df, output_dir, trajectory_df=_read_trajectory_df(output_dir))
+        create_plots(
+            clean_df,
+            output_dir,
+            trajectory_df=_read_trajectory_df(output_dir),
+            trajectory_config=_trajectory_config_from_profile(output_dir),
+        )
         return
 
     if args.command == "rebuild-clean":
         clean_df = rebuild_clean_in_output_dir(args.output)
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=None)
-        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
+        create_plots(
+            clean_df,
+            args.output,
+            trajectory_df=trajectory_df,
+            trajectory_config=_trajectory_config_from_profile(args.output),
+        )
         return
 
     if args.command == "rescue":
@@ -241,7 +258,12 @@ def main(argv: list[str] | None = None) -> None:
         )
         clean_df = rebuild_clean_in_output_dir(args.output, profile=profile)
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
-        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
+        create_plots(
+            clean_df,
+            args.output,
+            trajectory_df=trajectory_df,
+            trajectory_config=_trajectory_config_from_profile(args.output, profile=profile),
+        )
         return
 
     if args.command == "reject-outliers":
@@ -251,7 +273,12 @@ def main(argv: list[str] | None = None) -> None:
             window_s=args.window_s,
         )
         cleaned, trajectory_df = _write_trajectory_for_output(cleaned, args.output, profile=None)
-        create_plots(cleaned, args.output, trajectory_df=trajectory_df)
+        create_plots(
+            cleaned,
+            args.output,
+            trajectory_df=trajectory_df,
+            trajectory_config=_trajectory_config_from_profile(args.output),
+        )
         return
 
     if args.command == "reconstruct-trajectory":
@@ -261,14 +288,19 @@ def main(argv: list[str] | None = None) -> None:
         profile = load_profile(args.config) if args.config else _profile_from_output(output_dir)
         clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, output_dir, profile=profile, args=args)
-        create_plots(clean_df, output_dir, trajectory_df=trajectory_df)
+        create_plots(
+            clean_df,
+            output_dir,
+            trajectory_df=trajectory_df,
+            trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
+        )
         return
 
     if args.command == "render-overlay":
         import pandas as pd
 
         output_dir = Path(args.output)
-        profile = load_profile(args.config) if args.config else None
+        profile = load_profile(args.config) if args.config else _profile_from_output(output_dir)
         overlay_config = _overlay_config_from_args(profile, args)
         clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
         render_telemetry_overlay_video(
@@ -278,6 +310,7 @@ def main(argv: list[str] | None = None) -> None:
             config=overlay_config,
             rejected_df=_read_rejected_df(output_dir),
             trajectory_df=_read_trajectory_df(output_dir),
+            trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile),
             engine=getattr(args, "overlay_engine", "auto"),
             encoder=getattr(args, "overlay_encoder", "auto"),
         )
@@ -333,7 +366,12 @@ def main(argv: list[str] | None = None) -> None:
         clean_df, trajectory_df = _write_trajectory_for_output(
             clean_df, args.output, profile=profile, sample_fps=effective_fps
         )
-        create_plots(clean_df, args.output, trajectory_df=trajectory_df)
+        create_plots(
+            clean_df,
+            args.output,
+            trajectory_df=trajectory_df,
+            trajectory_config=_trajectory_config_from_profile(args.output, profile=profile, args=args),
+        )
         _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args, trajectory_df=trajectory_df)
         return
 
@@ -365,6 +403,30 @@ def _profile_from_output(output_dir: str | Path) -> ProfileConfig | None:
     if not profile_path.exists():
         return None
     return load_profile(profile_path)
+
+
+def _trajectory_config_from_profile(
+    output_dir: str | Path,
+    profile: ProfileConfig | None = None,
+    args: argparse.Namespace | None = None,
+) -> TrajectoryConfig:
+    """Resolve the trajectory config used by reconstruction-dependent plots.
+
+    Priority: explicit trajectory CLI flags, then profile YAML, then resolved
+    profile from ``config_resolved.yaml``, then TrajectoryConfig defaults.
+    """
+
+    if profile is None:
+        profile = _profile_from_output(output_dir)
+    return _trajectory_config_from_args(profile.trajectory if profile else TrajectoryConfig(), args)
+
+
+def _derivative_window_from_profile(
+    output_dir: str | Path,
+    profile: ProfileConfig | None = None,
+    args: argparse.Namespace | None = None,
+) -> float:
+    return float(_trajectory_config_from_profile(output_dir, profile=profile, args=args).derivative_smoothing_window_s)
 
 
 def _trajectory_config_from_args(config: TrajectoryConfig, args: argparse.Namespace | None = None) -> TrajectoryConfig:
@@ -477,6 +539,7 @@ def _render_overlay_if_enabled(
         config=overlay_config,
         rejected_df=_read_rejected_df(output_dir),
         trajectory_df=trajectory_df if trajectory_df is not None else _read_trajectory_df(output_dir),
+        trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
         engine=getattr(args, "overlay_engine", "auto"),
         encoder=getattr(args, "overlay_encoder", "auto"),
     )
