@@ -469,7 +469,7 @@ inset from the corner instead of flush against the screen edges.
 ## Trajectory reconstruction
 
 Trajectory reconstruction treats webcast velocity as total speed magnitude
-and altitude as authoritative. Stage 1 is anchored at MET 0. Stage 2 is not
+and altitude as authoritative. Stage 1 is anchored at MET $0$. Stage 2 is not
 anchored at liftoff; it starts at the first interval where Stage 2 velocity
 and altitude are both available and inherits Stage 1's reconstructed
 downrange at that time. From there the two stage paths can bifurcate.
@@ -477,19 +477,20 @@ downrange at that time. From there the two stage paths can bifurcate.
 For each reconstructed stage, the pipeline interpolates velocity and
 altitude internally on a fixed time grid, integrates total speed, then
 derives each downrange increment from the integrated path-length increment
-and altitude change. The interpolated velocity/altitude samples are written
+and altitude change. In scalar terms, each step uses
+$\Delta r = \sqrt{\max(0,\Delta s^2 - \Delta h^2)}$, where $\Delta s$ is
+the integrated path-length increment and $\Delta h$ is the altitude change.
+The interpolated velocity/altitude samples are written
 only to `trajectory.csv`; stage plots still show gaps in the original
 telemetry. The summary plot overlays those interpolated series on top of
 the filtered telemetry from `telemetry_clean.csv`, adds reconstructed
-downrange as the third subplot, and adds estimated acceleration in g as the
-bottom subplot. The acceleration subplot also shows the hidden smoothed
-velocity series on a second y-axis. The video overlay uses the same
-downrange/acceleration order and the same acceleration series. For
-acceleration only, each source-supported interpolated velocity segment is
-passed through a cubic smoothing spline with an automatically estimated
-robust smoothing factor before the derivative is taken. Acceleration is
-masked across source velocity gaps longer than 10 seconds, so long telemetry
-outages do not produce derivative spikes.
+downrange as the third subplot, and adds estimated acceleration in $g$ as
+the bottom subplot. The video overlay uses the same downrange/acceleration
+order and the same acceleration series. For acceleration only, each
+source-supported interpolated velocity segment is passed through the
+configured Savitzky-Golay derivative filter. Acceleration is masked across
+source velocity gaps longer than $10\ \mathrm{s}$ by default, so long
+telemetry outages do not produce derivative spikes.
 
 Before interpolation, reconstruction preconditions the filtered values for
 trajectory use only. With `outlier_preconditioning_enabled`, isolated
@@ -497,12 +498,12 @@ knots whose local linear residual exceeds the altitude or velocity
 threshold are removed from the interpolation input, which prevents a single
 surviving OCR artifact from forcing a large reconstructed excursion. The
 same trajectory-only pass then detects coarse stepwise telemetry. By
-default, altitude plateaus with changes of at least `500 m` and velocity
-plateaus with changes of at least `50 m/s` are converted into smooth
+default, altitude plateaus with changes of at least $500\ \mathrm{m}$ and velocity
+plateaus with changes of at least $50\ \mathrm{m/s}$ are converted into smooth
 transition knots at the midpoint between the last sample on the old plateau
 and the first sample on the new plateau. That midpoint conversion is
 gap-aware: it is only applied when the gap between the two plateaus is at
-most `coarse_step_max_gap_s` (`10 s` by default), so long telemetry outages
+most `coarse_step_max_gap_s` ($10\ \mathrm{s}$ by default), so long telemetry outages
 remain long-gap interpolation problems instead of being collapsed into a
 fake midpoint step. This conditioning is used only inside `trajectory.csv`
 and the interpolated summary overlays; the filtered telemetry columns and
@@ -521,7 +522,7 @@ Interpolation options:
   and is best reserved for very clean telemetry.
 - `linear`: most conservative and least smooth; useful for debugging.
 
-Integration is fixed-step at the OCR sample period (`1 / sample_fps`),
+Integration is fixed-step at the OCR sample period $\Delta t = 1/f_s$,
 so the trajectory grid stays consistent with the input cadence and there
 is no separate `integration_step_s` to keep in sync. `rk4` is the
 default integrator; for this time-only telemetry integration it is
@@ -534,70 +535,71 @@ The `--trajectory-interpolation`, `--trajectory-integration`, and
 
 For the acceleration estimate, velocity is differentiated with a
 Savitzky-Golay filter whose settings live in YAML:
-`derivative_smoothing_window_s` (default `20 s`),
-`derivative_smoothing_polyorder` (default `3`),
-`derivative_min_window_samples` (default `5`),
+`derivative_smoothing_window_s` (default $20\ \mathrm{s}$),
+`derivative_smoothing_polyorder` (default $3$),
+`derivative_min_window_samples` (default $5$),
 `derivative_smoothing_mode` (default `interp`), and
-`acceleration_source_gap_threshold_s` (default `10 s`).
+`acceleration_source_gap_threshold_s` (default $10\ \mathrm{s}$).
 
-### Why Savitzky–Golay for ẏ
+### Why Savitzky-Golay for $\dot{y}$
 
 Differentiating a measured signal amplifies high-frequency noise: if
-y(t) = s(t) + ε(t) with white-noise ε of variance σ², a finite-difference
-estimator returns dy/dt with variance ∝ σ²/Δt², so naive `np.gradient`
+$y(t)=s(t)+\varepsilon(t)$ with white-noise $\varepsilon(t)$ of variance
+$\sigma^2$, a finite-difference estimator returns $\mathrm{d}y/\mathrm{d}t$
+with variance proportional to $\sigma^2/\Delta t^2$, so naive `np.gradient`
 on OCR-derived velocity produces a derivative dominated by jitter. The
-classic remedy — and the one we use — is a Savitzky–Golay filter
+classic remedy is a Savitzky-Golay filter
 (Savitzky & Golay, 1964; Schafer, 2011).
 
-Inside a sliding window of length `2M+1` centred on time `t_i`, fit a
-polynomial of degree `K` to the local samples in least-squares:
+Inside a sliding window of length $2M+1$ centered on time $t_i$, fit a
+polynomial of degree $K$ to the local samples in least-squares:
 
-```
-              K
-ŝ(t; t_i) =   Σ   c_k(i) · (t − t_i)^k
-              k=0
-```
+$$
+\hat{s}(t; t_i) = \sum_{k=0}^{K} c_k(i)\,(t - t_i)^k
+$$
 
-The smoothed value at `t_i` is `ŝ(t_i; t_i) = c_0(i)`; its derivative
-is `dŝ/dt|_{t_i} = c_1(i)`. Because the design matrix depends only on
-the *offsets* (t_{i+j} − t_i), uniform sampling makes the least-squares
+The smoothed value at $t_i$ is $\hat{s}(t_i; t_i)=c_0(i)$; its derivative
+is $\left.\mathrm{d}\hat{s}/\mathrm{d}t\right|_{t_i}=c_1(i)$. Because the
+design matrix depends only on the *offsets* $(t_{i+j} - t_i)$, uniform sampling makes the least-squares
 solution a single fixed convolution kernel:
 
-```
-              M
-ŝ(t_i)   =   Σ    h_0[j] · y_{i+j}
-            j=−M
+$$
+\hat{s}(t_i) = \sum_{j=-M}^{M} h_0[j]\,y_{i+j}
+$$
 
-dŝ/dt|_{t_i} = (1/Δt) · Σ    h_1[j] · y_{i+j}
-                       j=−M
-```
+$$
+\left.\frac{\mathrm{d}\hat{s}}{\mathrm{d}t}\right|_{t_i}
+= \frac{1}{\Delta t}\sum_{j=-M}^{M} h_1[j]\,y_{i+j}
+$$
 
 so each filter pass is one FIR convolution with kernels precomputed by
 `scipy.signal.savgol_coeffs`. The kernel has two useful properties:
 
 1. **Polynomial reproduction.** Signals that are exactly polynomial of
-   degree ≤ K pass through (and their derivative likewise) with zero
-   bias, so a constant-jerk segment is reproduced exactly when K ≥ 3.
+   degree $\le K$ pass through, and their derivative likewise, with zero
+   bias.
 2. **Noise reduction.** For zero-mean white noise, the variance of
-   `dŝ/dt|_{t_i}` is `σ² · ‖h_1‖² / Δt²`. Increasing the window halves
-   `‖h_1‖²` per doubling, so a longer window quadratically improves
+   $\left.\mathrm{d}\hat{s}/\mathrm{d}t\right|_{t_i}$ is
+   $\sigma^2\lVert h_1\rVert^2/\Delta t^2$. Increasing the window halves
+   $\lVert h_1\rVert^2$ per doubling, so a longer window quadratically improves
    noise rejection — at the cost of bandwidth, which is roughly
-   `f_c ≈ (K + 1) / (π · (2M+1) · Δt)`.
+   $f_c \approx (K + 1)/(\pi(2M+1)\Delta t)$.
 
 Two design choices follow:
 
 - **Sizing the window in seconds** (rather than samples) is what makes
   the filter FPS-independent: at higher sample rate, more samples fall
-  inside the same time window, lowering `‖h_1‖²` and automatically
-  buying noise rejection without retuning. The configured 20 s default
+  inside the same time window, lowering $\lVert h_1\rVert^2$ and automatically
+  buying noise rejection without retuning. The configured $20\ \mathrm{s}$ default
   was chosen by sweeping `(window, polyorder)` against (a) a synthetic
   rocket-like profile with Gaussian velocity noise and (b) the NG-3
-  trajectory; it gives ~3.5× lower RMSE versus ground truth than a 5 s
+  trajectory; it gives about $3.5\times$ lower RMSE versus ground truth than a $5\ \mathrm{s}$
   window without visibly blunting staging or MECO transitions.
-- **Polynomial order 3** is the minimum that reproduces both the value
-  and the derivative of a constant-jerk segment exactly (`a = a₀ + j·t`
-  ⇒ `v = v₀ + a₀·t + ½ j·t²`, cubic in `t`). Going to K = 4 buys
-  marginal bandwidth at the cost of more noise pass-through; K = 2
+- **Polynomial order $3$** gives a one-degree margin over the quadratic
+  velocity profile from constant jerk,
+  $a(t)=a_0+j\,t \Rightarrow v(t)=v_0+a_0t+\frac{1}{2}j\,t^2$. Going to
+  $K=4$ buys
+  marginal bandwidth at the cost of more noise pass-through; $K=2$
   is smoother but introduces a few-percent peak-shaving bias around
   rapid transitions.
 
