@@ -212,3 +212,6 @@ outputs/*
 
 # Video files
 *.mp4
+
+# Node.js
+node_modules/

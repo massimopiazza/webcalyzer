@@ -86,6 +86,49 @@ def build_parser() -> argparse.ArgumentParser:
     _add_trajectory_args(run_parser)
     _add_video_overlay_args(run_parser)
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Launch the local web UI (FastAPI + React) on http://localhost.",
+    )
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    serve_parser.add_argument("--port", type=int, default=8765, help="Bind port (default 8765).")
+    serve_parser.add_argument(
+        "--root",
+        action="append",
+        default=None,
+        help=(
+            "Allowed root directory for the file browser (repeatable). "
+            "Defaults to the current working directory."
+        ),
+    )
+    serve_parser.add_argument(
+        "--templates-dir",
+        default=None,
+        help="Directory holding YAML profile templates. Defaults to <cwd>/configs.",
+    )
+    serve_parser.add_argument(
+        "--dist-dir",
+        default=None,
+        help=(
+            "Directory of the built React frontend (web/dist). Defaults to "
+            "the bundled location next to the source tree."
+        ),
+    )
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable uvicorn auto-reload (development only).",
+    )
+    serve_parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=None,
+        help=(
+            "Permitted CORS origin (repeatable). Useful when running the Vite "
+            "dev server on a different port than the API."
+        ),
+    )
+
     overlay_parser = subparsers.add_parser("render-overlay", help="Render a video copy with synchronized telemetry plot overlay.")
     overlay_parser.add_argument("--video", required=True, help="Path to the source video.")
     overlay_parser.add_argument("--output", required=True, help="Extraction output directory containing telemetry_clean.csv.")
@@ -223,6 +266,10 @@ def _add_trajectory_args(parser: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "serve":
+        _run_serve(args)
+        return
 
     if args.command == "plot":
         import pandas as pd
@@ -519,6 +566,59 @@ def _resolve_workers(args: argparse.Namespace, backend_options: OCRBackendOption
         return max(1, int(text))
     except ValueError as exc:
         raise SystemExit(f"--ocr-workers must be an integer or 'auto'; got {raw_value!r}") from exc
+
+
+def _run_serve(args: argparse.Namespace) -> None:
+    """Launch the FastAPI + React web UI."""
+
+    import uvicorn
+
+    from webcalyzer.web.app import ServeConfig, create_app
+    from webcalyzer.web.files import normalize_roots
+
+    cwd = Path.cwd()
+    raw_roots = args.root if args.root else [cwd, Path.home()]
+    roots = normalize_roots(raw_roots)
+    if not roots:
+        raise SystemExit("No browsable roots could be resolved; pass --root <path>.")
+
+    templates_dir = (
+        Path(args.templates_dir).expanduser().resolve()
+        if args.templates_dir
+        else cwd / "configs"
+    )
+    templates_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.dist_dir:
+        dist_dir: Path | None = Path(args.dist_dir).expanduser().resolve()
+    else:
+        # Default location: <repo>/web/dist when running from a source checkout.
+        candidate = Path(__file__).resolve().parents[2] / "web" / "dist"
+        dist_dir = candidate if candidate.exists() else None
+
+    cors_origins = list(args.cors_origin or [])
+    if args.reload and not cors_origins:
+        cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+    config = ServeConfig(
+        roots=roots,
+        templates_dir=templates_dir,
+        dist_dir=dist_dir,
+        cors_origins=cors_origins,
+    )
+    app = create_app(config)
+
+    print(f"[webcalyzer] serving on http://{args.host}:{args.port}")
+    print(f"[webcalyzer] templates dir: {templates_dir}")
+    print("[webcalyzer] browsable roots:")
+    for root in roots:
+        print(f"  - {root.path}")
+    if dist_dir is None:
+        print(
+            "[webcalyzer] frontend bundle not found. Build it with:\n"
+            "    cd web && npm install && npm run build"
+        )
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload, log_level="info")
 
 
 def _render_overlay_if_enabled(

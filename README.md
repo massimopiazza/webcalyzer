@@ -69,6 +69,40 @@ the cross-platform RapidOCR backend.
 
 <img width="1280" height="720" alt="telemetry_overlay" src="https://github.com/user-attachments/assets/fa5eedd2-a348-450e-b5c3-61c0cc7bea3d" />
 
+## Web UI (local)
+
+The same configuration surface that the YAML files cover is also available
+through a local web UI built with FastAPI + React. The CLI keeps working
+unchanged; the UI is launched as an additional subcommand.
+
+```bash
+# one-time: build the React bundle
+cd web && npm install && npm run build && cd ..
+
+# launch
+webcalyzer serve [--host 127.0.0.1] [--port 8765] \
+                 [--root <path>...] \
+                 [--templates-dir <path>] \
+                 [--dist-dir <path>]
+```
+
+Then open <http://localhost:8765>. The UI exposes three pages:
+
+- **Run** — load any YAML profile from `--templates-dir`, edit every field
+  the YAML supports (with inline validation), pick a video and an output
+  directory via the server-side file browser, then run the same pipeline as
+  `webcalyzer run`. Live stdout/stderr streams back over Server-Sent Events;
+  outputs are linked when the job finishes.
+- **Calibrate** — sample fixture frames from a video and draw / resize
+  bounding boxes for each field directly on the frame, saving back to the
+  YAML profile.
+- **Templates** — list, import (paste YAML), download, and delete templates
+  in `--templates-dir`.
+
+For development with hot-reload, start the API with
+`--reload --cors-origin http://localhost:5173` and run `npm run dev` in
+`web/` — Vite proxies `/api` to the FastAPI server.
+
 ## Argument reference
 
 ### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)

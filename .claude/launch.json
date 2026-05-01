@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webcalyzer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "webcalyzer",
+        "serve",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8765",
+        "--root",
+        "/Users/massimopiazza/Downloads/webcalyzer",
+        "--templates-dir",
+        "/Users/massimopiazza/Downloads/webcalyzer/configs"
+      ],
+      "port": 8765
+    }
+  ]
+}
