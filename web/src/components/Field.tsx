@@ -25,30 +25,49 @@ export function Field({
   tooltip,
   disabled,
 }: Props) {
+  const mobileTooltipButton = tooltip ? (
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={`What is ${label}?`}
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:text-primary [@media(hover:hover)]:hidden"
+        >
+          <Info className="h-3 w-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="[@media(hover:hover)]:hidden">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  ) : null;
+
+  const control = tooltip ? (
+    <Tooltip delayDuration={150}>
+      <TooltipTrigger asChild>
+        <div className="[@media(hover:hover)]:cursor-help">{children}</div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="hidden [@media(hover:hover)]:block">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  ) : (
+    children
+  );
+
   return (
     <div className={cn("space-y-1.5", disabled && "opacity-60", className)}>
       <div className="flex items-baseline justify-between gap-3">
-        <Label className="flex items-center gap-1.5">
-          <span>{label}</span>
-          {required && <span className="text-destructive/80">*</span>}
-          {tooltip && (
-            <Tooltip delayDuration={150}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`What is ${label}?`}
-                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:text-primary"
-                >
-                  <Info className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">{tooltip}</TooltipContent>
-            </Tooltip>
-          )}
-        </Label>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Label className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate">{label}</span>
+            {required && <span className="text-destructive/80">*</span>}
+          </Label>
+          {mobileTooltipButton}
+        </div>
         {hint && <span className="text-[10px] uppercase text-muted-foreground/70">{hint}</span>}
       </div>
-      {children}
+      {control}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );

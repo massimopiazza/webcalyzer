@@ -265,7 +265,7 @@ def _write_concat_list(
     """Emit the ffmpeg concat-demuxer playlist.
 
     Each segment becomes a ``file <png>\\nduration <seconds>`` pair. The
-    last entry is repeated without a duration directive — the concat
+    last entry is repeated without a duration directive - the concat
     demuxer requires the final file to be present twice for it to handle
     the trailing edge correctly.
     """
@@ -385,7 +385,7 @@ def _hwaccel_decode_args(encoder: str) -> list[str]:
 def _encoder_quality_args(encoder: str) -> list[str]:
     """Pick reasonable quality knobs for each encoder.
 
-    Targets ~6 Mbps for 1080p60 — visually transparent on telemetry-style
+    Targets ~6 Mbps for 1080p60 - visually transparent on telemetry-style
     overlays without ballooning file size. Bitrate-based control is the
     portable knob across every encoder we support.
     """

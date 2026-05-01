@@ -15,7 +15,7 @@ import { getError } from "@/lib/errors";
 import { NumberInput } from "./NumberInput";
 import { FIELD_HELP, SECTION_HELP, SELECT_HELP } from "@/lib/explanations";
 
-const KIND_OPTIONS = [
+const TYPE_OPTIONS = [
   { value: "velocity", label: "velocity" },
   { value: "altitude", label: "altitude" },
   { value: "met", label: "met (mission elapsed time)" },
@@ -102,15 +102,15 @@ export function FieldsSection({ state }: { state: ProfileFormState }) {
                   />
                 </Field>
                 <Field
-                  label="Kind"
-                  tooltip={FIELD_HELP.field_kind}
+                  label="Type"
+                  tooltip={FIELD_HELP.field_type}
                   error={getError(errors, [...fieldErrorPrefix, "kind"])}
                 >
                   <Select
                     value={field.kind}
-                    onValueChange={(v) => {
-                      patch(["fields", name, "kind"], v);
-                      if (v === "met") {
+                    onValueChange={(type) => {
+                      patch(["fields", name, "kind"], type);
+                      if (type === "met") {
                         patch(["fields", name, "stage"], null);
                       } else if (field.stage === null) {
                         patch(["fields", name, "stage"], "stage1");
@@ -121,11 +121,11 @@ export function FieldsSection({ state }: { state: ProfileFormState }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {KIND_OPTIONS.map((o) => (
+                      {TYPE_OPTIONS.map((o) => (
                         <SelectItem
                           key={o.value}
                           value={o.value}
-                          tooltip={SELECT_HELP.field_kind[o.value]}
+                          tooltip={SELECT_HELP.field_type[o.value]}
                         >
                           {o.label}
                         </SelectItem>

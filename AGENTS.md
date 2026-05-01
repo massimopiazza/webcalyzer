@@ -1,4 +1,4 @@
-# AGENTS.md — webcalyzer specification for coding agents
+# AGENTS.md - webcalyzer specification for coding agents
 
 This file is the canonical reference for AI coding agents working on this
 repository. **Read it in full before making non-trivial changes.** It
@@ -56,7 +56,7 @@ src/webcalyzer/
 web/                    # web UI frontend (Vite + React + TS + Tailwind + shadcn)
   src/
     App.tsx, main.tsx, index.css
-    pages/{RunPage,CalibratePage,TemplatesPage}.tsx
+    pages/{RunPage,CalibratePage,TemplatesPage,DocumentationPage}.tsx
     components/profile/*           # one component per ProfileConfig section
     components/{AppShell,RunPanel,FileBrowserDialog,PathPicker,
                 TemplatePicker,Field,Toaster}.tsx
@@ -70,7 +70,7 @@ outputs/                # convention: per-run output directory
 
 The runtime stays a single Python package. The web UI is bundled to static
 files (`web/dist/`) at build time and **served by the same FastAPI
-process** — no Node runtime needed at execution.
+process** - no Node runtime needed at execution.
 
 ## 3. The four-layer configuration model
 
@@ -85,7 +85,7 @@ order below and verify the round-trip.
 | **L3 · Pydantic schema** | `src/webcalyzer/web/schema.py` (`ProfileModel` + nested `*Model` + `*_to_model` / `model_to_*_dataclass` converters) | Authoritative server-side validation. Mirrors L1 1:1. The API layer uses `ProfileModel.model_validate(...)` on every write/run/validate endpoint. |
 | **L4 · Zod schema + form** | `web/src/lib/schema.ts` (`profileSchema`, `emptyProfile`) and `web/src/components/profile/*Section.tsx` | Client-side validation (inline errors) and the form UI. The UI **must** allow the user to edit every L1 field (per the user's product requirement). |
 
-A typed DTO mirror (`web/src/lib/api.ts`) sits alongside L4 — keep it in
+A typed DTO mirror (`web/src/lib/api.ts`) sits alongside L4 - keep it in
 sync with L3 so TypeScript callers get the right shapes.
 
 ### Round-trip invariants
@@ -103,7 +103,7 @@ These must hold for any change to pass:
 3. **Validation is symmetric**: every Pydantic constraint in L3 has a Zod
    counterpart in L4 (numeric ranges, regex compile, bbox ordering, stage
    consistency, default_unit must exist in units, etc.). The server is
-   the final authority — the client check exists only for inline UX.
+   the final authority - the client check exists only for inline UX.
 4. The `run` subcommand must consume an identical `ProfileConfig` whether
    it was loaded from YAML or constructed via `model_to_profile_dataclass`
    from the web UI's posted JSON. Do not branch the pipeline by source.
@@ -111,17 +111,17 @@ These must hold for any change to pass:
 ### The full config surface (current as of this writing)
 
 `ProfileConfig` (root):
-- `profile_name: str` — identifier (validated `[A-Za-z0-9._\- ]+`).
+- `profile_name: str` - identifier (validated `[A-Za-z0-9._\- ]+`).
 - `description: str`
 - `default_sample_fps: float` (>0, ≤240).
 - `fixture_frame_count: int` (≥1, ≤2000).
-- `fixture_time_range_s: tuple[float, float] | None` — `[start, end]`,
+- `fixture_time_range_s: tuple[float, float] | None` - `[start, end]`,
   `end > start`, both ≥0.
-- `video_overlay: VideoOverlayConfig` — `enabled`, `plot_mode`
+- `video_overlay: VideoOverlayConfig` - `enabled`, `plot_mode`
   (`filtered` | `with_rejected`), `width_fraction` (0.05–1),
   `height_fraction` (0.05–1), `output_filename` (no path separators),
   `include_audio`.
-- `trajectory: TrajectoryConfig` — `enabled`, `interpolation_method`
+- `trajectory: TrajectoryConfig` - `enabled`, `interpolation_method`
   (`linear|pchip|akima|cubic`), `integration_method`
   (`euler|midpoint|trapezoid|rk4|simpson`),
   `outlier_preconditioning_enabled`, `coarse_step_smoothing_enabled`,
@@ -135,20 +135,20 @@ These must hold for any change to pass:
   (`interp|nearest|mirror|constant|wrap`),
   `launch_site: { latitude_deg, longitude_deg, azimuth_deg }`
   (each optional; ranges enforced).
-- `parsing: ParsingProfile | None` — when `None`, the bundled defaults
+- `parsing: ParsingProfile | None` - when `None`, the bundled defaults
   from `default_parsing_profile()` are used:
-  - `velocity / altitude: FieldKindParsing` — `units: { NAME: { aliases:
+  - `velocity / altitude: FieldKindParsing` - `units: { NAME: { aliases:
     [...], si_factor } }`, `default_unit`, `ambiguous_default_unit`,
     `inferred_units_with_separator`, `inferred_units_without_separator`.
     The default and inferred unit names must reference declared units.
-  - `met: { timestamp_patterns: [regex,...] }` — every pattern must
+  - `met: { timestamp_patterns: [regex,...] }` - every pattern must
     compile.
-  - `custom_words: [str,...]` — auto-derived from aliases when omitted.
-- `hardcoded_raw_data_points: list[HardcodedRawDataPoint]` — each has a
+  - `custom_words: [str,...]` - auto-derived from aliases when omitted.
+- `hardcoded_raw_data_points: list[HardcodedRawDataPoint]` - each has a
   `mission_elapsed_time_s` plus optional `stage1` / `stage2` velocity/
   altitude. At least one telemetry value must be set.
-- `fields: dict[name, FieldConfig]` — at least one entry. Each has
-  `kind` (`velocity|altitude|met`), `stage` (`stage1|stage2|null` —
+- `fields: dict[name, FieldConfig]` - at least one entry. Each has
+  `kind` (`velocity|altitude|met`), `stage` (`stage1|stage2|null` -
   must be `null` iff `kind == "met"`), and `bbox_x1y1x2y2`
   (4-tuple in [0,1] with `x1>x0 && y1>y0`).
 
@@ -172,7 +172,7 @@ section under "Argument reference" + "Subcommands" in `README.md`.
 
 - `--host` (default `127.0.0.1`)
 - `--port` (default `8765`)
-- `--root <path>` (repeatable; default `[cwd, $HOME]`) — every path the UI
+- `--root <path>` (repeatable; default `[cwd, $HOME]`) - every path the UI
   reads or writes is sandboxed to one of these roots.
 - `--templates-dir <path>` (default `<cwd>/configs`)
 - `--dist-dir <path>` (default `<repo>/web/dist` if present)
@@ -203,13 +203,13 @@ FastAPI app, factory in `src/webcalyzer/web/app.py`. Conventions:
 - Logs from the pipeline reach the UI via two channels: stdout/stderr
   redirection (`_StreamingTextIO`) and a logging handler
   (`_StreamingLogHandler`). Pipeline modules should use `print(...)` or
-  the standard logging module — both are captured.
+  the standard logging module - both are captured.
 - SSE stream at `/api/jobs/{id}/events` is the live channel; each event
   is `{kind, message, payload, timestamp}`. The frontend opens an
   `EventSource` and stops listening on `done | error | cancelled`.
 - Validation errors return HTTP 422 with a structured `detail` array
   produced by `_format_validation_error`. Don't return raw Pydantic
-  `ValidationError` objects — they contain non-serializable
+  `ValidationError` objects - they contain non-serializable
   `ValueError` instances.
 
 When you add an endpoint:
@@ -222,7 +222,7 @@ When you add an endpoint:
 
 Stack: **React 18 + TypeScript + Vite + Tailwind 3 + shadcn-style
 components + Zod + sonner toasts + lucide icons**. No external state
-management beyond React state — keep it that way unless there is a clear
+management beyond React state - keep it that way unless there is a clear
 reason to grow.
 
 Visual language (do not drift):
@@ -263,25 +263,25 @@ Adding a new page:
 
 Concrete example: adding a new `trajectory.foo_bar_s: float` field.
 
-1. **L1** — add `foo_bar_s: float = 1.0` to `TrajectoryConfig` in
+1. **L1** - add `foo_bar_s: float = 1.0` to `TrajectoryConfig` in
    `models.py`; include it in `to_dict`.
-2. **L2** — read it in `_load_trajectory` in `config.py` with a sensible
+2. **L2** - read it in `_load_trajectory` in `config.py` with a sensible
    default for back-compat when the YAML omits it.
-3. **L3** — add `foo_bar_s: float = Field(1.0, gt=0.0)` (or whatever
+3. **L3** - add `foo_bar_s: float = Field(1.0, gt=0.0)` (or whatever
    bound) to `TrajectoryModel` in `web/schema.py`. Update the
    `TrajectoryConfig(...)` constructor inside `model_to_profile_dataclass`
    and the `TrajectoryModel(...)` call inside `profile_dataclass_to_model`.
-4. **L4** — add the field to `trajectorySchema` and the
+4. **L4** - add the field to `trajectorySchema` and the
    `trajectory: { ... }` block of `emptyProfile()` in `lib/schema.ts`;
    add the same field to the DTO in `lib/api.ts`; render an input for it
    in `components/profile/TrajectorySection.tsx` using `<Field>` +
    `<NumberInput>`.
-5. **Pipeline** — actually use the value in `trajectory.py` /
+5. **Pipeline** - actually use the value in `trajectory.py` /
    `acceleration.py` / wherever applies.
-6. **Docs** — update `README.md` (the "YAML profile" section and any
+6. **Docs** - update `README.md` (the "YAML profile" section and any
    tables that enumerate fields), and update the bullet list in §3 of
    this file.
-7. **Smoke test** — restart `serve`, hit `GET /api/templates/<existing>`,
+7. **Smoke test** - restart `serve`, hit `GET /api/templates/<existing>`,
    confirm the field comes back with its default; round-trip via
    `PUT /api/templates/<x>` and re-load.
 
@@ -293,14 +293,16 @@ existing template YAMLs in `configs/`.
 - Python ≥ 3.11. `from __future__ import annotations` is fine. Prefer
   dataclasses over plain dicts for internal state.
 - Keep the `webcalyzer.web.*` package importable without optional GUI
-  dependencies — heavy imports (`cv2`, `pandas`, `scipy`,
+  dependencies - heavy imports (`cv2`, `pandas`, `scipy`,
   `rapidocr_onnxruntime`) should stay inside function bodies when
   practical so module import is cheap.
 - TypeScript: `strict: true`. Avoid `any`; prefer narrow shapes from
   `lib/api.ts`. Tailwind class concatenation goes through `cn(...)` from
   `lib/utils.ts`.
 - No new frontend state-management library. No CSS-in-JS. No new icon
-  library — extend with `lucide-react`.
+  library - extend with `lucide-react`.
+- Do not use em dashes in code, comments, documentation, or UI copy. Use
+  a comma, colon, parentheses, or an ASCII hyphen instead.
 - Do not introduce a backend ORM or database. Templates live as YAML
   files; jobs are in-memory.
 

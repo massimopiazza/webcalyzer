@@ -21,7 +21,7 @@ export function PageHeader({ title, description, badges, actions, className }: P
         className,
       )}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-4">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-start md:justify-between">
         <div className="flex min-w-0 items-start gap-2">
           {collapsed && (
             <Button
@@ -36,7 +36,7 @@ export function PageHeader({ title, description, badges, actions, className }: P
             </Button>
           )}
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
+            <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
             {description && (
               <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
             )}
@@ -44,7 +44,9 @@ export function PageHeader({ title, description, badges, actions, className }: P
           </div>
         </div>
         {actions && (
-          <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
+          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+            {actions}
+          </div>
         )}
       </div>
     </div>

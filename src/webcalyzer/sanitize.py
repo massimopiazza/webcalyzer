@@ -47,7 +47,7 @@ class TimedValue:
 
 
 def normalize_text(text: str) -> str:
-    return " ".join(text.upper().replace("§", "S").replace("—", "-").replace("–", "-").split())
+    return " ".join(text.upper().replace("§", "S").replace("\u2014", "-").replace("–", "-").split())
 
 
 def normalize_numeric_token(token: str) -> str:

@@ -11,7 +11,7 @@ import { ParsingDTO } from "@/lib/api";
 import { ParsingValue } from "@/lib/schema";
 import { FIELD_HELP, SECTION_HELP } from "@/lib/explanations";
 
-type Kind = "velocity" | "altitude";
+type ParsingType = "velocity" | "altitude";
 
 function defaultParsing(meta: ParsingDTO | null): ParsingValue {
   return (meta as ParsingValue) ?? {
@@ -60,8 +60,8 @@ export function ParsingSection({ state }: { state: ProfileFormState }) {
 
       {enabled && profile.parsing && (
         <div className="space-y-4">
-          <KindEditor state={state} kind="velocity" />
-          <KindEditor state={state} kind="altitude" />
+          <ParsingTypeEditor state={state} type="velocity" />
+          <ParsingTypeEditor state={state} type="altitude" />
           <MetEditor state={state} />
           <CustomWordsEditor state={state} />
           {getError(errors, ["parsing"]) && (
@@ -73,24 +73,24 @@ export function ParsingSection({ state }: { state: ProfileFormState }) {
   );
 }
 
-function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
+function ParsingTypeEditor({ state, type }: { state: ProfileFormState; type: ParsingType }) {
   const { profile, patch, setProfile, errors } = state;
   if (!profile.parsing) return null;
-  const block = profile.parsing[kind];
+  const block = profile.parsing[type];
 
   const renameUnit = (oldName: string, newName: string) => {
     if (!newName || newName === oldName) return;
     setProfile((prev) => {
       if (!prev.parsing) return prev;
       const units: typeof block.units = {};
-      for (const [k, v] of Object.entries(prev.parsing[kind].units)) {
+      for (const [k, v] of Object.entries(prev.parsing[type].units)) {
         units[k === oldName ? newName : k] = v;
       }
       return {
         ...prev,
         parsing: {
           ...prev.parsing,
-          [kind]: { ...prev.parsing[kind], units },
+          [type]: { ...prev.parsing[type], units },
         },
       };
     });
@@ -99,13 +99,13 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
   const removeUnit = (name: string) => {
     setProfile((prev) => {
       if (!prev.parsing) return prev;
-      const units = { ...prev.parsing[kind].units };
+      const units = { ...prev.parsing[type].units };
       delete units[name];
       return {
         ...prev,
         parsing: {
           ...prev.parsing,
-          [kind]: { ...prev.parsing[kind], units },
+          [type]: { ...prev.parsing[type], units },
         },
       };
     });
@@ -115,15 +115,15 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
     setProfile((prev) => {
       if (!prev.parsing) return prev;
       let i = 1;
-      while (`UNIT_${i}` in prev.parsing[kind].units) i += 1;
+      while (`UNIT_${i}` in prev.parsing[type].units) i += 1;
       return {
         ...prev,
         parsing: {
           ...prev.parsing,
-          [kind]: {
-            ...prev.parsing[kind],
+          [type]: {
+            ...prev.parsing[type],
             units: {
-              ...prev.parsing[kind].units,
+              ...prev.parsing[type].units,
               [`UNIT_${i}`]: { aliases: [`UNIT_${i}`], si_factor: 1.0 },
             },
           },
@@ -134,29 +134,29 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/15 p-3">
-      <h4 className="text-sm font-semibold capitalize">{kind} parsing</h4>
+      <h4 className="text-sm font-semibold capitalize">{type} parsing</h4>
       <div className="mt-3 grid gap-3 md:grid-cols-3">
         <Field
           label="Default unit"
           tooltip={FIELD_HELP.parsing_default_unit}
-          error={getError(errors, ["parsing", kind, "default_unit"])}
+          error={getError(errors, ["parsing", type, "default_unit"])}
         >
           <Input
             value={block.default_unit}
-            onChange={(e) => patch(["parsing", kind, "default_unit"], e.target.value.toUpperCase())}
+            onChange={(e) => patch(["parsing", type, "default_unit"], e.target.value.toUpperCase())}
             spellCheck={false}
           />
         </Field>
         <Field
           label="Ambiguous default unit"
           tooltip={FIELD_HELP.parsing_ambiguous_default_unit}
-          error={getError(errors, ["parsing", kind, "ambiguous_default_unit"])}
+          error={getError(errors, ["parsing", type, "ambiguous_default_unit"])}
         >
           <Input
             value={block.ambiguous_default_unit ?? ""}
             onChange={(e) => {
               const v = e.target.value.trim();
-              patch(["parsing", kind, "ambiguous_default_unit"], v ? v.toUpperCase() : null);
+              patch(["parsing", type, "ambiguous_default_unit"], v ? v.toUpperCase() : null);
             }}
             spellCheck={false}
           />
@@ -169,7 +169,7 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
             value={block.inferred_units_with_separator.join(", ")}
             onChange={(e) =>
               patch(
-                ["parsing", kind, "inferred_units_with_separator"],
+                ["parsing", type, "inferred_units_with_separator"],
                 e.target.value
                   .split(",")
                   .map((s) => s.trim().toUpperCase())
@@ -187,7 +187,7 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
             value={block.inferred_units_without_separator.join(", ")}
             onChange={(e) =>
               patch(
-                ["parsing", kind, "inferred_units_without_separator"],
+                ["parsing", type, "inferred_units_without_separator"],
                 e.target.value
                   .split(",")
                   .map((s) => s.trim().toUpperCase())
@@ -221,7 +221,7 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
             <Input
               value={unit.aliases.join(", ")}
               onChange={(e) =>
-                patch(["parsing", kind, "units", unitName, "aliases"],
+                patch(["parsing", type, "units", unitName, "aliases"],
                   e.target.value
                     .split(",")
                     .map((s) => s.trim().toUpperCase())
@@ -234,7 +234,7 @@ function KindEditor({ state, kind }: { state: ProfileFormState; kind: Kind }) {
             />
             <NumberInput
               value={unit.si_factor}
-              onChange={(v) => patch(["parsing", kind, "units", unitName, "si_factor"], v ?? 1)}
+              onChange={(v) => patch(["parsing", type, "units", unitName, "si_factor"], v ?? 1)}
             />
             <Button variant="ghost" size="icon" onClick={() => removeUnit(unitName)}>
               <Trash2 className="h-4 w-4 text-destructive/80" />

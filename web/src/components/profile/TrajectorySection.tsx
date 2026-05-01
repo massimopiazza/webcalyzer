@@ -263,7 +263,7 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
             <p className="text-xs text-muted-foreground/90">
               {launchEnabled
                 ? "Downrange distance is computed via WGS84 geodesic from the launch pad along the flight path azimuth."
-                : "Disabled — downrange uses a flat-Earth approximation (great-circle effects ignored)."}
+                : "Disabled - downrange uses a flat-Earth approximation (great-circle effects ignored)."}
             </p>
           </div>
           <div className="flex items-center gap-2">

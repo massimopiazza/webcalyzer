@@ -81,6 +81,13 @@ const DEFAULT_OVERRIDES: RunOverrides = {
   overlay_encoder: "auto",
 };
 
+function displayErrorPath(path: string): string {
+  return path
+    .split(".")
+    .map((segment) => (segment === "kind" ? "type" : segment))
+    .join(".");
+}
+
 export function RunPage() {
   const state = useProfileForm(emptyProfile());
   const [templateName, setTemplateName] = useState<string | null>(null);
@@ -182,11 +189,20 @@ export function RunPage() {
             >
               <RotateCcw className="mr-1 h-4 w-4" /> Reset
             </Button>
+            <StartButton
+              disabled={!state.isValid || !videoPath || !outputDir}
+              loading={submitting}
+              onClick={submit}
+              size="sm"
+              className="order-first w-full sm:order-none sm:w-auto"
+            />
           </>
         }
       />
 
-      <div className="mx-auto w-full max-w-6xl space-y-5 p-6">
+      <div className="mx-auto w-full max-w-6xl space-y-5 p-4 sm:p-6">
+        <RunPanel jobId={activeJobId} onCleared={() => setActiveJobId(null)} />
+
         <Card>
           <CardHeader className="pb-2">
             <CardTitle>Inputs &amp; templates</CardTitle>
@@ -352,7 +368,8 @@ export function RunPage() {
               <ul className="space-y-1 text-xs text-destructive/90">
                 {errorList.slice(0, 8).map(([path, message]) => (
                   <li key={path}>
-                    <span className="font-mono">{path || "(profile)"}</span>: {message}
+                    <span className="font-mono">{displayErrorPath(path) || "(profile)"}</span>:{" "}
+                    {message}
                   </li>
                 ))}
                 {errorList.length > 8 && <li>+{errorList.length - 8} more…</li>}
@@ -361,7 +378,7 @@ export function RunPage() {
           </Card>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-4">
+        <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-4">
           <div className="text-xs text-muted-foreground">
             {state.isValid ? (
               <span className="text-success">Profile valid · ready to run</span>
@@ -371,14 +388,7 @@ export function RunPage() {
               </span>
             )}
           </div>
-          <StartButton
-            disabled={!state.isValid || !videoPath || !outputDir}
-            loading={submitting}
-            onClick={submit}
-          />
         </div>
-
-        <RunPanel jobId={activeJobId} onCleared={() => setActiveJobId(null)} />
       </div>
 
       <Dialog open={yamlOpen} onOpenChange={setYamlOpen}>

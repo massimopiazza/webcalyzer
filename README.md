@@ -88,20 +88,20 @@ webcalyzer serve [--host 127.0.0.1] [--port 8765] \
 
 Then open <http://localhost:8765>. The UI exposes three pages:
 
-- **Run** — load any YAML profile from `--templates-dir`, edit every field
+- **Run** - load any YAML profile from `--templates-dir`, edit every field
   the YAML supports (with inline validation), pick a video and an output
   directory via the server-side file browser, then run the same pipeline as
   `webcalyzer run`. Live stdout/stderr streams back over Server-Sent Events;
   outputs are linked when the job finishes.
-- **Calibrate** — sample fixture frames from a video and draw / resize
+- **Calibrate** - sample fixture frames from a video and draw / resize
   bounding boxes for each field directly on the frame, saving back to the
   YAML profile.
-- **Templates** — list, import (paste YAML), download, and delete templates
+- **Templates** - list, import (paste YAML), download, and delete templates
   in `--templates-dir`.
 
 For development with hot-reload, start the API with
 `--reload --cors-origin http://localhost:5173` and run `npm run dev` in
-`web/` — Vite proxies `/api` to the FastAPI server.
+`web/` - Vite proxies `/api` to the FastAPI server.
 
 ## Argument reference
 
@@ -109,52 +109,52 @@ For development with hot-reload, start the API with
 
 | Flag | Type | Required | Default | Options | Notes |
 |------|------|----------|---------|---------|-------|
-| `--video` | path | yes | — | any video file readable by OpenCV/AVFoundation | The source video. |
-| `--config` | path | yes (`extract`/`run`); optional (`rescue`) | — | path to a YAML profile | Loaded via `webcalyzer.config.load_profile`. |
-| `--output` | path | yes | — | any directory path | Created if missing; CSVs and metadata are written here. |
+| `--video` | path | yes | - | any video file readable by OpenCV/AVFoundation | The source video. |
+| `--config` | path | yes (`extract`/`run`); optional (`rescue`) | - | path to a YAML profile | Loaded via `webcalyzer.config.load_profile`. |
+| `--output` | path | yes | - | any directory path | Created if missing; CSVs and metadata are written here. |
 | `--ocr-backend` | choice | no | `auto` | `auto`, `rapidocr`, `vision` | `auto` selects Vision on macOS when pyobjc-Vision is importable, RapidOCR otherwise. Forcing `vision` on a non-macOS host raises a clear error. |
 | `--ocr-recognition-level` | choice | no | `accurate` | `accurate`, `fast` | Vision-only. Ignored when the resolved backend is RapidOCR. |
 | `--ocr-workers` | int or `auto` | no (`extract`/`run` only) | `auto` | positive integer or `auto` | `auto` resolves to `max(1, physical_cores - 1)` for RapidOCR and `1` for Vision. |
-| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | off | — | Opt-in. Bypasses detection and runs recognition only on each calibrated field crop. |
+| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | off | - | Opt-in. Bypasses detection and runs recognition only on each calibrated field crop. |
 
 ### Subcommand-specific arguments
 
 | Subcommand | Flag | Type | Required | Default | Options | Notes |
 |------------|------|------|----------|---------|---------|-------|
-| `sample-frames` | `--video` | path | yes | — | — | |
-|                 | `--config` | path | yes | — | — | |
-|                 | `--output` | path | yes | — | — | Directory for review JPEGs and `contact_sheet.jpg`. |
+| `sample-frames` | `--video` | path | yes | - | - | |
+|                 | `--config` | path | yes | - | - | |
+|                 | `--output` | path | yes | - | - | Directory for review JPEGs and `contact_sheet.jpg`. |
 |                 | `--count` | int | no | profile's `fixture_frame_count` | any positive int | Override the per-profile count for this run only. |
-| `calibrate` | `--video` | path | yes | — | — | |
-|             | `--config` | path | yes | — | — | Loaded as the starting point; saved into `--output`. |
-|             | `--output` | path | yes | — | — | Destination YAML for the edited profile. |
+| `calibrate` | `--video` | path | yes | - | - | |
+|             | `--config` | path | yes | - | - | Loaded as the starting point; saved into `--output`. |
+|             | `--output` | path | yes | - | - | Destination YAML for the edited profile. |
 | `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (0.5 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
 | `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
-|       | `--skip-video-overlay` | flag | no | overlay enabled | — | Skip the post-extract overlay render. |
+|       | `--skip-video-overlay` | flag | no | overlay enabled | - | Skip the post-extract overlay render. |
 |       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
 |       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
 |       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_…` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
-| `plot` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
-| `rebuild-clean` | `--output` | path | yes | — | — | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
-| `rescue` | `--video` | path | yes | — | — | |
-|          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | — | Optional override of the profile saved alongside the run. |
-|          | `--output` | path | yes | — | — | |
-| `reject-outliers` | `--output` | path | yes | — | — | |
+| `plot` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
+| `rebuild-clean` | `--output` | path | yes | - | - | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
+| `rescue` | `--video` | path | yes | - | - | |
+|          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | - | Optional override of the profile saved alongside the run. |
+|          | `--output` | path | yes | - | - | |
+| `reject-outliers` | `--output` | path | yes | - | - | |
 |                   | `--chi2` | float | no | `36.0` | any positive float | Per-field squared residual threshold (1-D Mahalanobis). |
 |                   | `--window-s` | float | no | `40.0` | any positive float | Neighbor window in seconds for the local residual fit. |
-| `reconstruct-trajectory` | `--output` | path | yes | — | — | Existing run directory containing `telemetry_clean.csv`. |
-|                          | `--config` | path | no | `<output>/config_resolved.yaml` | — | Optional YAML profile override. |
+| `reconstruct-trajectory` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
+|                          | `--config` | path | no | `<output>/config_resolved.yaml` | - | Optional YAML profile override. |
 |                          | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | |
 |                          | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | `simpson` is accepted as an alias for `rk4`. |
 |                          | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Savitzky-Golay window length (seconds) for the acceleration plot. |
-| `render-overlay` | `--video` | path | yes | — | — | |
-|                  | `--output` | path | yes | — | — | |
-|                  | `--config` | path | no | `<output>/config_resolved.yaml` if present | — | Optional YAML profile with `video_overlay` and trajectory acceleration settings. |
+| `render-overlay` | `--video` | path | yes | - | - | |
+|                  | `--output` | path | yes | - | - | |
+|                  | `--config` | path | no | `<output>/config_resolved.yaml` if present | - | Optional YAML profile with `video_overlay` and trajectory acceleration settings. |
 |                  | `--plot-mode` | choice | no | profile's `video_overlay.plot_mode` (`filtered`) | `filtered`, `with_rejected` | |
 |                  | `--width-fraction` | float | no | profile's `video_overlay.width_fraction` | 0.05–1.0 | Overlay panel width as a fraction of the source frame width. |
 |                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05–1.0 | Overlay panel height as a fraction of the source frame height. |
 |                  | `--output-filename` | string | no | profile's `video_overlay.output_filename` (`telemetry_overlay.mp4`) | any filename | Output video filename inside `--output`. |
-|                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | — | Skip the audio re-mux step. |
+|                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | - | Skip the audio re-mux step. |
 |                  | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | Same semantics as `run --overlay-engine`. |
 |                  | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` | Ignored when the resolved engine is `opencv`. |
 
@@ -616,7 +616,7 @@ so each filter pass is one FIR convolution with kernels precomputed by
    $\left.\mathrm{d}\hat{s}/\mathrm{d}t\right|_{t_i}$ is
    $\sigma^2\lVert h_1\rVert^2/\Delta t^2$. Increasing the window halves
    $\lVert h_1\rVert^2$ per doubling, so a longer window quadratically improves
-   noise rejection — at the cost of bandwidth, which is roughly
+   noise rejection - at the cost of bandwidth, which is roughly
    $f_c \approx (K + 1)/(\pi(2M+1)\Delta t)$.
 
 Two design choices follow:

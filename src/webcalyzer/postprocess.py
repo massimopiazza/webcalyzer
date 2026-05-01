@@ -170,7 +170,7 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
     The squared residual divided by the robust local variance is the 1-D
     Mahalanobis distance.
 
-    Boundary samples — the first and last few — are evaluated even when only
+    Boundary samples - the first and last few - are evaluated even when only
     one side of the window is populated. With ``min_side_neighbors`` of 2 the
     very first OCR sample previously slipped through unchecked, allowing
     catastrophic spikes (e.g. 90 km altitude at MET=1) to reach the

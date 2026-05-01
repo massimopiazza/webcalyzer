@@ -106,7 +106,7 @@ export function ProfileForm({ state }: { state: ProfileFormState }) {
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              Field bbox table and parsing rules. Most users won't need these — Calibrate handles
+              Field bbox table and parsing rules. Most users won't need these - Calibrate handles
               fields visually, and parsing falls back to bundled defaults.
             </div>
           </div>

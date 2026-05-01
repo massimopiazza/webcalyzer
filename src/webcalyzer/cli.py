@@ -257,7 +257,7 @@ def _add_trajectory_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=None,
         help=(
-            "Override trajectory.derivative_smoothing_window_s — Savitzky-Golay "
+            "Override trajectory.derivative_smoothing_window_s - Savitzky-Golay "
             "window length in seconds used for the acceleration plot."
         ),
     )

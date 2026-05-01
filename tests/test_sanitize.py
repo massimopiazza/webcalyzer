@@ -46,7 +46,7 @@ def test_non_numeric_words_do_not_turn_into_measurements() -> None:
 
 def test_ambiguous_altitude_with_no_explicit_unit_prefers_feet() -> None:
     """Without an explicit FT/MI label, "000,056" used to score equally
-    for both units, and MI happened to win via list ordering — yielding
+    for both units, and MI happened to win via list ordering - yielding
     90 km altitude at MET=1. The conservative tie-breaker now prefers the
     smaller value, which is also the physically reasonable one."""
 

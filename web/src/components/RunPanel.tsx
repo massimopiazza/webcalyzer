@@ -1,20 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowUpToLine,
   Ban,
   CheckCircle2,
   CircleAlert,
   Download,
   ExternalLink,
   Loader2,
+  Maximize2,
   PlayCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonProps } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ApiError, JobEvent, JobSummary, api } from "@/lib/api";
 import { cn, formatTimeAgo } from "@/lib/utils";
 import { toast } from "sonner";
+
+type ConsoleViewMode = "dialog" | "docked";
 
 type Props = {
   jobId: string | null;
@@ -24,6 +33,7 @@ type Props = {
 export function RunPanel({ jobId, onCleared }: Props) {
   const [job, setJob] = useState<JobSummary | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
+  const [viewMode, setViewMode] = useState<ConsoleViewMode>("dialog");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -33,6 +43,7 @@ export function RunPanel({ jobId, onCleared }: Props) {
       return;
     }
     let cancelled = false;
+    setViewMode("dialog");
     setEvents([]);
     api
       .job(jobId)
@@ -90,37 +101,120 @@ export function RunPanel({ jobId, onCleared }: Props) {
 
   if (!jobId) return null;
 
+  const content = (
+    <RunConsoleContent
+      events={events}
+      job={job}
+      phase={phase}
+      scrollRef={scrollRef}
+      viewMode={viewMode}
+      onCancel={handleCancel}
+      onCleared={onCleared}
+      onToggleView={() => setViewMode((current) => (current === "dialog" ? "docked" : "dialog"))}
+    />
+  );
+
+  if (viewMode === "dialog") {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) setViewMode("docked");
+        }}
+      >
+        <DialogContent className="flex max-h-[calc(100vh-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]">
+          {content}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return <Card>{content}</Card>;
+}
+
+function RunConsoleContent({
+  events,
+  job,
+  phase,
+  scrollRef,
+  viewMode,
+  onCancel,
+  onCleared,
+  onToggleView,
+}: {
+  events: JobEvent[];
+  job: JobSummary | null;
+  phase: string | null;
+  scrollRef: React.RefObject<HTMLDivElement>;
+  viewMode: ConsoleViewMode;
+  onCancel: () => void;
+  onCleared: () => void;
+  onToggleView: () => void;
+}) {
+  const isRunning = job?.state === "queued" || job?.state === "running";
+  const isDialog = viewMode === "dialog";
+
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <div>
-          <CardTitle>Run</CardTitle>
+    <div className={cn("flex min-h-0 flex-col", isDialog && "max-h-[calc(100vh-1rem)]")}>
+      <div
+        className={cn(
+          "flex flex-col gap-3 border-b border-border/60 p-4 sm:flex-row sm:items-start sm:justify-between",
+          isDialog && "pr-12",
+        )}
+      >
+        <div className="min-w-0">
+          {isDialog ? (
+            <>
+              <DialogTitle>Run console</DialogTitle>
+              <DialogDescription className="mt-1">
+                Live pipeline progress and output files.
+              </DialogDescription>
+            </>
+          ) : (
+            <>
+              <CardTitle>Run console</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live pipeline progress and output files.
+              </p>
+            </>
+          )}
           {job && (
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline" className="font-mono">
                 {job.id}
               </Badge>
               <span>{formatTimeAgo(job.started_at)}</span>
               <span>·</span>
-              <span className="truncate font-mono">{job.output_dir}</span>
+              <span className="min-w-0 truncate font-mono">{job.output_dir}</span>
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <StateBadge state={job?.state} />
-          {(job?.state === "queued" || job?.state === "running") && (
-            <Button variant="outline" size="sm" onClick={handleCancel}>
-              <Ban className="mr-1 h-4 w-4" /> Cancel
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onToggleView}
+            title={isDialog ? "Dock console to page" : "Focus console"}
+            aria-label={isDialog ? "Dock console to page" : "Focus console"}
+          >
+            {isDialog ? <ArrowUpToLine className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            <span className="hidden sm:inline">{isDialog ? "Dock" : "Focus"}</span>
+          </Button>
+          {isRunning && (
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              <Ban className="h-4 w-4" /> Cancel
             </Button>
           )}
-          {job?.state && job.state !== "running" && job.state !== "queued" && (
+          {job?.state && !isRunning && (
             <Button variant="ghost" size="sm" onClick={onCleared}>
               Close
             </Button>
           )}
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
+      </div>
+
+      <div className="min-h-0 space-y-3 overflow-y-auto p-4">
         {phase && (
           <div className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm">
             <Loader2
@@ -133,23 +227,27 @@ export function RunPanel({ jobId, onCleared }: Props) {
           </div>
         )}
         <div className="rounded-md border border-border/70 bg-black/30">
-          <ScrollArea className="h-72">
-            <div ref={scrollRef} className="p-3 font-mono text-[12px] leading-relaxed">
-              {events.length === 0 && (
-                <div className="text-muted-foreground">Waiting for output…</div>
-              )}
-              {events.map((event, idx) => (
-                <LogLine key={idx} event={event} />
-              ))}
-            </div>
-          </ScrollArea>
+          <div
+            ref={scrollRef}
+            className={cn(
+              "overflow-y-auto p-3 font-mono text-[12px] leading-relaxed",
+              isDialog ? "h-[52vh] max-h-[28rem]" : "h-64 sm:h-72",
+            )}
+          >
+            {events.length === 0 && (
+              <div className="text-muted-foreground">Waiting for output…</div>
+            )}
+            {events.map((event, idx) => (
+              <LogLine key={idx} event={event} />
+            ))}
+          </div>
         </div>
         {job && job.outputs.length > 0 && (
           <div>
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Output files
             </div>
-            <div className="grid grid-cols-2 gap-1 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 md:grid-cols-3">
               {job.outputs.slice(0, 30).map((relpath) => (
                 <a
                   key={relpath}
@@ -174,8 +272,8 @@ export function RunPanel({ jobId, onCleared }: Props) {
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -226,13 +324,22 @@ export function StartButton({
   disabled,
   onClick,
   loading,
+  size = "lg",
+  className,
 }: {
   disabled?: boolean;
   onClick: () => void;
   loading?: boolean;
+  size?: ButtonProps["size"];
+  className?: string;
 }) {
   return (
-    <Button onClick={onClick} disabled={disabled || loading} size="lg" className="gap-2">
+    <Button
+      onClick={onClick}
+      disabled={disabled || loading}
+      size={size}
+      className={cn("gap-2", className)}
+    >
       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
       Run pipeline
     </Button>

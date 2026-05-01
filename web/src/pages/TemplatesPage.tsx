@@ -113,7 +113,7 @@ export function TemplatesPage() {
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       {tpl.profile_name}
-                      {tpl.description ? ` — ${tpl.description}` : ""}
+                      {tpl.description ? ` - ${tpl.description}` : ""}
                     </div>
                     <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
                       {formatBytes(tpl.size)} · {formatTimeAgo(tpl.modified)}

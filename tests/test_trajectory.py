@@ -401,7 +401,7 @@ def test_default_derivative_window_is_20_seconds() -> None:
 
 def test_longer_savgol_window_lowers_derivative_jitter() -> None:
     """A longer Sav-Gol window must produce a smoother derivative on
-    noisy data — a sanity check that the new 20 s default is in the
+    noisy data - a sanity check that the new 20 s default is in the
     right direction relative to the previous 5 s."""
 
     from webcalyzer.acceleration import smoothed_velocity_and_derivative
