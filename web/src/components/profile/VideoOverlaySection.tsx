@@ -69,7 +69,7 @@ export function VideoOverlaySection({ state }: { state: ProfileFormState }) {
         </Field>
         <Field
           label="Width fraction"
-          hint="0.05 – 1.0"
+          hint="0.05-1.0"
           tooltip={FIELD_HELP.video_overlay_width_fraction}
           error={getError(errors, ["video_overlay", "width_fraction"])}
         >
@@ -81,7 +81,7 @@ export function VideoOverlaySection({ state }: { state: ProfileFormState }) {
         </Field>
         <Field
           label="Height fraction"
-          hint="0.05 – 1.0"
+          hint="0.05-1.0"
           tooltip={FIELD_HELP.video_overlay_height_fraction}
           error={getError(errors, ["video_overlay", "height_fraction"])}
         >

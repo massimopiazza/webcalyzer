@@ -309,7 +309,15 @@ def _physical_cpu_count() -> int:
 def _collect_output_paths(output_dir: Path) -> list[str]:
     if not output_dir.exists():
         return []
-    return [str(p.relative_to(output_dir)) for p in output_dir.rglob("*") if p.is_file()]
+    paths: list[str] = []
+    for path in output_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(output_dir)
+        if relative.parts and relative.parts[0] == "review":
+            continue
+        paths.append(str(relative))
+    return paths
 
 
 class _StreamingLogHandler(logging.Handler):

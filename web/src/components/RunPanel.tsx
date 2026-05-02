@@ -153,6 +153,7 @@ function RunConsoleContent({
 }) {
   const isRunning = job?.state === "queued" || job?.state === "running";
   const isDialog = viewMode === "dialog";
+  const visibleOutputs = job?.outputs.filter((relpath) => !relpath.startsWith("review/")) ?? [];
 
   return (
     <div className={cn("flex min-h-0 flex-col", isDialog && "max-h-[calc(100vh-1rem)]")}>
@@ -242,13 +243,13 @@ function RunConsoleContent({
             ))}
           </div>
         </div>
-        {job && job.outputs.length > 0 && (
+        {job && visibleOutputs.length > 0 && (
           <div>
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Output files
             </div>
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 md:grid-cols-3">
-              {job.outputs.slice(0, 30).map((relpath) => (
+              {visibleOutputs.slice(0, 30).map((relpath) => (
                 <a
                   key={relpath}
                   href={api.jobFileUrl(job.id, relpath)}
@@ -265,9 +266,9 @@ function RunConsoleContent({
                 </a>
               ))}
             </div>
-            {job.outputs.length > 30 && (
+            {visibleOutputs.length > 30 && (
               <div className="mt-1 text-xs text-muted-foreground">
-                +{job.outputs.length - 30} more in {job.output_dir}
+                +{visibleOutputs.length - 30} more in {job.output_dir}
               </div>
             )}
           </div>

@@ -23,9 +23,10 @@ import { toast } from "sonner";
 type Props = {
   selected: string | null;
   onLoad: (name: string, profile: ProfileDTO) => void;
+  refreshKey?: number;
 };
 
-export function TemplatePicker({ selected, onLoad }: Props) {
+export function TemplatePicker({ selected, onLoad, refreshKey }: Props) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -43,7 +44,7 @@ export function TemplatePicker({ selected, onLoad }: Props) {
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refreshKey]);
 
   const load = async (name: string) => {
     if (!name) return;
@@ -125,10 +126,10 @@ export function SaveAsTemplateButton({
       return;
     }
     try {
-      await api.saveTemplate(trimmed, profile);
-      toast.success(`Saved ${trimmed}`);
+      const result = await api.saveTemplate(trimmed, profile);
+      toast.success(`Saved ${result.name}`);
       setOpen(false);
-      onSaved(trimmed);
+      onSaved(result.name);
     } catch (err) {
       toast.error((err as ApiError).message);
     }

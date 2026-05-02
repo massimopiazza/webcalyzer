@@ -103,6 +103,19 @@ For development with hot-reload, start the API with
 `--reload --cors-origin http://localhost:5173` and run `npm run dev` in
 `web/` - Vite proxies `/api` to the FastAPI server.
 
+## Documentation
+
+Detailed docs live under `docs/` and are also available from the web UI's
+**Documentation** page after the frontend bundle is built.
+
+- `docs/user/` is the user guide for running extractions, calibrating
+  profiles, managing templates, reviewing outputs, and using the CLI.
+- `docs/internal/` is the developer reference for architecture,
+  configuration layers, pipeline stages, web backend, web frontend, file
+  map, and function index.
+- `docs/WEBAPP-DOCS-STYLE.md` defines the writing style and page structure
+  used by both documentation tiers.
+
 ## Argument reference
 
 ### Flags shared across OCR-bearing subcommands (`extract`, `run`, `rescue`)

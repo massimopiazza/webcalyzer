@@ -118,8 +118,8 @@ These must hold for any change to pass:
 - `fixture_time_range_s: tuple[float, float] | None` - `[start, end]`,
   `end > start`, both ≥0.
 - `video_overlay: VideoOverlayConfig` - `enabled`, `plot_mode`
-  (`filtered` | `with_rejected`), `width_fraction` (0.05–1),
-  `height_fraction` (0.05–1), `output_filename` (no path separators),
+  (`filtered` | `with_rejected`), `width_fraction` (0.05-1),
+  `height_fraction` (0.05-1), `output_filename` (no path separators),
   `include_audio`.
 - `trajectory: TrajectoryConfig` - `enabled`, `interpolation_method`
   (`linear|pchip|akima|cubic`), `integration_method`
@@ -129,8 +129,8 @@ These must hold for any change to pass:
   `coarse_velocity_threshold_mps` (≥0),
   `acceleration_source_gap_threshold_s` (>0),
   `derivative_smoothing_window_s` (>0),
-  `derivative_smoothing_polyorder` (0–10),
-  `derivative_min_window_samples` (2–1000),
+  `derivative_smoothing_polyorder` (0-10),
+  `derivative_min_window_samples` (2-1000),
   `derivative_smoothing_mode`
   (`interp|nearest|mirror|constant|wrap`),
   `launch_site: { latitude_deg, longitude_deg, azimuth_deg }`
@@ -259,6 +259,20 @@ Adding a new page:
 2. Add a route under `<AppShell>` in `App.tsx`.
 3. Add the entry to `NAV_ITEMS` in `AppShell.tsx`.
 
+Documentation reader rules:
+
+- `DocumentationPage.tsx` renders `docs/user` and `docs/internal` through
+  `DOC_GROUPS` in `web/src/lib/docsNav.ts`.
+- The documentation sidebar must keep disclosure and navigation separate:
+  the chevron is an individual button that only expands or collapses that
+  page's section list, while the page title is a separate button that only
+  navigates to the page.
+- Expanding one documentation page must not collapse previously expanded
+  pages. Multiple section lists can remain open at once, and the active
+  page should stay expanded.
+- Documentation pages should use broad H2 group headings and H3 detail
+  headings rather than a long flat sequence of H2 headings.
+
 ## 7. How a config change flows through the layers
 
 Concrete example: adding a new `trajectory.foo_bar_s: float` field.
@@ -301,8 +315,10 @@ existing template YAMLs in `configs/`.
   `lib/utils.ts`.
 - No new frontend state-management library. No CSS-in-JS. No new icon
   library - extend with `lucide-react`.
-- Do not use em dashes in code, comments, documentation, or UI copy. Use
-  a comma, colon, parentheses, or an ASCII hyphen instead.
+- Do not use em dashes in code, comments, documentation, or UI copy.
+  Do not use an ASCII hyphen as a stand-in for an em dash in prose.
+  ASCII hyphens are still correct for ranges (`1-4`), negative values
+  (`-90`), hyphenated terms (`stage-1`, `single-shot`), and subtraction.
 - Do not introduce a backend ORM or database. Templates live as YAML
   files; jobs are in-memory.
 

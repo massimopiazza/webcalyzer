@@ -214,7 +214,7 @@ def create_app(config: ServeConfig) -> FastAPI:
             raise HTTPException(status_code=422, detail=_format_validation_error(exc)) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         save_profile(model_to_profile_dataclass(model), target)
-        return {"name": name, "path": str(target)}
+        return {"name": str(target.relative_to(config.templates_dir.resolve())), "path": str(target)}
 
     @app.delete("/api/templates/{name:path}")
     def delete_template(name: str) -> dict[str, Any]:
@@ -283,7 +283,7 @@ def create_app(config: ServeConfig) -> FastAPI:
         target = _resolve_template_path(config, target_name, must_exist=False)
         target.parent.mkdir(parents=True, exist_ok=True)
         save_profile(model_to_profile_dataclass(model), target)
-        return {"name": target_name, "path": str(target)}
+        return {"name": str(target.relative_to(config.templates_dir.resolve())), "path": str(target)}
 
     # ----- jobs ----------------------------------------------------------
     @app.get("/api/jobs")

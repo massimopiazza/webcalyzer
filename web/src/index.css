@@ -68,3 +68,124 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted));
 }
+
+@layer components {
+  .docs-prose {
+    @apply max-w-none text-sm leading-7 text-foreground;
+  }
+
+  .docs-prose h1 {
+    @apply mb-4 scroll-mt-6 text-3xl font-semibold tracking-normal text-foreground;
+  }
+
+  .docs-prose h2 {
+    @apply mb-3 mt-8 scroll-mt-6 border-b border-border/70 pb-2 text-xl font-semibold tracking-normal text-foreground;
+  }
+
+  .docs-prose h3 {
+    @apply mb-2 mt-6 scroll-mt-6 text-base font-semibold tracking-normal text-foreground;
+  }
+
+  .docs-prose h4 {
+    @apply mb-2 mt-4 scroll-mt-6 text-sm font-semibold tracking-normal text-foreground;
+  }
+
+  .docs-prose p {
+    @apply my-4 text-muted-foreground;
+  }
+
+  .docs-prose strong {
+    @apply font-semibold text-foreground;
+  }
+
+  .docs-prose a {
+    @apply text-primary underline underline-offset-4 hover:text-primary/80;
+  }
+
+  .docs-prose code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground;
+  }
+
+  .docs-math-block {
+    @apply my-4 overflow-x-auto rounded-md border border-border/70 bg-background px-4 py-3 text-foreground;
+  }
+
+  .docs-prose .katex {
+    @apply text-foreground;
+  }
+
+  .docs-math-block .katex-display {
+    @apply my-0;
+  }
+
+  .docs-mermaid {
+    @apply my-5 overflow-x-auto rounded-md border border-border/70 bg-background px-4 py-4 text-foreground;
+  }
+
+  .docs-mermaid svg {
+    @apply mx-auto h-auto max-w-full;
+  }
+
+  .docs-prose pre {
+    @apply my-4 overflow-x-auto rounded-md border border-border/70 bg-background p-4;
+  }
+
+  .docs-prose pre code {
+    @apply bg-transparent p-0 text-xs leading-6;
+  }
+
+  .docs-prose .docs-mermaid pre {
+    @apply my-0 border-0 bg-transparent p-0;
+  }
+
+  .docs-prose ul,
+  .docs-prose ol {
+    @apply my-4 space-y-2 pl-6 text-muted-foreground;
+  }
+
+  .docs-prose ul {
+    @apply list-disc;
+  }
+
+  .docs-prose ol {
+    @apply list-decimal;
+  }
+
+  .docs-prose li::marker {
+    @apply text-muted-foreground;
+  }
+
+  .docs-table-scroll {
+    @apply my-4 overflow-x-auto rounded-md border border-border/70;
+  }
+
+  .docs-prose table {
+    @apply min-w-full border-collapse text-left text-sm;
+  }
+
+  .docs-prose th {
+    @apply border-b border-border/70 bg-muted/70 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  .docs-prose td {
+    @apply border-b border-border/50 px-3 py-2 align-top text-muted-foreground;
+  }
+
+  .docs-prose tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .docs-prose blockquote,
+  .docs-note,
+  .docs-remark {
+    @apply my-4 rounded-md border border-border/70 bg-muted/40 px-4 py-3 text-sm text-muted-foreground;
+  }
+
+  .docs-note {
+    @apply border-warning/50 bg-warning/10;
+  }
+
+  .docs-remark {
+    @apply border-primary/40 bg-primary/10;
+  }
+}

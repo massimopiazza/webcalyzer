@@ -91,6 +91,7 @@ function displayErrorPath(path: string): string {
 export function RunPage() {
   const state = useProfileForm(emptyProfile());
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
   const [videoPath, setVideoPath] = useState<string>("");
   const [outputDir, setOutputDir] = useState<string>("");
   const [overrides, setOverrides] = useState<RunOverrides>(DEFAULT_OVERRIDES);
@@ -104,6 +105,11 @@ export function RunPage() {
   const onLoadTemplate = (name: string, profile: ProfileDTO) => {
     state.reset(profile as Profile);
     setTemplateName(name);
+  };
+
+  const onSavedTemplate = (name: string) => {
+    setTemplateName(name);
+    setTemplateRefreshKey((key) => key + 1);
   };
 
   const previewYaml = async () => {
@@ -177,7 +183,7 @@ export function RunPage() {
               profile={state.profile as ProfileDTO}
               isValid={state.isValid}
               currentName={templateName}
-              onSaved={(name) => setTemplateName(name)}
+              onSaved={onSavedTemplate}
             />
             <Button
               variant="ghost"
@@ -209,7 +215,11 @@ export function RunPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Field label="Profile template">
-              <TemplatePicker selected={templateName} onLoad={onLoadTemplate} />
+              <TemplatePicker
+                selected={templateName}
+                onLoad={onLoadTemplate}
+                refreshKey={templateRefreshKey}
+              />
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Input video" required>

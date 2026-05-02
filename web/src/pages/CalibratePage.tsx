@@ -35,6 +35,7 @@ const FIELD_COLORS = [
 export function CalibratePage() {
   const state = useProfileForm(emptyProfile());
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
   const [videoPath, setVideoPath] = useState("");
   const [fixtures, setFixtures] = useState<FixtureFrames | null>(null);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -82,6 +83,11 @@ export function CalibratePage() {
   const onLoadTemplate = (name: string, profile: ProfileDTO) => {
     state.reset(profile as Profile);
     setTemplateName(name);
+  };
+
+  const onSavedTemplate = (name: string) => {
+    setTemplateName(name);
+    setTemplateRefreshKey((key) => key + 1);
   };
 
   const updateActiveBbox = (box: Box) => {
@@ -146,7 +152,7 @@ export function CalibratePage() {
               profile={state.profile as ProfileDTO}
               isValid={state.isValid}
               currentName={templateName}
-              onSaved={(name) => setTemplateName(name)}
+              onSaved={onSavedTemplate}
             />
             <Button
               onClick={async () => {
@@ -177,7 +183,11 @@ export function CalibratePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <Field label="Profile template">
-            <TemplatePicker selected={templateName} onLoad={onLoadTemplate} />
+            <TemplatePicker
+              selected={templateName}
+              onLoad={onLoadTemplate}
+              refreshKey={templateRefreshKey}
+            />
           </Field>
           <div className="grid gap-4 md:grid-cols-[1fr_auto]">
             <Field label="Input video" required>
@@ -471,7 +481,7 @@ function FieldList({
               value={field.kind}
               onValueChange={(v) => onKindChange(name, v as Profile["fields"][string]["kind"])}
             >
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger className="h-8 min-h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -492,7 +502,7 @@ function FieldList({
               }
               disabled={field.kind === "met"}
             >
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger className="h-8 min-h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
