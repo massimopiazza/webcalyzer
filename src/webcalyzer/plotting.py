@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pandas as pd
