@@ -76,6 +76,25 @@ The same configuration surface that the YAML files cover is also available
 through a local web UI built with FastAPI + React. The CLI keeps working
 unchanged; the UI is launched as an additional subcommand.
 
+The easiest path after cloning is to use the repo-local launcher:
+
+```bash
+# macOS
+open "Launch Webcalyzer.command"
+
+# Windows
+"Launch Webcalyzer.bat"
+```
+
+The launcher creates and reuses `.venv`, installs Python and frontend
+dependencies when their fingerprints change, rebuilds `web/dist/` when the
+frontend or bundled docs change, opens the browser once the server is ready,
+and serves with the repository as the only browsable root. After the first
+successful setup it can relaunch offline as long as dependencies and
+`web/dist/` are still current.
+
+Manual setup is still available:
+
 ```bash
 # one-time: build the React bundle
 cd web && npm install && npm run build && cd ..

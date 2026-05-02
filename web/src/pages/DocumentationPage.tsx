@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { useSearchParams } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronRight, Cpu, Menu, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Cpu, Menu, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { renderToString } from "katex";
 import "katex/dist/katex.min.css";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
+import { HelpTip, TooltipProvider } from "@/components/ui/tooltip";
 import { DOC_GROUPS, type DocsGroup, type DocsPage } from "@/lib/docsNav";
 import { cn } from "@/lib/utils";
 
@@ -50,12 +52,146 @@ const MERMAID_CONFIG = {
   },
 } as const;
 
+const MERMAID_DEFAULT_ZOOM = 0.7;
+const MERMAID_MIN_ZOOM = 0.4;
+const MERMAID_MAX_ZOOM = 1.8;
+const MERMAID_ZOOM_STEP = 0.1;
+
 function slugify(text: string): string {
   return text
     .replace(/<[^>]*>/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function clampMermaidZoom(zoom: number): number {
+  const clamped = Math.min(MERMAID_MAX_ZOOM, Math.max(MERMAID_MIN_ZOOM, zoom));
+  return Math.round(clamped * 100) / 100;
+}
+
+function parseSvgDimension(value: string | null): number | null {
+  if (!value || value.trim().includes("%")) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readSvgViewBox(svg: SVGSVGElement): { width: number; height: number } | null {
+  const viewBox = svg.getAttribute("viewBox");
+  if (!viewBox) return null;
+  const [, , width, height] = viewBox.split(/[\s,]+/).map(Number);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return { width, height };
+}
+
+function prepareMermaidSvg(svg: SVGSVGElement) {
+  if (!svg.dataset.mermaidBaseWidth) {
+    const viewBox = readSvgViewBox(svg);
+    const width = parseSvgDimension(svg.getAttribute("width")) ?? viewBox?.width ?? 960;
+    svg.dataset.mermaidBaseWidth = String(width);
+  }
+  svg.style.height = "auto";
+  svg.style.maxWidth = "none";
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+}
+
+function readMermaidZoom(diagram: HTMLElement): number {
+  const parsed = Number.parseFloat(diagram.dataset.mermaidZoom ?? "");
+  return Number.isFinite(parsed) ? parsed : MERMAID_DEFAULT_ZOOM;
+}
+
+function applyMermaidZoom(diagram: HTMLElement, zoom: number): number {
+  const nextZoom = clampMermaidZoom(zoom);
+  const svg = diagram.querySelector<SVGSVGElement>(".docs-mermaid-canvas svg");
+  if (svg) {
+    prepareMermaidSvg(svg);
+    const baseWidth = Number.parseFloat(svg.dataset.mermaidBaseWidth ?? "");
+    const width = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 960;
+    svg.style.width = `${Math.max(1, Math.round(width * nextZoom))}px`;
+  }
+  diagram.dataset.mermaidZoom = nextZoom.toFixed(2);
+  return nextZoom;
+}
+
+function MermaidZoomControls({ diagram }: { diagram: HTMLElement }) {
+  const [zoom, setZoom] = useState(() => readMermaidZoom(diagram));
+
+  const setDiagramZoom = (nextZoom: number) => {
+    setZoom(applyMermaidZoom(diagram, nextZoom));
+  };
+
+  const shiftDiagramZoom = (delta: number) => {
+    setZoom((currentZoom) => applyMermaidZoom(diagram, currentZoom + delta));
+  };
+
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Diagram zoom controls">
+      <HelpTip text="Zoom out diagram">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 border border-border/70 bg-card/90 text-muted-foreground shadow-sm hover:bg-accent/20 hover:text-foreground"
+          onClick={() => shiftDiagramZoom(-MERMAID_ZOOM_STEP)}
+          disabled={zoom <= MERMAID_MIN_ZOOM}
+        >
+          <ZoomOut className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">Zoom out diagram</span>
+        </Button>
+      </HelpTip>
+      <HelpTip text="Reset diagram zoom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 border border-border/70 bg-card/90 text-muted-foreground shadow-sm hover:bg-accent/20 hover:text-foreground"
+          onClick={() => setDiagramZoom(MERMAID_DEFAULT_ZOOM)}
+          disabled={Math.abs(zoom - MERMAID_DEFAULT_ZOOM) < 0.01}
+        >
+          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">Reset diagram zoom</span>
+        </Button>
+      </HelpTip>
+      <HelpTip text="Zoom in diagram">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 border border-border/70 bg-card/90 text-muted-foreground shadow-sm hover:bg-accent/20 hover:text-foreground"
+          onClick={() => shiftDiagramZoom(MERMAID_ZOOM_STEP)}
+          disabled={zoom >= MERMAID_MAX_ZOOM}
+        >
+          <ZoomIn className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">Zoom in diagram</span>
+        </Button>
+      </HelpTip>
+    </div>
+  );
+}
+
+function mountMermaidDiagram(node: HTMLElement, svg: string, controlRoots: Root[]) {
+  node.innerHTML = [
+    '<div class="docs-mermaid-toolbar"></div>',
+    '<div class="docs-mermaid-viewport"><div class="docs-mermaid-canvas"></div></div>',
+  ].join("");
+  node.dataset.mermaidZoom = MERMAID_DEFAULT_ZOOM.toFixed(2);
+
+  const canvas = node.querySelector<HTMLElement>(".docs-mermaid-canvas");
+  const toolbar = node.querySelector<HTMLElement>(".docs-mermaid-toolbar");
+  if (!canvas || !toolbar) return;
+
+  canvas.innerHTML = svg;
+  applyMermaidZoom(node, MERMAID_DEFAULT_ZOOM);
+
+  const root = createRoot(toolbar);
+  controlRoots.push(root);
+  root.render(
+    <TooltipProvider delayDuration={250} skipDelayDuration={150}>
+      <MermaidZoomControls diagram={node} />
+    </TooltipProvider>,
+  );
 }
 
 function escapeHtml(text: string): string {
@@ -437,6 +573,7 @@ export function DocumentationPage() {
     if (!root) return;
 
     let isCurrent = true;
+    const controlRoots: Root[] = [];
     const nodes = Array.from(root.querySelectorAll<HTMLElement>(".docs-mermaid"));
     if (nodes.length === 0) return;
 
@@ -461,7 +598,7 @@ export function DocumentationPage() {
           try {
             const { svg } = await mermaid.render(renderId, source);
             if (isCurrent) {
-              node.innerHTML = svg;
+              mountMermaidDiagram(node, svg, controlRoots);
             }
           } catch {
             if (isCurrent) {
@@ -489,6 +626,7 @@ export function DocumentationPage() {
 
     return () => {
       isCurrent = false;
+      controlRoots.forEach((root) => root.unmount());
     };
   }, [currentPage.id, groupId, renderedHtml]);
 

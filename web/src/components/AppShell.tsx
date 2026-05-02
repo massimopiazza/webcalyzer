@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BookOpen, Cog, Crosshair, FolderOpen, PanelLeftClose, Play } from "lucide-react";
+import { BookOpen, Cog, Crosshair, FolderOpen, PanelLeft, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMeta } from "@/lib/meta";
 import { useSidebar } from "@/lib/sidebar";
@@ -42,11 +42,11 @@ export function AppShell() {
               variant="ghost"
               size="icon"
               onClick={toggle}
-              className="h-8 w-8"
-              title="Hide sidebar"
-              aria-label="Hide sidebar"
+              className="h-7 w-7"
+              title="Toggle sidebar"
+              aria-label="Toggle sidebar"
             >
-              <PanelLeftClose className="h-4 w-4" />
+              <PanelLeft className="h-4 w-4" />
             </Button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

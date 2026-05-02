@@ -1,5 +1,5 @@
 import * as React from "react";
-import { PanelLeftOpen } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/lib/sidebar";
 import { cn } from "@/lib/utils";
@@ -28,11 +28,11 @@ export function PageHeader({ title, description, badges, actions, className }: P
               variant="ghost"
               size="icon"
               onClick={toggle}
-              className="-ml-2 mt-0.5 shrink-0"
-              title="Show sidebar"
-              aria-label="Show sidebar"
+              className="-ml-2 mt-0.5 h-7 w-7 shrink-0"
+              title="Toggle sidebar"
+              aria-label="Toggle sidebar"
             >
-              <PanelLeftOpen className="h-4 w-4" />
+              <PanelLeft className="h-4 w-4" />
             </Button>
           )}
           <div className="min-w-0">

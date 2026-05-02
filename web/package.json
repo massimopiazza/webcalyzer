@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "scripts/with-modern-node.sh vite",
+    "build": "scripts/with-modern-node.sh tsc -b && scripts/with-modern-node.sh vite build",
+    "preview": "scripts/with-modern-node.sh vite preview"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.1",

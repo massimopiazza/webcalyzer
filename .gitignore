@@ -215,3 +215,7 @@ outputs/*
 
 # Node.js
 node_modules/
+.playwright-mcp
+
+# Local launcher cache
+.webcalyzer-launcher/

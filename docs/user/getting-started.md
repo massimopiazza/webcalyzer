@@ -16,6 +16,25 @@ Webcalyzer runs as a local application. The backend is a Python package with a c
 
 ### Install webcalyzer
 
+The easiest path is the repo-local launcher:
+
+```bash
+# macOS
+open "Launch Webcalyzer.command"
+
+# Windows
+"Launch Webcalyzer.bat"
+```
+
+The launcher creates `.venv`, installs the Python package there, installs
+frontend dependencies, builds `web/dist/` when needed, opens the browser
+after the local server is ready, and uses the repository as the only
+browsable root. It keeps a terminal window open for logs. After first-time
+setup succeeds, relaunches can work offline when the dependency and build
+fingerprints have not changed.
+
+If you prefer manual setup, install the Python package yourself.
+
 From the repository root, install the Python package in editable mode:
 
 ```bash
