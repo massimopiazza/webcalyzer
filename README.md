@@ -39,7 +39,7 @@ be supported by writing a new YAML profile.
                             │ telemetry_rejected.csv  │
                             │ run_metadata.json       │
                             │ config_resolved.yaml    │
-                            │ plots/{filtered,…}/     │
+                            │ plots/{filtered,...}/    │
                             │ telemetry_overlay.mp4   │
                             └─────────────────────────┘
                                        │
@@ -52,8 +52,9 @@ be supported by writing a new YAML profile.
                           └─ idempotent against telemetry_raw.csv
 ```
 
-The `run` subcommand stitches `extract → plot → render-overlay` together;
-the individual subcommands exist so each stage can be re-run independently
+The `run` subcommand stitches review-frame generation, extraction,
+trajectory reconstruction, plotting, and overlay rendering together. The
+individual subcommands exist so each stage can be re-run independently
 without redoing the slow OCR work.
 
 ## Install
@@ -86,22 +87,27 @@ webcalyzer serve [--host 127.0.0.1] [--port 8765] \
                  [--dist-dir <path>]
 ```
 
-Then open <http://localhost:8765>. The UI exposes three pages:
+Then open <http://localhost:8765>. The UI exposes four pages:
 
-- **Run** - load any YAML profile from `--templates-dir`, edit every field
+- **Run**: load any YAML profile from `--templates-dir`, edit every field
   the YAML supports (with inline validation), pick a video and an output
   directory via the server-side file browser, then run the same pipeline as
-  `webcalyzer run`. Live stdout/stderr streams back over Server-Sent Events;
-  outputs are linked when the job finishes.
-- **Calibrate** - sample fixture frames from a video and draw / resize
+  `webcalyzer run`. Live stdout/stderr streams back over Server-Sent Events.
+  The run console opens as a focused dialog by default and can be docked at
+  the top of the run page. Primary outputs are linked when the job finishes;
+  review-frame files stay on disk but are not listed in the console output
+  links.
+- **Calibrate**: sample fixture frames from a video and draw / resize
   bounding boxes for each field directly on the frame, saving back to the
   YAML profile.
-- **Templates** - list, import (paste YAML), download, and delete templates
+- **Templates**: list, import (paste YAML), download, and delete templates
   in `--templates-dir`.
+- **Documentation**: read the bundled user guide and internal reference
+  docs with the same navigation used by the built frontend.
 
 For development with hot-reload, start the API with
 `--reload --cors-origin http://localhost:5173` and run `npm run dev` in
-`web/` - Vite proxies `/api` to the FastAPI server.
+`web/`: Vite proxies `/api` to the FastAPI server.
 
 ## Documentation
 
@@ -109,12 +115,17 @@ Detailed docs live under `docs/` and are also available from the web UI's
 **Documentation** page after the frontend bundle is built.
 
 - `docs/user/` is the user guide for running extractions, calibrating
-  profiles, managing templates, reviewing outputs, and using the CLI.
+  profiles, managing templates, reviewing outputs, understanding
+  trajectory reconstruction, and using the CLI.
 - `docs/internal/` is the developer reference for architecture,
   configuration layers, pipeline stages, web backend, web frontend, file
   map, and function index.
 - `docs/WEBAPP-DOCS-STYLE.md` defines the writing style and page structure
   used by both documentation tiers.
+
+The documentation reader renders Markdown tables, local cross-links,
+KaTeX math, and Mermaid diagrams. Sidebar chevrons expand and collapse
+section lists independently from page-title navigation.
 
 ## Argument reference
 
@@ -142,11 +153,17 @@ Detailed docs live under `docs/` and are also available from the web UI's
 |             | `--config` | path | yes | - | - | Loaded as the starting point; saved into `--output`. |
 |             | `--output` | path | yes | - | - | Destination YAML for the edited profile. |
 | `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (0.5 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
+|           | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Used when extraction writes trajectory outputs. |
+|           | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Used when extraction writes trajectory outputs. |
+|           | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Savitzky-Golay window length for acceleration output. |
 | `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
 |       | `--skip-video-overlay` | flag | no | overlay enabled | - | Skip the post-extract overlay render. |
 |       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
 |       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
-|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_…` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
+|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_*` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
+|       | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Override trajectory interpolation for this run. |
+|       | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Override trajectory integration for this run. |
+|       | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Override Savitzky-Golay window length for this run. |
 | `plot` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
 | `rebuild-clean` | `--output` | path | yes | - | - | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
 | `rescue` | `--video` | path | yes | - | - | |
@@ -164,8 +181,8 @@ Detailed docs live under `docs/` and are also available from the web UI's
 |                  | `--output` | path | yes | - | - | |
 |                  | `--config` | path | no | `<output>/config_resolved.yaml` if present | - | Optional YAML profile with `video_overlay` and trajectory acceleration settings. |
 |                  | `--plot-mode` | choice | no | profile's `video_overlay.plot_mode` (`filtered`) | `filtered`, `with_rejected` | |
-|                  | `--width-fraction` | float | no | profile's `video_overlay.width_fraction` | 0.05–1.0 | Overlay panel width as a fraction of the source frame width. |
-|                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05–1.0 | Overlay panel height as a fraction of the source frame height. |
+|                  | `--width-fraction` | float | no | profile's `video_overlay.width_fraction` | 0.05-1.0 | Overlay panel width as a fraction of the source frame width. |
+|                  | `--height-fraction` | float | no | profile's `video_overlay.height_fraction` | 0.05-1.0 | Overlay panel height as a fraction of the source frame height. |
 |                  | `--output-filename` | string | no | profile's `video_overlay.output_filename` (`telemetry_overlay.mp4`) | any filename | Output video filename inside `--output`. |
 |                  | `--no-audio` | flag | no | audio muxed when `ffmpeg` is on `PATH` | - | Skip the audio re-mux step. |
 |                  | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | Same semantics as `run --overlay-engine`. |
@@ -292,7 +309,7 @@ webcalyzer calibrate \
 
 | Key | Action |
 |-----|--------|
-| `1`–`5` | Select field (stage1_velocity, stage1_altitude, met, stage2_velocity, stage2_altitude) |
+| `1`-`5` | Select field (stage1_velocity, stage1_altitude, met, stage2_velocity, stage2_altitude) |
 | `n` / `p` | Next / previous representative frame |
 | `c` | Clear the selected field's box |
 | `s` | Save the YAML profile |
@@ -416,10 +433,10 @@ directory:
 | `run_metadata.json` | Video metadata + sample count + OCR settings used for the run (backend, workers, skip_detection, recognition level, Phase A wall time). |
 | `config_resolved.yaml` | The profile actually used by the run, written verbatim so the result directory is self-describing even if the source YAML changes later. |
 | `plots/filtered/{summary,coverage,stage1,stage2,downrange}.pdf` | Plots driven by `telemetry_clean.csv` and `trajectory.csv`. |
-| `plots/with_rejected/…` | Mirrored plot set with hollow circles for rejected samples. |
+| `plots/with_rejected/...` | Mirrored plot set with hollow circles for rejected samples. |
 | `telemetry_overlay.mp4` | Source video copy with a translucent telemetry plot composited into the top-left corner (margins are symmetric). |
 | `telemetry_overlay.gif` | 15-second looping preview of the overlay video, sampled across the full clip at 4 fps and scaled down to 720p. |
-| `review/` | Representative frame JPEGs and the contact sheet, produced by `sample-frames`. |
+| `review/` | Representative frame JPEGs and the contact sheet, with configured boxes drawn for visual verification. |
 
 ## YAML profile
 
@@ -442,7 +459,7 @@ video_overlay:
 trajectory:
   enabled: true
   interpolation_method: pchip     # linear, pchip, akima, cubic
-  integration_method: rk4         # euler, midpoint, trapezoid, rk4
+  integration_method: rk4         # euler, midpoint, trapezoid, rk4, simpson
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0
@@ -497,10 +514,10 @@ fields:
     kind: velocity              # one of: velocity, altitude, met
     stage: stage1               # one of: stage1, stage2, null (for met)
     bbox_x1y1x2y2: [0.123, 0.903, 0.233, 0.957]  # normalized [x0, y0, x1, y1]
-  stage1_altitude: { … }
-  met:               { kind: met, stage: null, bbox_x1y1x2y2: [ … ] }
-  stage2_velocity:   { … }
-  stage2_altitude:   { … }
+  stage1_altitude: { ... }
+  met:               { kind: met, stage: null, bbox_x1y1x2y2: [ ... ] }
+  stage2_velocity:   { ... }
+  stage2_altitude:   { ... }
 ```
 
 `hardcoded_raw_data_points` are merged into `telemetry_raw.csv` before clean
@@ -516,10 +533,11 @@ inset from the corner instead of flush against the screen edges.
 ## Trajectory reconstruction
 
 Trajectory reconstruction treats webcast velocity as total speed magnitude
-and altitude as authoritative. Stage 1 is anchored at MET $0$. Stage 2 is not
-anchored at liftoff; it starts at the first interval where Stage 2 velocity
-and altitude are both available and inherits Stage 1's reconstructed
-downrange at that time. From there the two stage paths can bifurcate.
+and altitude as authoritative. Stage 1 is anchored at liftoff when data is
+available. Stage 2 is not anchored at liftoff; it starts at the first
+interval where Stage 2 velocity and altitude are both available and
+inherits Stage 1's reconstructed downrange at that time. From there the two
+stage paths can bifurcate.
 
 For each reconstructed stage, the pipeline interpolates velocity and
 altitude internally on a fixed time grid, integrates total speed, then
@@ -588,34 +606,36 @@ Savitzky-Golay filter whose settings live in YAML:
 `derivative_smoothing_mode` (default `interp`), and
 `acceleration_source_gap_threshold_s` (default $10\ \mathrm{s}$).
 
-### Why Savitzky-Golay for $\dot{y}$
+### Why Savitzky-Golay for acceleration
 
-Differentiating a measured signal amplifies high-frequency noise: if
-$y(t)=s(t)+\varepsilon(t)$ with white-noise $\varepsilon(t)$ of variance
-$\sigma^2$, a finite-difference estimator returns $\mathrm{d}y/\mathrm{d}t$
-with variance proportional to $\sigma^2/\Delta t^2$, so naive `np.gradient`
-on OCR-derived velocity produces a derivative dominated by jitter. The
-classic remedy is a Savitzky-Golay filter
+Differentiating measured velocity amplifies high-frequency noise. If the
+measured velocity is $y(t)=v(t)+\varepsilon(t)$ with noise
+$\varepsilon(t)$ of variance $\sigma^2$, a finite-difference derivative
+has noise variance proportional to $\sigma^2/\Delta t^2$. Naive
+`np.gradient` on OCR-derived velocity can therefore produce acceleration
+dominated by jitter. The classic remedy is a Savitzky-Golay filter
 (Savitzky & Golay, 1964; Schafer, 2011).
 
 Inside a sliding window of length $2M+1$ centered on time $t_i$, fit a
 polynomial of degree $K$ to the local samples in least-squares:
 
 $$
-\hat{s}(t; t_i) = \sum_{k=0}^{K} c_k(i)\,(t - t_i)^k
+\hat{v}(t; t_i) = \sum_{k=0}^{K} c_k(i)\,(t - t_i)^k
 $$
 
-The smoothed value at $t_i$ is $\hat{s}(t_i; t_i)=c_0(i)$; its derivative
-is $\left.\mathrm{d}\hat{s}/\mathrm{d}t\right|_{t_i}=c_1(i)$. Because the
-design matrix depends only on the *offsets* $(t_{i+j} - t_i)$, uniform sampling makes the least-squares
-solution a single fixed convolution kernel:
+The smoothed velocity at $t_i$ is $\hat{v}(t_i; t_i)=c_0(i)$; the
+acceleration estimate is
+$\left.\mathrm{d}\hat{v}/\mathrm{d}t\right|_{t_i}=c_1(i)$. Because the
+design matrix depends only on the offsets $(t_{i+j} - t_i)$, uniform
+sampling makes the least-squares solution a single fixed convolution
+kernel:
 
 $$
-\hat{s}(t_i) = \sum_{j=-M}^{M} h_0[j]\,y_{i+j}
+\hat{v}(t_i) = \sum_{j=-M}^{M} h_0[j]\,y_{i+j}
 $$
 
 $$
-\left.\frac{\mathrm{d}\hat{s}}{\mathrm{d}t}\right|_{t_i}
+\left.\frac{\mathrm{d}\hat{v}}{\mathrm{d}t}\right|_{t_i}
 = \frac{1}{\Delta t}\sum_{j=-M}^{M} h_1[j]\,y_{i+j}
 $$
 
@@ -626,10 +646,10 @@ so each filter pass is one FIR convolution with kernels precomputed by
    degree $\le K$ pass through, and their derivative likewise, with zero
    bias.
 2. **Noise reduction.** For zero-mean white noise, the variance of
-   $\left.\mathrm{d}\hat{s}/\mathrm{d}t\right|_{t_i}$ is
+   $\left.\mathrm{d}\hat{v}/\mathrm{d}t\right|_{t_i}$ is
    $\sigma^2\lVert h_1\rVert^2/\Delta t^2$. Increasing the window halves
    $\lVert h_1\rVert^2$ per doubling, so a longer window quadratically improves
-   noise rejection - at the cost of bandwidth, which is roughly
+   noise rejection, at the cost of bandwidth, which is roughly
    $f_c \approx (K + 1)/(\pi(2M+1)\Delta t)$.
 
 Two design choices follow:
@@ -690,7 +710,7 @@ A few takeaways from those numbers:
 
 Functional parity vs the baseline `telemetry_clean.csv`: `mission_elapsed_time_s`
 matches within 1 sample on 100% of overlapping rows for every config.
-Velocity/altitude columns match within 1% on 96–100% of overlapping rows;
+Velocity/altitude columns match within 1% on 96-100% of overlapping rows;
 the few outliers come from individual frames whose strip OCR was
 ambiguous and where the new path's parsing chose a different valid
 candidate. The skip-detection path is more aggressive on Stage 2, e.g. it
