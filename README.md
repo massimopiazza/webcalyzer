@@ -21,7 +21,7 @@ writing a new YAML profile.
                                        ▼
                             ┌─────────────────────────┐
    2. calibrate        ───▶ │ YAML profile with       │
-                            │ segments + boxes       │
+                            │ segments + boxes        │
                             └─────────────────────────┘
                                        │
                                        ▼
@@ -39,7 +39,7 @@ writing a new YAML profile.
                             │ telemetry_rejected.csv  │
                             │ run_metadata.json       │
                             │ config_resolved.yaml    │
-                            │ plots/{filtered,...}/    │
+                            │ plots/{filtered,...}/   │
                             │ telemetry_overlay.mp4   │
                             └─────────────────────────┘
                                        │
