@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUpToLine,
   Ban,
   CheckCircle2,
   CircleAlert,
   Download,
   ExternalLink,
+  LogOut,
   Loader2,
   Maximize2,
   PlayCircle,
@@ -122,7 +122,10 @@ export function RunPanel({ jobId, onCleared }: Props) {
           if (!open) setViewMode("docked");
         }}
       >
-        <DialogContent className="flex max-h-[calc(100vh-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]">
+        <DialogContent
+          closeLabel="Dock run console"
+          className="flex max-h-[calc(100vh-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100vh-2rem)]"
+        >
           {content}
         </DialogContent>
       </Dialog>
@@ -192,24 +195,26 @@ function RunConsoleContent({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <StateBadge state={job?.state} />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onToggleView}
-            title={isDialog ? "Dock console to page" : "Focus console"}
-            aria-label={isDialog ? "Dock console to page" : "Focus console"}
-          >
-            {isDialog ? <ArrowUpToLine className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            <span className="hidden sm:inline">{isDialog ? "Dock" : "Focus"}</span>
-          </Button>
+          {!isDialog && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onToggleView}
+              title="Focus console"
+              aria-label="Focus console"
+            >
+              <Maximize2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Focus</span>
+            </Button>
+          )}
           {isRunning && (
             <Button variant="outline" size="sm" onClick={onCancel}>
               <Ban className="h-4 w-4" /> Cancel
             </Button>
           )}
           {job?.state && !isRunning && (
-            <Button variant="ghost" size="sm" onClick={onCleared}>
-              Close
+            <Button variant="outline" size="sm" onClick={onCleared}>
+              <LogOut className="h-4 w-4" /> Exit
             </Button>
           )}
         </div>

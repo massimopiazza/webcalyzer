@@ -140,6 +140,7 @@ class JobManager:
         if job.state in {"succeeded", "failed", "cancelled"}:
             return False
         job.cancel_event.set()
+        self._emit(job, JobEvent("log", "Cancellation requested"))
         return True
 
     def subscribe(self, job_id: str) -> tuple[JobRecord, asyncio.Queue[JobEvent]]:
@@ -229,7 +230,12 @@ class JobManager:
                 {"phase": "review_frames"},
             ),
         )
-        generate_review_frames(options.video_path, options.profile, output_path / "review")
+        generate_review_frames(
+            options.video_path,
+            options.profile,
+            output_path / "review",
+            cancel_check=lambda: self._check_cancel(job),
+        )
         self._check_cancel(job)
 
         self._emit(
@@ -244,6 +250,7 @@ class JobManager:
             backend_options=backend_options,
             workers=workers,
             skip_detection=options.ocr_skip_detection,
+            cancel_check=lambda: self._check_cancel(job),
         )
         self._check_cancel(job)
 
@@ -289,6 +296,7 @@ class JobManager:
                 trajectory_config=options.profile.trajectory,
                 engine=options.overlay_engine,
                 encoder=options.overlay_encoder,
+                cancel_check=lambda: self._check_cancel(job),
             )
         else:
             self._emit(

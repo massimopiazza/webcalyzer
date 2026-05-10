@@ -11,7 +11,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `_trajectory_config_from_args(...)` | `src/webcalyzer/cli.py` | Applies trajectory CLI overrides to a config copy. |
 | `_write_trajectory_for_output(...)` | `src/webcalyzer/cli.py` | Resolves profile and sample fps, then writes trajectory outputs. |
 | `_overlay_config_from_args(...)` | `src/webcalyzer/cli.py` | Applies overlay CLI overrides to a config copy. |
-| `_resolve_workers(...)` | `src/webcalyzer/cli.py` | Resolves `--ocr-workers`, including automatic worker selection. |
+| `_resolve_workers(...)` | `src/webcalyzer/cli.py` | Resolves profile default OCR workers, `--ocr-workers`, and automatic worker selection. |
 | `_run_serve(...)` | `src/webcalyzer/cli.py` | Creates and runs the FastAPI app for the local UI. |
 | `load_profile(path)` | `src/webcalyzer/config.py` | Converts YAML into `ProfileConfig`. |
 | `save_profile(profile, path)` | `src/webcalyzer/config.py` | Serializes `ProfileConfig` back to YAML. |
@@ -100,12 +100,12 @@ This index lists the functions, classes, and frontend exports that most often ma
 |---|---|---|
 | `App` | `web/src/App.tsx` | Defines client routes under `AppShell`. |
 | `AppShell` | `web/src/components/AppShell.tsx` | Persistent layout, navigation, and environment badges. |
-| `RunPage` | `web/src/pages/RunPage.tsx` | Profile editing, run overrides, template save, and job submission. |
+| `RunPage` | `web/src/pages/RunPage.tsx` | Profile editing, template save, and job submission. |
 | `CalibratePage` | `web/src/pages/CalibratePage.tsx` | Frame sampling and visual bbox editing. |
 | `TemplatesPage` | `web/src/pages/TemplatesPage.tsx` | Template list, import, download, and delete UI. |
 | `DocumentationPage` | `web/src/pages/DocumentationPage.tsx` | Markdown documentation reader and local table of contents. |
 | `RunPanel` | `web/src/components/RunPanel.tsx` | Run console, EventSource subscription, output links, and view toggle. |
-| `TemplatePicker` | `web/src/components/TemplatePicker.tsx` | Template loading and save-as-template support. |
+| `TemplatePicker` | `web/src/components/TemplatePicker.tsx` | Template loading and blank-template reset support. |
 | `Field` | `web/src/components/Field.tsx` | Field label, error, and tooltip behavior. |
 | `useProfileForm(...)` | `web/src/lib/profileForm.ts` | Central profile form state and validation wrapper. |
 | `profileSchema` | `web/src/lib/schema.ts` | Zod validation mirror for `ProfileModel`. |

@@ -13,6 +13,25 @@ import { getError } from "@/lib/errors";
 import { NumberInput } from "./NumberInput";
 import { FIELD_HELP, SECTION_HELP, SELECT_HELP } from "@/lib/explanations";
 
+const OVERLAY_ENGINES = [
+  { value: "auto", label: "auto (ffmpeg, then opencv)" },
+  { value: "ffmpeg", label: "ffmpeg" },
+  { value: "opencv", label: "opencv" },
+];
+
+const OVERLAY_ENCODERS = [
+  "auto",
+  "videotoolbox",
+  "h264_videotoolbox",
+  "nvenc",
+  "h264_nvenc",
+  "qsv",
+  "h264_qsv",
+  "vaapi",
+  "h264_vaapi",
+  "libx264",
+];
+
 export function VideoOverlaySection({ state }: { state: ProfileFormState }) {
   const { profile, patch, errors } = state;
   const overlay = profile.video_overlay;
@@ -53,6 +72,56 @@ export function VideoOverlaySection({ state }: { state: ProfileFormState }) {
               >
                 with_rejected
               </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field
+          label="Overlay engine"
+          tooltip={FIELD_HELP.video_overlay_engine}
+          error={getError(errors, ["video_overlay", "engine"])}
+        >
+          <Select
+            value={overlay.engine}
+            onValueChange={(v) => patch(["video_overlay", "engine"], v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OVERLAY_ENGINES.map((option) => (
+                <SelectItem
+                  key={option.value}
+                  value={option.value}
+                  tooltip={SELECT_HELP.video_overlay_engine[option.value]}
+                >
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field
+          label="Overlay encoder"
+          tooltip={FIELD_HELP.video_overlay_encoder}
+          error={getError(errors, ["video_overlay", "encoder"])}
+        >
+          <Select
+            value={overlay.encoder}
+            onValueChange={(v) => patch(["video_overlay", "encoder"], v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OVERLAY_ENCODERS.map((value) => (
+                <SelectItem
+                  key={value}
+                  value={value}
+                  tooltip={SELECT_HELP.video_overlay_encoder[value]}
+                >
+                  {value}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </Field>

@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from webcalyzer.fixtures import REVIEW_FIELD_COLORS, generate_review_frames
-from webcalyzer.models import Box, FieldConfig, ProfileConfig, VideoMetadata
+from webcalyzer.models import Box, CalibrationSegmentConfig, FieldConfig, ProfileConfig, VideoMetadata
 
 
 def test_generate_review_frames_writes_box_overlays(monkeypatch, tmp_path: Path) -> None:
@@ -22,14 +22,23 @@ def test_generate_review_frames_writes_box_overlays(monkeypatch, tmp_path: Path)
         default_sample_fps=1.0,
         fixture_frame_count=1,
         fixture_time_range_s=None,
-        fields={
-            "stage1_velocity": FieldConfig(
-                name="stage1_velocity",
-                kind="velocity",
-                stage="stage1",
-                box=Box(0.25, 0.25, 0.75, 0.75),
-            ),
-        },
+        segments=[
+            CalibrationSegmentConfig(
+                id="segment_1",
+                start_frame_index=0,
+                start_time_s=0.0,
+                end_frame_index=100,
+                end_time_s=10.0,
+                fields={
+                    "stage1_velocity": FieldConfig(
+                        name="stage1_velocity",
+                        kind="velocity",
+                        stage="stage1",
+                        box=Box(0.25, 0.25, 0.75, 0.75),
+                    ),
+                },
+            )
+        ],
     )
     written: dict[str, np.ndarray] = {}
 

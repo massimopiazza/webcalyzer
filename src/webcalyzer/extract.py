@@ -5,12 +5,21 @@ import json
 import multiprocessing as mp
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import pandas as pd
 
 from webcalyzer.config import save_profile
-from webcalyzer.models import Box, ExtractionRow, OCRObservation, ProfileConfig
+from webcalyzer.models import (
+    Box,
+    CANONICAL_FIELD_DEFINITIONS,
+    CANONICAL_FIELD_ORDER,
+    CalibrationSegmentConfig,
+    ExtractionRow,
+    FieldConfig,
+    OCRObservation,
+    ProfileConfig,
+)
 from webcalyzer.ocr import OCRBackend, OCRDetection
 from webcalyzer.ocr_factory import OCRBackendOptions, make_backend, resolve_backend_name
 from webcalyzer.raw_points import apply_hardcoded_raw_data_points
@@ -45,6 +54,7 @@ class FrameRawOCR:
 
     frame_index: int
     sample_time_s: float
+    segment_id: str | None
     candidates_by_field: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
 
@@ -57,13 +67,14 @@ def extract_telemetry(
     backend_options: OCRBackendOptions | None = None,
     workers: int = 1,
     skip_detection: bool = False,
+    cancel_check: Callable[[], None] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     metadata = get_video_metadata(video_path)
     effective_fps = float(sample_fps or profile.default_sample_fps)
-    sample_indices = build_sample_indices(metadata=metadata, target_fps=effective_fps)
+    sample_indices = _build_profile_sample_indices(metadata=metadata, profile=profile, target_fps=effective_fps)
     if not sample_indices:
         raise RuntimeError("No frames selected for extraction; check the video and sample_fps.")
     backend_options = (backend_options or OCRBackendOptions()).validate()
@@ -93,6 +104,7 @@ def extract_telemetry(
         backend_options=backend_options,
         workers=workers,
         skip_detection=skip_detection,
+        cancel_check=cancel_check,
     )
     phase_a_elapsed = time.perf_counter() - started_at
     print(
@@ -104,6 +116,7 @@ def extract_telemetry(
         profile=profile,
         raw_frames=raw_frames,
         metadata_fps=metadata.fps,
+        cancel_check=cancel_check,
     )
 
     raw_df = pd.DataFrame(raw_rows)
@@ -125,6 +138,16 @@ def extract_telemetry(
                 "sample_fps_requested": effective_fps,
                 "sample_count": len(sample_indices),
                 "profile_name": profile.profile_name,
+                "segments": [
+                    {
+                        "id": segment.id,
+                        "start_frame_index": segment.start_frame_index,
+                        "start_time_s": segment.start_time_s,
+                        "end_frame_index": segment.end_frame_index,
+                        "end_time_s": segment.end_time_s,
+                    }
+                    for segment in profile.segments
+                ],
                 "ocr": {
                     "backend": resolved_backend,
                     "backend_requested": backend_options.backend,
@@ -149,13 +172,16 @@ def _run_phase_a(
     backend_options: OCRBackendOptions,
     workers: int,
     skip_detection: bool,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[FrameRawOCR]:
-    if workers <= 1:
+    if workers <= 1 and cancel_check is None:
         backend = make_backend(backend_options)
         results: list[FrameRawOCR] = []
         frames = iterate_frames(video_path, sample_indices)
         total = len(frames)
         for idx, (frame_index, frame) in enumerate(frames, start=1):
+            if cancel_check is not None:
+                cancel_check()
             results.append(
                 _ocr_frame(
                     frame_index=frame_index,
@@ -166,19 +192,47 @@ def _run_phase_a(
                     skip_detection=skip_detection,
                 )
             )
+            if cancel_check is not None:
+                cancel_check()
             if idx % 25 == 0 or idx == total:
                 print(f"[webcalyzer] phase A: processed {idx}/{total} samples")
         return results
 
-    chunks = _split_indices_into_chunks(sample_indices, workers)
+    process_count = max(1, workers)
+    chunks = _split_indices_into_chunks(sample_indices, process_count)
     ctx = mp.get_context("spawn")
     payloads = [
         (str(video_path), profile, metadata_fps, backend_options, skip_detection, chunk)
         for chunk in chunks
     ]
-    print(f"[webcalyzer] phase A: dispatching {len(payloads)} chunks across {workers} workers")
-    with ctx.Pool(processes=workers) as pool:
-        chunk_results = pool.map(_phase_a_worker, payloads)
+    print(
+        f"[webcalyzer] phase A: dispatching {len(payloads)} chunks across "
+        f"{process_count} worker{'s' if process_count != 1 else ''}"
+    )
+    pool = ctx.Pool(processes=process_count)
+    chunk_results: list[list[FrameRawOCR]] = []
+    try:
+        pending = [pool.apply_async(_phase_a_worker, (payload,)) for payload in payloads]
+        while pending:
+            if cancel_check is not None:
+                cancel_check()
+            ready: list[object] = []
+            for result in pending:
+                if result.ready():
+                    chunk_results.append(result.get())
+                    ready.append(result)
+            if ready:
+                pending = [result for result in pending if result not in ready]
+                processed = sum(len(chunk) for chunk in chunk_results)
+                print(f"[webcalyzer] phase A: processed {processed}/{len(sample_indices)} samples")
+            else:
+                time.sleep(0.05)
+        pool.close()
+    except BaseException:
+        pool.terminate()
+        raise
+    finally:
+        pool.join()
     flattened: list[FrameRawOCR] = []
     for chunk in chunk_results:
         flattened.extend(chunk)
@@ -213,13 +267,27 @@ def _ocr_frame(
     skip_detection: bool,
 ) -> FrameRawOCR:
     sample_time_s = frame_index / metadata_fps if metadata_fps else 0.0
+    segment = profile.active_segment_for_frame(frame_index)
+    if segment is None:
+        return FrameRawOCR(
+            frame_index=frame_index,
+            sample_time_s=sample_time_s,
+            segment_id=None,
+            candidates_by_field={},
+        )
     if skip_detection:
-        candidates_by_field = _ocr_skip_detection(frame=frame, profile=profile, backend=backend)
+        candidates_by_field = _ocr_skip_detection(frame=frame, segment=segment, backend=backend)
     else:
-        candidates_by_field = _ocr_with_detection(frame=frame, profile=profile, backend=backend)
+        candidates_by_field = _ocr_with_detection(
+            frame=frame,
+            profile=profile,
+            segment=segment,
+            backend=backend,
+        )
     return FrameRawOCR(
         frame_index=frame_index,
         sample_time_s=sample_time_s,
+        segment_id=segment.id,
         candidates_by_field=candidates_by_field,
     )
 
@@ -228,13 +296,16 @@ def _ocr_with_detection(
     *,
     frame,
     profile: ProfileConfig,
+    segment: CalibrationSegmentConfig,
     backend: OCRBackend,
 ) -> dict[str, list[tuple[str, str]]]:
-    strip_box = _build_strip_union_box(profile)
+    strip_box = _build_strip_union_box(segment.fields)
+    if strip_box is None:
+        return {}
     strip_crop = crop_box(frame, strip_box)
     strip_detections = backend.extract_detections(strip_crop, mode="strip")
     ocr_candidates_by_field = _assign_strip_detections(
-        profile=profile,
+        fields=segment.fields,
         frame=frame,
         strip_box=strip_box,
         detections=strip_detections,
@@ -245,7 +316,9 @@ def _ocr_with_detection(
     # This mirrors the original sequential pipeline; the parse is cheap and
     # stateless, so it stays in Phase A.
     parsing = profile.parsing
-    for field_name, field_cfg in profile.fields.items():
+    for field_name, field_cfg in segment.fields.items():
+        if field_cfg.box is None:
+            continue
         candidates = ocr_candidates_by_field.get(field_name, [])
         if field_cfg.kind == "met":
             if parse_met_candidates(candidates, parsing=parsing) is not None:
@@ -273,11 +346,13 @@ def _ocr_with_detection(
 def _ocr_skip_detection(
     *,
     frame,
-    profile: ProfileConfig,
+    segment: CalibrationSegmentConfig,
     backend: OCRBackend,
 ) -> dict[str, list[tuple[str, str]]]:
     crops: dict[str, "object"] = {}
-    for field_name, field_cfg in profile.fields.items():
+    for field_name, field_cfg in segment.fields.items():
+        if field_cfg.box is None:
+            continue
         crops[field_name] = crop_box(frame, field_cfg.box)
     per_field = backend.recognize_field_crops(crops)
     return {
@@ -287,17 +362,10 @@ def _ocr_skip_detection(
 
 
 def _split_indices_into_chunks(indices: list[int], workers: int) -> list[list[int]]:
-    if workers <= 1:
-        return [list(indices)]
-    chunks: list[list[int]] = [[] for _ in range(workers)]
-    chunk_size = max(1, len(indices) // workers)
-    for slot, start in enumerate(range(0, len(indices), chunk_size)):
-        if slot >= workers:
-            chunks[-1].extend(indices[start:])
-            break
-        chunks[slot] = indices[start : start + chunk_size]
-    chunks = [chunk for chunk in chunks if chunk]
-    return chunks
+    workers = max(1, workers)
+    target_chunks = max(workers, workers * 4)
+    chunk_size = max(1, min(50, (len(indices) + target_chunks - 1) // target_chunks))
+    return [indices[start : start + chunk_size] for start in range(0, len(indices), chunk_size)]
 
 
 def _run_phase_b(
@@ -305,6 +373,7 @@ def _run_phase_b(
     profile: ProfileConfig,
     raw_frames: list[FrameRawOCR],
     metadata_fps: float,
+    cancel_check: Callable[[], None] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     raw_rows: list[dict[str, object]] = []
     clean_rows: list[dict[str, object]] = []
@@ -316,12 +385,16 @@ def _run_phase_b(
 
     parsing = profile.parsing
     for frame_data in raw_frames:
+        if cancel_check is not None:
+            cancel_check()
         per_field_obs: dict[str, OCRObservation] = {}
         ocr_candidates_by_field = {
             field_name: list(values)
             for field_name, values in frame_data.candidates_by_field.items()
         }
         sample_time_s = frame_data.sample_time_s
+        segment = profile.segment_by_id(frame_data.segment_id)
+        configured_fields = segment.fields if segment is not None else {}
 
         met_choice = parse_met_candidates(ocr_candidates_by_field.get("met", []), parsing=parsing)
         mission_elapsed_time_s = met_choice.value if met_choice else None
@@ -360,7 +433,13 @@ def _run_phase_b(
                 variant=met_choice.variant,
             )
 
-        for field_name, field_cfg in profile.fields.items():
+        for field_name in CANONICAL_FIELD_ORDER:
+            if field_name == "met":
+                continue
+            field_cfg = configured_fields.get(field_name)
+            if field_cfg is None:
+                per_field_obs[field_name] = _not_configured_observation(field_name)
+                continue
             if field_cfg.kind == "met":
                 continue
             stage_state = stage_states[field_cfg.stage]
@@ -431,6 +510,7 @@ def _run_phase_b(
         raw_row: dict[str, object] = {
             "frame_index": frame_data.frame_index,
             "sample_time_s": sample_time_s,
+            "segment_id": frame_data.segment_id,
             "mission_elapsed_time_s": mission_elapsed_time_s,
         }
         for name, obs in per_field_obs.items():
@@ -446,6 +526,7 @@ def _run_phase_b(
             ExtractionRow(
                 frame_index=frame_data.frame_index,
                 sample_time_s=sample_time_s,
+                segment_id=frame_data.segment_id,
                 mission_elapsed_time_s=mission_elapsed_time_s,
                 stage1_velocity_mps=stage1_velocity,
                 stage1_altitude_m=stage1_altitude,
@@ -456,16 +537,31 @@ def _run_phase_b(
     return raw_rows, clean_rows
 
 
-def _build_strip_union_box(profile: ProfileConfig) -> Box:
-    x0 = min(field.box.x0 for field in profile.fields.values())
-    y0 = min(field.box.y0 for field in profile.fields.values())
-    x1 = max(field.box.x1 for field in profile.fields.values())
-    y1 = max(field.box.y1 for field in profile.fields.values())
+def _not_configured_observation(field_name: str) -> OCRObservation:
+    return OCRObservation(
+        field_name=field_name,
+        raw_text=None,
+        parse_status="not_configured",
+        raw_unit=None,
+        raw_value=None,
+        normalized_si_value=None,
+        variant=None,
+    )
+
+
+def _build_strip_union_box(fields: dict[str, FieldConfig]) -> Box | None:
+    boxes = [field.box for field in fields.values() if field.box is not None]
+    if not boxes:
+        return None
+    x0 = min(box.x0 for box in boxes)
+    y0 = min(box.y0 for box in boxes)
+    x1 = max(box.x1 for box in boxes)
+    y1 = max(box.y1 for box in boxes)
     return Box(x0=x0, y0=y0, x1=x1, y1=y1)
 
 
 def _assign_strip_detections(
-    profile: ProfileConfig,
+    fields: dict[str, FieldConfig],
     frame,
     strip_box: Box,
     detections: list[OCRDetection],
@@ -474,9 +570,10 @@ def _assign_strip_detections(
     strip_x0, strip_y0, _strip_x1, _strip_y1 = strip_box.as_int_xyxy(width=frame_width, height=frame_height)
     field_pixel_boxes = {
         field_name: field_cfg.box.as_int_xyxy(width=frame_width, height=frame_height)
-        for field_name, field_cfg in profile.fields.items()
+        for field_name, field_cfg in fields.items()
+        if field_cfg.box is not None
     }
-    per_field_parts: dict[str, dict[str, list[tuple[int, int, str]]]] = {field_name: {} for field_name in profile.fields}
+    per_field_parts: dict[str, dict[str, list[tuple[int, int, str]]]] = {field_name: {} for field_name in field_pixel_boxes}
 
     for detection in detections:
         global_box = (
@@ -496,7 +593,7 @@ def _assign_strip_detections(
             continue
         per_field_parts[best_field].setdefault(detection.variant, []).append((global_box[1], global_box[0], detection.text))
 
-    result: dict[str, list[tuple[str, str]]] = {field_name: [] for field_name in profile.fields}
+    result: dict[str, list[tuple[str, str]]] = {field_name: [] for field_name in field_pixel_boxes}
     for field_name, variant_parts in per_field_parts.items():
         for variant, parts in variant_parts.items():
             ordered = sorted(parts)
@@ -588,3 +685,20 @@ def _update_field_state(stage_state: StageState, field_name: str, value_si: floa
     field_state = stage_state.fields.setdefault(field_name, FieldState())
     field_state.previous_value_si = value_si
     field_state.previous_met_s = mission_elapsed_time_s
+
+
+def _build_profile_sample_indices(*, metadata, profile: ProfileConfig, target_fps: float) -> list[int]:
+    bounds = profile.frame_bounds()
+    if bounds is None:
+        return build_sample_indices(metadata=metadata, target_fps=target_fps)
+    start_frame, end_frame = bounds
+    start_frame = max(0, min(metadata.frame_count - 1, int(start_frame)))
+    end_frame = max(start_frame + 1, min(metadata.frame_count, int(end_frame)))
+    start_s = start_frame / metadata.fps if metadata.fps else 0.0
+    end_s = (end_frame - 1) / metadata.fps if metadata.fps else None
+    return build_sample_indices(
+        metadata=metadata,
+        target_fps=target_fps,
+        start_s=start_s,
+        end_s=end_s,
+    )

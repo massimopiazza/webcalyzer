@@ -7,6 +7,9 @@ import yaml
 
 from webcalyzer.models import (
     Box,
+    CalibrationSegmentConfig,
+    CalibrationVideoConfig,
+    CANONICAL_FIELD_ORDER,
     FieldConfig,
     FieldKindParsing,
     HardcodedRawDataPoint,
@@ -38,26 +41,27 @@ _ProfileDumper.add_representer(_FlowList, _represent_flow_list)
 def load_profile(path: str | Path) -> ProfileConfig:
     profile_path = Path(path)
     data = yaml.safe_load(profile_path.read_text())
-    fields = {
-        name: FieldConfig(
-            name=name,
-            kind=field_data["kind"],
-            stage=field_data.get("stage"),
-            box=Box.from_sequence(_load_bbox(field_data)),
-        )
-        for name, field_data in data["fields"].items()
-    }
     return ProfileConfig(
         profile_name=data["profile_name"],
         description=data.get("description", ""),
         default_sample_fps=float(data.get("default_sample_fps", 3.0)),
+        default_ocr_workers=int(data.get("default_ocr_workers", data.get("ocr_workers", 0))),
+        ocr_backend=str(data.get("ocr_backend", "auto")),
+        ocr_recognition_level=str(data.get("ocr_recognition_level", "accurate")),
+        skip_full_frame_ocr_fallback=bool(
+            data.get(
+                "skip_full_frame_ocr_fallback",
+                data.get("ocr_skip_detection", False),
+            )
+        ),
         fixture_frame_count=int(data.get("fixture_frame_count", 20)),
         fixture_time_range_s=_load_fixture_time_range(data),
+        calibration_video=_load_calibration_video(data.get("calibration_video")),
         video_overlay=_load_video_overlay(data.get("video_overlay", {})),
         trajectory=_load_trajectory(data.get("trajectory", {})),
         parsing=_load_parsing(data.get("parsing")),
         hardcoded_raw_data_points=_load_hardcoded_raw_data_points(data),
-        fields=fields,
+        segments=_load_segments(data),
     )
 
 
@@ -73,17 +77,115 @@ def _profile_to_yaml_dict(profile: ProfileConfig) -> dict[str, Any]:
     fixture_time_range = data.get("fixture_time_range_s")
     if isinstance(fixture_time_range, list):
         data["fixture_time_range_s"] = _FlowList(fixture_time_range)
-    for field_data in data.get("fields", {}).values():
-        bbox = field_data.get("bbox_x1y1x2y2")
-        if isinstance(bbox, list):
-            field_data["bbox_x1y1x2y2"] = _FlowList(bbox)
+    for segment_data in data.get("segments", []):
+        for field_data in segment_data.get("fields", {}).values():
+            bbox = field_data.get("bbox_x1y1x2y2")
+            if isinstance(bbox, list):
+                field_data["bbox_x1y1x2y2"] = _FlowList(bbox)
     return data
 
 
-def _load_bbox(field_data: dict[str, Any]) -> list[float]:
+def _load_field(name: str, field_data: dict[str, Any]) -> FieldConfig:
+    return FieldConfig(
+        name=name,
+        kind=field_data["kind"],
+        stage=field_data.get("stage"),
+        box=_load_box(field_data),
+    )
+
+
+def _load_box(field_data: dict[str, Any]) -> Box | None:
+    bbox = _load_bbox(field_data)
+    if bbox is None:
+        return None
+    return Box.from_sequence(bbox)
+
+
+def _load_bbox(field_data: dict[str, Any]) -> list[float] | None:
     if "bbox_x1y1x2y2" in field_data:
         return field_data["bbox_x1y1x2y2"]
-    return field_data["box"]
+    return field_data.get("box")
+
+
+def _load_calibration_video(data: dict[str, Any] | None) -> CalibrationVideoConfig:
+    data = data or {}
+    return CalibrationVideoConfig(
+        path=None if data.get("path") in (None, "") else str(data.get("path")),
+        fps=_optional_float(data.get("fps")),
+        frame_count=_optional_int(data.get("frame_count")),
+        width=_optional_int(data.get("width")),
+        height=_optional_int(data.get("height")),
+    )
+
+
+def _load_segments(data: dict[str, Any]) -> list[CalibrationSegmentConfig]:
+    segments_data = data.get("segments")
+    if segments_data is None:
+        legacy_fields = data.get("fields") or {}
+        if not legacy_fields:
+            return []
+        calibration_video = _load_calibration_video(data.get("calibration_video"))
+        end_frame = int(calibration_video.frame_count or 0)
+        end_time = _derive_time_s(end_frame, calibration_video.fps)
+        return [
+            CalibrationSegmentConfig(
+                id="segment_1",
+                start_frame_index=0,
+                start_time_s=0.0,
+                end_frame_index=end_frame,
+                end_time_s=end_time,
+                fields=_load_fields(legacy_fields),
+            )
+        ]
+    if not isinstance(segments_data, list):
+        raise ValueError("segments must be a list")
+    return [
+        _load_segment(index=index, data=segment_data, calibration_video=_load_calibration_video(data.get("calibration_video")))
+        for index, segment_data in enumerate(segments_data, start=1)
+    ]
+
+
+def _load_segment(
+    *,
+    index: int,
+    data: dict[str, Any],
+    calibration_video: CalibrationVideoConfig,
+) -> CalibrationSegmentConfig:
+    if not isinstance(data, dict):
+        raise ValueError("Each segment must be a mapping")
+    start_frame = int(data.get("start_frame_index", 0))
+    end_frame = int(data.get("end_frame_index", start_frame))
+    start_time = float(data.get("start_time_s", _derive_time_s(start_frame, calibration_video.fps)))
+    end_time = float(data.get("end_time_s", _derive_time_s(end_frame, calibration_video.fps)))
+    fields_data = data.get("fields") or {}
+    if not isinstance(fields_data, dict):
+        raise ValueError("segment.fields must be a mapping")
+    return CalibrationSegmentConfig(
+        id=str(data.get("id") or f"segment_{index}"),
+        start_frame_index=start_frame,
+        start_time_s=start_time,
+        end_frame_index=end_frame,
+        end_time_s=end_time,
+        fields=_load_fields(fields_data),
+    )
+
+
+def _load_fields(fields_data: dict[str, Any]) -> dict[str, FieldConfig]:
+    return {
+        name: _load_field(name, fields_data[name])
+        for name in CANONICAL_FIELD_ORDER
+        if name in fields_data
+    } | {
+        name: _load_field(name, field_data)
+        for name, field_data in fields_data.items()
+        if name not in CANONICAL_FIELD_ORDER
+    }
+
+
+def _derive_time_s(frame_index: int, fps: float | None) -> float:
+    if fps is None or fps <= 0.0:
+        return 0.0
+    return float(frame_index) / float(fps)
 
 
 def _load_fixture_time_range(data: dict[str, Any]) -> tuple[float, float] | None:
@@ -150,6 +252,8 @@ def _load_video_overlay(data: dict[str, Any] | None) -> VideoOverlayConfig:
     return VideoOverlayConfig(
         enabled=bool(data.get("enabled", True)),
         plot_mode=str(data.get("plot_mode", "filtered")),
+        engine=str(data.get("engine", data.get("overlay_engine", "auto"))),
+        encoder=str(data.get("encoder", data.get("overlay_encoder", "auto"))),
         width_fraction=float(data.get("width_fraction", 0.5)),
         height_fraction=float(data.get("height_fraction", 0.55)),
         output_filename=str(data.get("output_filename", "telemetry_overlay.mp4")),
@@ -361,3 +465,9 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)

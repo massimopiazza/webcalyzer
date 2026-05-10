@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, Code2, RotateCcw } from "lucide-react";
 import { ApiError, ProfileDTO, api } from "@/lib/api";
 import { useProfileForm } from "@/lib/profileForm";
@@ -10,76 +10,40 @@ import { PathPicker } from "@/components/PathPicker";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field } from "@/components/Field";
-import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { NumberInput } from "@/components/profile/NumberInput";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FIELD_HELP, SELECT_HELP } from "@/lib/explanations";
 import { toast } from "sonner";
 
-const OCR_BACKENDS = [
-  { value: "auto", label: "auto (Vision on macOS, RapidOCR elsewhere)" },
-  { value: "rapidocr", label: "rapidocr (cross-platform)" },
-  { value: "vision", label: "vision (macOS only)" },
-];
-
-const RECOGNITION_LEVELS = [
-  { value: "accurate", label: "accurate (Vision)" },
-  { value: "fast", label: "fast (Vision)" },
-];
-
-const OVERLAY_ENGINES = [
-  { value: "auto", label: "auto (ffmpeg → opencv)" },
-  { value: "ffmpeg", label: "ffmpeg" },
-  { value: "opencv", label: "opencv" },
-];
-
-const OVERLAY_ENCODERS = [
-  "auto",
-  "videotoolbox",
-  "h264_videotoolbox",
-  "nvenc",
-  "h264_nvenc",
-  "qsv",
-  "h264_qsv",
-  "vaapi",
-  "h264_vaapi",
-  "libx264",
-];
-
-type RunOverrides = {
-  sample_fps: number | null;
-  ocr_backend: string;
-  ocr_recognition_level: string;
-  ocr_workers: number;
-  ocr_skip_detection: boolean;
-  overlay_engine: string;
-  overlay_encoder: string;
+export type RunPagePersistedState = {
+  profile: Profile;
+  profileBaseline: Profile;
+  templateName: string | null;
+  templateRefreshKey: number;
+  videoPath: string;
+  outputDir: string;
+  activeJobId: string | null;
 };
 
-const DEFAULT_OVERRIDES: RunOverrides = {
-  sample_fps: null,
-  ocr_backend: "auto",
-  ocr_recognition_level: "accurate",
-  ocr_workers: 0,
-  ocr_skip_detection: false,
-  overlay_engine: "auto",
-  overlay_encoder: "auto",
-};
+export function createDefaultRunPageState(): RunPagePersistedState {
+  const profile = emptyProfile();
+  return {
+    profile,
+    profileBaseline: cloneProfile(profile),
+    templateName: null,
+    templateRefreshKey: 0,
+    videoPath: "",
+    outputDir: "",
+    activeJobId: null,
+  };
+}
 
 function displayErrorPath(path: string): string {
   return path
@@ -88,28 +52,73 @@ function displayErrorPath(path: string): string {
     .join(".");
 }
 
-export function RunPage() {
-  const state = useProfileForm(emptyProfile());
-  const [templateName, setTemplateName] = useState<string | null>(null);
-  const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
-  const [videoPath, setVideoPath] = useState<string>("");
-  const [outputDir, setOutputDir] = useState<string>("");
-  const [overrides, setOverrides] = useState<RunOverrides>(DEFAULT_OVERRIDES);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+export function RunPage({
+  persistedState,
+  onPersistedStateChange,
+}: {
+  persistedState: RunPagePersistedState;
+  onPersistedStateChange: (next: RunPagePersistedState) => void;
+}) {
+  const state = useProfileForm(persistedState.profile);
+  const [templateName, setTemplateName] = useState<string | null>(persistedState.templateName);
+  const [templateRefreshKey, setTemplateRefreshKey] = useState(persistedState.templateRefreshKey);
+  const [videoPath, setVideoPath] = useState<string>(persistedState.videoPath);
+  const [outputDir, setOutputDir] = useState<string>(persistedState.outputDir);
+  const [profileBaseline, setProfileBaseline] = useState<Profile>(persistedState.profileBaseline);
+  const [activeJobId, setActiveJobId] = useState<string | null>(persistedState.activeJobId);
   const [submitting, setSubmitting] = useState(false);
   const [yamlOpen, setYamlOpen] = useState(false);
   const [yamlPreview, setYamlPreview] = useState<string>("");
 
-  const errorList = useMemo(() => Object.entries(state.errors), [state.errors]);
+  useEffect(() => {
+    onPersistedStateChange({
+      profile: state.profile,
+      profileBaseline,
+      templateName,
+      templateRefreshKey,
+      videoPath,
+      outputDir,
+      activeJobId,
+    });
+  }, [
+    activeJobId,
+    onPersistedStateChange,
+    outputDir,
+    profileBaseline,
+    state.profile,
+    templateName,
+    templateRefreshKey,
+    videoPath,
+  ]);
+
+  const runnableErrorList = useMemo(
+    () => Object.entries(state.runnableErrors),
+    [state.runnableErrors],
+  );
+
+  const hasUnsavedProfileChanges = useMemo(
+    () => profileSignature(state.profile) !== profileSignature(profileBaseline),
+    [profileBaseline, state.profile],
+  );
 
   const onLoadTemplate = (name: string, profile: ProfileDTO) => {
-    state.reset(profile as Profile);
+    const nextProfile = profile as Profile;
+    state.reset(nextProfile);
+    setProfileBaseline(cloneProfile(nextProfile));
     setTemplateName(name);
   };
 
   const onSavedTemplate = (name: string) => {
     setTemplateName(name);
+    setProfileBaseline(cloneProfile(state.profile));
     setTemplateRefreshKey((key) => key + 1);
+  };
+
+  const startBlankTemplate = () => {
+    const blankProfile = emptyProfile();
+    state.reset(blankProfile);
+    setProfileBaseline(cloneProfile(blankProfile));
+    setTemplateName(null);
   };
 
   const previewYaml = async () => {
@@ -135,8 +144,8 @@ export function RunPage() {
       toast.error("Select an output directory.");
       return;
     }
-    if (!state.isValid) {
-      toast.error("Fix validation errors before running.");
+    if (!state.isRunnable) {
+      toast.error("Fix runnable profile errors before running.");
       return;
     }
     setSubmitting(true);
@@ -145,13 +154,13 @@ export function RunPage() {
         video_path: videoPath,
         output_dir: outputDir,
         profile: state.profile as ProfileDTO,
-        sample_fps: overrides.sample_fps,
-        ocr_backend: overrides.ocr_backend,
-        ocr_recognition_level: overrides.ocr_recognition_level,
-        ocr_workers: overrides.ocr_workers,
-        ocr_skip_detection: overrides.ocr_skip_detection,
-        overlay_engine: overrides.overlay_engine,
-        overlay_encoder: overrides.overlay_encoder,
+        sample_fps: null,
+        ocr_backend: state.profile.ocr_backend,
+        ocr_recognition_level: state.profile.ocr_recognition_level,
+        ocr_workers: state.profile.default_ocr_workers,
+        ocr_skip_detection: state.profile.skip_full_frame_ocr_fallback,
+        overlay_engine: state.profile.video_overlay.engine,
+        overlay_encoder: state.profile.video_overlay.encoder,
       });
       setActiveJobId(job.id);
       toast.success(`Job ${job.id} started`);
@@ -188,15 +197,12 @@ export function RunPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
-                state.reset(emptyProfile());
-                setTemplateName(null);
-              }}
+              onClick={startBlankTemplate}
             >
               <RotateCcw className="mr-1 h-4 w-4" /> Reset
             </Button>
             <StartButton
-              disabled={!state.isValid || !videoPath || !outputDir}
+              disabled={!state.isRunnable || !videoPath || !outputDir}
               loading={submitting}
               onClick={submit}
               size="sm"
@@ -219,6 +225,8 @@ export function RunPage() {
                 selected={templateName}
                 onLoad={onLoadTemplate}
                 refreshKey={templateRefreshKey}
+                onStartBlank={startBlankTemplate}
+                hasUnsavedChanges={hasUnsavedProfileChanges}
               />
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
@@ -232,157 +240,25 @@ export function RunPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>Run overrides</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-3">
-            <Field
-              label="Sample fps override"
-              hint="Empty = use profile"
-              tooltip={FIELD_HELP.override_sample_fps}
-            >
-              <NumberInput
-                value={overrides.sample_fps}
-                allowNull
-                onChange={(v) => setOverrides((s) => ({ ...s, sample_fps: v }))}
-              />
-            </Field>
-            <Field label="OCR backend" tooltip={FIELD_HELP.override_ocr_backend}>
-              <Select
-                value={overrides.ocr_backend}
-                onValueChange={(v) => setOverrides((s) => ({ ...s, ocr_backend: v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {OCR_BACKENDS.map((o) => (
-                    <SelectItem
-                      key={o.value}
-                      value={o.value}
-                      tooltip={SELECT_HELP.override_ocr_backend[o.value]}
-                    >
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field
-              label="Recognition level (Vision)"
-              tooltip={FIELD_HELP.override_ocr_recognition_level}
-            >
-              <Select
-                value={overrides.ocr_recognition_level}
-                onValueChange={(v) => setOverrides((s) => ({ ...s, ocr_recognition_level: v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RECOGNITION_LEVELS.map((o) => (
-                    <SelectItem
-                      key={o.value}
-                      value={o.value}
-                      tooltip={SELECT_HELP.override_ocr_recognition_level[o.value]}
-                    >
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field
-              label="OCR workers"
-              hint="0 = auto"
-              tooltip={FIELD_HELP.override_ocr_workers}
-            >
-              <NumberInput
-                value={overrides.ocr_workers}
-                onChange={(v) =>
-                  setOverrides((s) => ({ ...s, ocr_workers: Math.max(0, Math.round(v ?? 0)) }))
-                }
-              />
-            </Field>
-            <Field label="Overlay engine" tooltip={FIELD_HELP.override_overlay_engine}>
-              <Select
-                value={overrides.overlay_engine}
-                onValueChange={(v) => setOverrides((s) => ({ ...s, overlay_engine: v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {OVERLAY_ENGINES.map((o) => (
-                    <SelectItem
-                      key={o.value}
-                      value={o.value}
-                      tooltip={SELECT_HELP.override_overlay_engine[o.value]}
-                    >
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Overlay encoder" tooltip={FIELD_HELP.override_overlay_encoder}>
-              <Select
-                value={overrides.overlay_encoder}
-                onValueChange={(v) => setOverrides((s) => ({ ...s, overlay_encoder: v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {OVERLAY_ENCODERS.map((value) => (
-                    <SelectItem
-                      key={value}
-                      value={value}
-                      tooltip={SELECT_HELP.override_overlay_encoder[value]}
-                    >
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <div className="md:col-span-3 flex items-center gap-3 rounded-md border border-border/60 bg-muted/30 p-3">
-              <Switch
-                checked={overrides.ocr_skip_detection}
-                onCheckedChange={(checked) =>
-                  setOverrides((s) => ({ ...s, ocr_skip_detection: checked }))
-                }
-              />
-              <div>
-                <div className="text-sm font-medium">Skip OCR detection</div>
-                <p className="text-xs text-muted-foreground">
-                  {FIELD_HELP.override_ocr_skip_detection}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
         <ProfileForm state={state} />
 
-        {!state.isValid && (
+        {!state.isRunnable && (
           <Card className="border-destructive/40 bg-destructive/10">
             <CardHeader className="flex-row items-center gap-2 pb-2">
               <CircleAlert className="h-4 w-4 text-destructive" />
               <CardTitle className="text-sm text-destructive">
-                {errorList.length} validation error{errorList.length === 1 ? "" : "s"}
+                {runnableErrorList.length} runnable error{runnableErrorList.length === 1 ? "" : "s"}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ul className="space-y-1 text-xs text-destructive/90">
-                {errorList.slice(0, 8).map(([path, message]) => (
+                {runnableErrorList.slice(0, 8).map(([path, message]) => (
                   <li key={path}>
                     <span className="font-mono">{displayErrorPath(path) || "(profile)"}</span>:{" "}
                     {message}
                   </li>
                 ))}
-                {errorList.length > 8 && <li>+{errorList.length - 8} more…</li>}
+                {runnableErrorList.length > 8 && <li>+{runnableErrorList.length - 8} more…</li>}
               </ul>
             </CardContent>
           </Card>
@@ -390,11 +266,12 @@ export function RunPage() {
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-4">
           <div className="text-xs text-muted-foreground">
-            {state.isValid ? (
-              <span className="text-success">Profile valid · ready to run</span>
+            {state.isRunnable ? (
+              <span className="text-success">Profile runnable · ready to run</span>
             ) : (
               <span className="text-destructive">
-                Resolve {errorList.length} error{errorList.length === 1 ? "" : "s"} before running
+                Resolve {runnableErrorList.length} runnable error
+                {runnableErrorList.length === 1 ? "" : "s"} before running
               </span>
             )}
           </div>
@@ -405,6 +282,9 @@ export function RunPage() {
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>YAML preview</DialogTitle>
+            <DialogDescription className="sr-only">
+              Validated YAML for the current profile.
+            </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[60vh] rounded-md border border-border/70 bg-black/40 p-3">
             <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">{yamlPreview}</pre>
@@ -413,4 +293,12 @@ export function RunPage() {
       </Dialog>
     </>
   );
+}
+
+function cloneProfile(profile: Profile): Profile {
+  return JSON.parse(JSON.stringify(profile)) as Profile;
+}
+
+function profileSignature(profile: Profile): string {
+  return JSON.stringify(profile);
 }

@@ -23,12 +23,12 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `__init__.py` | Package version export. |
 | `__main__.py` | Allows `python -m webcalyzer` to call the CLI. |
 | `acceleration.py` | Velocity smoothing, derivative calculation, acceleration profiles, and source-gap masking. |
-| `calibration.py` | OpenCV desktop calibration UI for drawing field bounding boxes. |
+| `calibration.py` | OpenCV desktop calibration UI for segmented frame ranges and field slots. |
 | `cli.py` | Argparse setup and subcommand orchestration. |
 | `config.py` | YAML load/save, parser defaults, profile compatibility aliases, and flow-style list serialization. |
 | `extract.py` | Main OCR extraction pipeline, including Phase A workers and Phase B sequential state logic. |
 | `fixtures.py` | Review frame annotation and contact sheet generation. |
-| `models.py` | Runtime dataclasses for profiles, fields, observations, metadata, and extraction rows. |
+| `models.py` | Runtime dataclasses for profiles, segments, fields, observations, metadata, and extraction rows. |
 | `ocr.py` | OCR backend protocol, RapidOCR backend, preprocessing variants, and rescue OCR helpers. |
 | `ocr_factory.py` | OCR backend option dataclass, backend resolution, and backend construction. |
 | `overlay.py` | Overlay planning, panel drawing, OpenCV rendering, audio muxing, and preview GIF helpers. |
@@ -77,8 +77,8 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 
 | File | Route | Purpose |
 |---|---|---|
-| `RunPage.tsx` | `/` | Profile editing, input/output selection, run overrides, YAML preview, job submission, and validation summary. |
-| `CalibratePage.tsx` | `/calibrate` | Fixture sampling, frame display, field boxes, and calibration save workflow. |
+| `RunPage.tsx` | `/` | Profile editing, input/output selection, YAML preview, job submission, and validation summary. |
+| `CalibratePage.tsx` | `/calibrate` | Frame-scrubber segment editor, canonical slot boxes, and calibration save workflow. |
 | `TemplatesPage.tsx` | `/templates` | Template inventory, import, download, delete, and parse-error reporting. |
 | `DocumentationPage.tsx` | `/documentation` | Markdown documentation reader with page groups, local table of contents, and math styling. |
 
@@ -88,7 +88,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 |---|---|
 | `AppShell.tsx` | Global app shell, sidebar, mobile navigation, and layout constraints. |
 | `RunPanel.tsx` | Run console, EventSource subscription, output links, cancellation, and dialog/docked modes. |
-| `TemplatePicker.tsx` | Template dropdown loading, template save dialog, and refresh handling. |
+| `TemplatePicker.tsx` | Template dropdown loading, blank-template confirmation, and template save dialog. |
 | `PathPicker.tsx` | Path input plus file browser dialog integration. |
 | `FileBrowserDialog.tsx` | Root-scoped file browser UI. |
 | `Field.tsx` | Shared field label, error, and tooltip behavior. |

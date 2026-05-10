@@ -8,8 +8,8 @@ Each run writes a self-contained output directory. The files are designed so you
 
 | File or directory | Description |
 |---|---|
-| `review/` | Sampled JPEG frames and `contact_sheet.jpg` for visual calibration review. The JPEGs include field bounding boxes. |
-| `telemetry_raw.csv` | Raw OCR observations after parsing, including parse status and per-field details. |
+| `review/` | Sampled JPEG frames and `contact_sheet.jpg` for visual calibration review. The JPEGs include active segment labels and field bounding boxes. |
+| `telemetry_raw.csv` | Raw OCR observations after parsing, including `segment_id`, parse status, and per-field details. |
 | `telemetry_clean.csv` | Rebuilt telemetry table after filtering, stage logic, and anchor-point injection. This is the main retained dataset. |
 | `telemetry_rejected.csv` | Points rejected by outlier processing, when available. |
 | `trajectory.csv` | Dense trajectory reconstruction and augmented values, when trajectory is enabled. |
@@ -21,7 +21,7 @@ Each run writes a self-contained output directory. The files are designed so you
 
 ### Review frames
 
-Open `review/contact_sheet.jpg` first when diagnosing [calibration](calibration.md). It shows sampled frames with field boxes drawn over the source image.
+Open `review/contact_sheet.jpg` first when diagnosing [calibration](calibration.md). It shows sampled frames with the active segment label and field boxes drawn over the source image.
 
 Open individual JPEGs in `review/` when a field appears close to another overlay label or when the sampled frames show overlay movement. The boxes provide a visual check that OCR crops cover the intended digits and units.
 
@@ -111,4 +111,4 @@ For instance:
 webcalyzer run --video /path/to/video.mp4 --config /path/to/output/config_resolved.yaml --output /path/to/new-output
 ```
 
-Note: Run overrides such as OCR backend and overlay encoder are recorded in `run_metadata.json`, not in `config_resolved.yaml`, unless they were saved into the profile itself.
+Note: OCR backend, OCR worker, and overlay encoder choices are saved in `config_resolved.yaml` when they come from the profile. CLI flags that override those values for a single run are recorded in `run_metadata.json`.

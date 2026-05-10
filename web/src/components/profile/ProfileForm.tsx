@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { GeneralSection } from "./GeneralSection";
 import { VideoOverlaySection } from "./VideoOverlaySection";
 import { TrajectorySection } from "./TrajectorySection";
-import { FieldsSection } from "./FieldsSection";
+import { SegmentsSection } from "./SegmentsSection";
 import { HardcodedPointsSection } from "./HardcodedPointsSection";
 import { ParsingSection } from "./ParsingSection";
 
@@ -30,6 +30,10 @@ const PRIMARY_SECTIONS: SectionDef[] = [
       "profile_name",
       "description",
       "default_sample_fps",
+      "default_ocr_workers",
+      "ocr_backend",
+      "ocr_recognition_level",
+      "skip_full_frame_ocr_fallback",
       "fixture_frame_count",
       "fixture_time_range_s",
     ],
@@ -56,10 +60,10 @@ const PRIMARY_SECTIONS: SectionDef[] = [
 
 const ADVANCED_SECTIONS: SectionDef[] = [
   {
-    id: "fields",
-    title: "Fields",
-    Component: FieldsSection,
-    errorPrefixes: ["fields"],
+    id: "segments",
+    title: "Segments",
+    Component: SegmentsSection,
+    errorPrefixes: ["segments", "calibration_video"],
   },
   {
     id: "parsing",
@@ -106,7 +110,7 @@ export function ProfileForm({ state }: { state: ProfileFormState }) {
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              Field bbox table and parsing rules. Most users won't need these. Calibrate handles
+              Segment ranges, field bbox table, and parsing rules. Calibrate handles segment
               fields visually, and parsing falls back to bundled defaults.
             </div>
           </div>

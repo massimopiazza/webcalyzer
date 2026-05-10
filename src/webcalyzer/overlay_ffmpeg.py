@@ -18,7 +18,7 @@ import time
 from collections import deque
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import cv2
 
@@ -46,6 +46,7 @@ def render_via_ffmpeg(
     plan: "OverlayPlan",
     include_audio: bool,
     encoder: str,
+    cancel_check: Callable[[], None] | None = None,
 ) -> Path:
     """Render the overlay video by handing the work to a single ffmpeg call."""
 
@@ -56,16 +57,22 @@ def render_via_ffmpeg(
     resolved_encoder = _resolve_encoder(encoder)
     if output_path.exists():
         output_path.unlink()
+    if cancel_check is not None:
+        cancel_check()
 
     started_at = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="webcalyzer_overlay_") as tmp:
         tmp_dir = Path(tmp)
         png_paths = _write_panels_as_pngs(plan.panel_cache, tmp_dir)
+        if cancel_check is not None:
+            cancel_check()
         concat_path = _write_concat_list(
             tmp_dir / "concat.txt",
             panel_segments=plan.panel_segments,
             png_paths=png_paths,
         )
+        if cancel_check is not None:
+            cancel_check()
 
         command = _build_ffmpeg_command(
             ffmpeg=ffmpeg,
@@ -83,6 +90,7 @@ def render_via_ffmpeg(
         returncode, output_tail = _run_ffmpeg_with_progress(
             command,
             total_duration_s=float(plan.metadata.duration_s),
+            cancel_check=cancel_check,
         )
         if returncode != 0:
             stderr_tail = "\n".join(output_tail[-30:])
@@ -101,6 +109,7 @@ def _run_ffmpeg_with_progress(
     command: list[str],
     *,
     total_duration_s: float,
+    cancel_check: Callable[[], None] | None = None,
     log_interval_s: float = 10.0,
     min_percent_step: float = 5.0,
 ) -> tuple[int, list[str]]:
@@ -117,30 +126,41 @@ def _run_ffmpeg_with_progress(
     last_log_percent = -min_percent_step
 
     assert process.stdout is not None
-    for raw_line in process.stdout:
-        line = raw_line.strip()
-        if not line:
-            continue
-        output_tail.append(line)
-        if "=" not in line:
-            print(f"[webcalyzer] ffmpeg: {line}")
-            continue
-        key, value = line.split("=", 1)
-        progress[key] = value
-        if key != "progress":
-            continue
-        percent = _ffmpeg_progress_percent(progress, total_duration_s)
-        now = time.perf_counter()
-        is_final = value == "end"
-        should_log = (
-            is_final
-            or percent >= last_log_percent + min_percent_step
-            or now - last_log_time >= log_interval_s
-        )
-        if should_log:
-            print(_format_ffmpeg_progress(progress, percent, final=is_final))
-            last_log_time = now
-            last_log_percent = percent
+    try:
+        for raw_line in process.stdout:
+            if cancel_check is not None:
+                cancel_check()
+            line = raw_line.strip()
+            if not line:
+                continue
+            output_tail.append(line)
+            if "=" not in line:
+                print(f"[webcalyzer] ffmpeg: {line}")
+                continue
+            key, value = line.split("=", 1)
+            progress[key] = value
+            if key != "progress":
+                continue
+            percent = _ffmpeg_progress_percent(progress, total_duration_s)
+            now = time.perf_counter()
+            is_final = value == "end"
+            should_log = (
+                is_final
+                or percent >= last_log_percent + min_percent_step
+                or now - last_log_time >= log_interval_s
+            )
+            if should_log:
+                print(_format_ffmpeg_progress(progress, percent, final=is_final))
+                last_log_time = now
+                last_log_percent = percent
+    except BaseException:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        raise
 
     return process.wait(), list(output_tail)
 

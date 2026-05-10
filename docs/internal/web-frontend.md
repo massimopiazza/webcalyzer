@@ -9,7 +9,7 @@ The frontend is a Vite React app under `web/src/`. It is compiled into `web/dist
 | Route | Component | Purpose |
 |---|---|---|
 | `/` | `RunPage` | Full extraction configuration and job submission. |
-| `/calibrate` | `CalibratePage` | Visual bounding-box calibration against sampled video frames. |
+| `/calibrate` | `CalibratePage` | Frame-scrubber segment calibration with canonical field slots. |
 | `/templates` | `TemplatesPage` | Template list, import, download, and delete. |
 | `/documentation` | `DocumentationPage` | In-app reader for `docs/user` and `docs/internal`. |
 
@@ -32,9 +32,9 @@ flowchart TD
   initial["Loaded template<br/>or empty profile"]
   state["Profile state<br/>useProfileForm(...)"]
   patch["patch(path, value)<br/>immutable nested update"]
-  validate["profileSchema.safeParse(...)"]
+  validate["profileSchema and runnableProfileSchema"]
   errors["Errors map<br/>inline field messages"]
-  valid["isValid flag<br/>run and save controls"]
+  valid["isValid and isRunnable flags"]
   sections["Profile sections<br/>shared ProfileFormState"]
 
   initial --> state
@@ -53,14 +53,14 @@ Section components receive the same `ProfileFormState`. They do not keep indepen
 
 | Section | Component | Profile paths |
 |---|---|---|
-| **General** | `GeneralSection` | `profile_name`, `description`, `default_sample_fps`, fixtures |
+| **General** | `GeneralSection` | `profile_name`, `description`, `default_sample_fps`, `default_ocr_workers`, OCR runtime fields, fixtures |
 | **Trajectory** | `TrajectorySection` | `trajectory.*` |
 | **Anchor points** | `HardcodedPointsSection` | `hardcoded_raw_data_points` |
 | **Video overlay** | `VideoOverlaySection` | `video_overlay.*` |
-| **Fields** | `FieldsSection` | `fields.*` |
+| **Segments** | `SegmentsSection` | `segments.*`, `calibration_video.*` |
 | **Parsing** | `ParsingSection` | `parsing.*` |
 
-The first four sections are primary. **Fields** and **Parsing** live under **Advanced settings** because most users edit fields through calibration and use default parsing.
+The first four sections are primary. **Segments** and **Parsing** live under **Advanced settings** because most users edit boxes through calibration and use default parsing.
 
 Note: In user-facing UI text, call field `kind` the field **Type**. Keep `kind` only where the raw schema key is unavoidable.
 
@@ -83,16 +83,16 @@ The console has two presentation modes:
 
 | Mode | State | Behavior |
 |---|---|---|
-| `dialog` | default when a job starts | Centered dialog with the standard dark overlay. |
-| `docked` | user-selected | Card placed at the top of the run page content flow. |
+| `dialog` | default when a job starts | Centered dialog with the standard dark overlay. The built-in X and outside click dock the console. |
+| `docked` | user-selected | Card placed at the top of the run page content flow with a focus button to reopen the dialog. |
 
-The toggle uses lucide icons from the existing app icon set. Review files under `review/` are filtered out of the displayed output links.
+The controls use lucide icons from the existing app icon set. Review files under `review/` are filtered out of the displayed output links.
 
-### Template picker refresh
+### Template picker blank reset
 
 `TemplatePicker` receives a refresh key from pages that save templates. After **Save as template** succeeds, the parent increments the refresh key so the dropdown reloads and selects the newly saved template.
 
-Any new template-writing UI should follow the same pattern so users see newly created templates without a page refresh.
+The picker action button starts from a blank template. Pages provide the reset callback and dirty-state boolean. If there are unsaved profile or calibration edits, the picker opens a confirmation dialog before discarding them.
 
 ## Documentation and UI Conventions
 
@@ -127,7 +127,7 @@ Tooltip copy should stay concise, should not contain typos, and should follow th
 
 `web/src/components/ui/select.tsx` owns the shared select trigger and item styles. Wrapped selected values must remain left-aligned even when the label spans more than one line.
 
-Any select styling change should be checked with long labels in the profile template picker and run override controls.
+Any select styling change should be checked with long labels in the profile template picker and profile section controls.
 
 ### Styling conventions
 

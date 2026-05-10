@@ -7,10 +7,10 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 | Guide | What it covers |
 |---|---|
 | [Getting Started](getting-started.md) | Installation, web UI launch, local roots, and a first run |
-| [Run Extraction](run-extraction.md) | The **Run** page, paths, run overrides, live console, cancellation, and output links |
-| [Calibration](calibration.md) | Fixture frames, bounding boxes, field metadata, and calibration saves |
+| [Run Extraction](run-extraction.md) | The **Run** page, paths, profile settings, live console, cancellation, and output links |
+| [Calibration](calibration.md) | Frame scrubbing, segment splits, bounding boxes, field slots, and calibration saves |
 | [Templates](templates.md) | Loading, saving, importing, downloading, deleting, and repairing YAML templates |
-| [Profile Configuration](profile-configuration.md) | General settings, fields, parsing, trajectory, overlay, and anchor points |
+| [Profile Configuration](profile-configuration.md) | General settings, segments, parsing, trajectory, overlay, and anchor points |
 | [Trajectory Reconstruction](trajectory-reconstruction.md) | Unit conversion, mission-time grids, interpolation, integration, downrange, acceleration, and geodesic projection |
 | [Outputs and Review](outputs-and-review.md) | Review frames, CSVs, plots, rejected points, trajectory data, and overlay videos |
 | [CLI Reference](cli-reference.md) | Command-line workflows and subcommand responsibilities |
@@ -21,11 +21,13 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 
 **Template.** A saved profile under the server templates directory. Templates can be loaded into **Run** or **Calibrate**, edited, saved, and reused from the CLI.
 
-**Field.** A named telemetry region in the video frame. Each field has a type (`velocity`, `altitude`, or `met`), an optional stage (`stage1` or `stage2`), and a normalized bounding box.
+**Segment.** A source-video frame range with its own enabled telemetry slots and bounding boxes. Segment end frames are exclusive.
+
+**Field slot.** One canonical telemetry region in a segment: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, or `stage2_altitude`. Enabled slots have a fixed type, stage, and normalized bounding box.
 
 **Mission elapsed time.** The extracted time axis from the video overlay. Webcalyzer uses mission elapsed time to align readings across frames and to build trajectory outputs.
 
-**Review frame.** A sampled JPEG with calibrated field boxes drawn on top. Review frames are written before OCR so you can confirm the profile is looking at the correct overlay regions.
+**Review frame.** A sampled JPEG with the active segment label and calibrated field boxes drawn on top. Review frames are written before OCR so you can confirm the profile is looking at the correct overlay regions.
 
 **Clean telemetry.** The retained telemetry table after parsing, anchor-point injection, stage logic, and outlier filtering. This table feeds plotting, trajectory reconstruction, and overlay rendering.
 

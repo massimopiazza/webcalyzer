@@ -82,7 +82,7 @@ order below and verify the round-trip.
 |-------|------|------|
 | **L1 · Dataclass** | `src/webcalyzer/models.py` | Canonical Python type. Everything in the pipeline reads this. |
 | **L2 · YAML I/O**  | `src/webcalyzer/config.py` (`load_profile` / `save_profile` / `default_parsing_profile`) | YAML mapping ↔ L1. Defines defaults for missing keys, accepts legacy aliases, decides flow vs. block style for round-trip cleanliness. |
-| **L3 · Pydantic schema** | `src/webcalyzer/web/schema.py` (`ProfileModel` + nested `*Model` + `*_to_model` / `model_to_*_dataclass` converters) | Authoritative server-side validation. Mirrors L1 1:1. The API layer uses `ProfileModel.model_validate(...)` on every write/run/validate endpoint. |
+| **L3 · Pydantic schema** | `src/webcalyzer/web/schema.py` (`ProfileModel` + nested `*Model` + `*_to_model` / `model_to_*_dataclass` converters) | Authoritative server-side validation. Mirrors L1 1:1. The API layer uses draft validation for template/calibration saves and runnable validation for extraction jobs. |
 | **L4 · Zod schema + form** | `web/src/lib/schema.ts` (`profileSchema`, `emptyProfile`) and `web/src/components/profile/*Section.tsx` | Client-side validation (inline errors) and the form UI. The UI **must** allow the user to edit every L1 field (per the user's product requirement). |
 
 A typed DTO mirror (`web/src/lib/api.ts`) sits alongside L4 - keep it in
@@ -114,13 +114,23 @@ These must hold for any change to pass:
 - `profile_name: str` - identifier (validated `[A-Za-z0-9._\- ]+`).
 - `description: str`
 - `default_sample_fps: float` (>0, ≤240).
+- `default_ocr_workers: int` (≥0, `0` means auto).
+- `ocr_backend: str` (`auto` | `rapidocr` | `vision`).
+- `ocr_recognition_level: str` (`accurate` | `fast`).
+- `skip_full_frame_ocr_fallback: bool` - disables the full-frame OCR
+  recovery pass and uses calibrated crops only.
 - `fixture_frame_count: int` (≥1, ≤2000).
 - `fixture_time_range_s: tuple[float, float] | None` - `[start, end]`,
   `end > start`, both ≥0.
+- `calibration_video: CalibrationVideoConfig` - optional reference video
+  metadata saved by calibration: `path`, `fps`, `frame_count`, `width`,
+  `height`. Frame indices are authoritative; saved times are derived
+  metadata for display.
 - `video_overlay: VideoOverlayConfig` - `enabled`, `plot_mode`
-  (`filtered` | `with_rejected`), `width_fraction` (0.05-1),
-  `height_fraction` (0.05-1), `output_filename` (no path separators),
-  `include_audio`.
+  (`filtered` | `with_rejected`), `engine` (`auto|ffmpeg|opencv`),
+  `encoder` (`auto|videotoolbox|h264_videotoolbox|nvenc|h264_nvenc|qsv|h264_qsv|vaapi|h264_vaapi|libx264`),
+  `width_fraction` (0.05-1), `height_fraction` (0.05-1),
+  `output_filename` (no path separators), `include_audio`.
 - `trajectory: TrajectoryConfig` - `enabled`, `interpolation_method`
   (`linear|pchip|akima|cubic`), `integration_method`
   (`euler|midpoint|trapezoid|rk4|simpson`),
@@ -147,10 +157,17 @@ These must hold for any change to pass:
 - `hardcoded_raw_data_points: list[HardcodedRawDataPoint]` - each has a
   `mission_elapsed_time_s` plus optional `stage1` / `stage2` velocity/
   altitude. At least one telemetry value must be set.
-- `fields: dict[name, FieldConfig]` - at least one entry. Each has
-  `kind` (`velocity|altitude|met`), `stage` (`stage1|stage2|null` -
-  must be `null` iff `kind == "met"`), and `bbox_x1y1x2y2`
-  (4-tuple in [0,1] with `x1>x0 && y1>y0`).
+- `segments: list[CalibrationSegmentConfig]` - canonical calibration
+  ranges. Each has `id`, `start_frame_index`, `start_time_s`,
+  `end_frame_index`, `end_time_s`, and `fields`. `end_frame_index` is
+  exclusive, so a split at frame `N` makes `N` the first frame of the
+  next segment. Runnable profiles must have sorted, contiguous,
+  non-overlapping segments. Draft profiles can be saved while incomplete.
+- `segments[*].fields: dict[name, FieldConfig]` - canonical slot names
+  only: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`,
+  `stage2_altitude`. Disabled slots are omitted. Runnable profiles must
+  define `met` in every segment and every enabled slot must have a valid
+  `bbox_x1y1x2y2` (4-tuple in [0,1] with `x1>x0 && y1>y0`).
 
 The actual constraint values live in the schema files; treat the list
 above as a navigation aid and read the code for authoritative bounds.
@@ -179,13 +196,16 @@ section under "Argument reference" + "Subcommands" in `README.md`.
 - `--reload` and `--cors-origin <origin>` (dev-only, for the Vite proxy)
 
 When you add a new flag to `extract`/`run`/`render-overlay`, decide
-whether it is also exposable through the web UI's "Run overrides" panel
-(`web/src/pages/RunPage.tsx`). If it is, expose it in:
+whether it belongs in the persisted profile form or remains a one-run
+payload option. Prefer the profile form when the value should be saved in
+YAML templates. If the web app must send it for job execution, expose it
+in:
 
 1. The `JobOptions` dataclass + `_execute` in `web/jobs.py`.
 2. The `/api/jobs/run` payload handler in `web/app.py`.
 3. The `runJob` payload type in `web/src/lib/api.ts`.
-4. The "Run overrides" form fields in `web/src/pages/RunPage.tsx`.
+4. The relevant profile section component, or a narrowly scoped Run-page
+   control if it truly should not be saved in the profile.
 
 ## 5. Web backend contract
 

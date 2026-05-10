@@ -164,9 +164,10 @@ def _add_ocr_args(
     parser.add_argument(
         "--ocr-backend",
         choices=["auto", "rapidocr", "vision"],
-        default="auto",
+        default=None,
         help=(
-            "OCR backend selection. 'auto' picks Vision on macOS when available "
+            "OCR backend selection. Omit to use profile.ocr_backend. 'auto' "
+            "picks Vision on macOS when available "
             "and RapidOCR everywhere else. Use 'rapidocr' to force the portable "
             "ONNX path even on macOS, or 'vision' to require Apple Vision."
         ),
@@ -174,15 +175,19 @@ def _add_ocr_args(
     parser.add_argument(
         "--ocr-recognition-level",
         choices=["accurate", "fast"],
-        default="accurate",
-        help="Vision recognition level. Ignored when the resolved backend is RapidOCR.",
+        default=None,
+        help=(
+            "Vision recognition level. Omit to use profile.ocr_recognition_level. "
+            "Ignored when the resolved backend is RapidOCR."
+        ),
     )
     if include_workers:
         parser.add_argument(
             "--ocr-workers",
-            default="auto",
+            default=None,
             help=(
-                "Number of worker processes for OCR Phase A. 'auto' picks "
+                "Number of worker processes for OCR Phase A. Omit to use "
+                "profile.default_ocr_workers when nonzero. 'auto' picks "
                 "max(1, physical_cores - 1) for RapidOCR and 1 for Vision."
             ),
         )
@@ -190,10 +195,11 @@ def _add_ocr_args(
         parser.add_argument(
             "--ocr-skip-detection",
             action="store_true",
+            default=None,
             help=(
-                "Opt-in: skip text detection and run recognition only on each "
-                "calibrated field crop. Faster but loses the rescue net for "
-                "frames where the overlay drifts; default off."
+                "Skip the full-frame OCR fallback used to recover misaligned "
+                "frames. Runs recognition only on calibrated field crops; "
+                "default off."
             ),
         )
 
@@ -208,9 +214,10 @@ def _add_overlay_engine_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--overlay-engine",
         choices=["auto", "ffmpeg", "opencv"],
-        default="auto",
+        default=None,
         help=(
-            "Rendering engine for the telemetry overlay video. 'auto' uses "
+            "Rendering engine for the telemetry overlay video. Omit to use "
+            "profile.video_overlay.engine. 'auto' uses "
             "ffmpeg when available (single-shot pipeline with hardware encode) "
             "and falls back to the in-process OpenCV path otherwise. Force "
             "'ffmpeg' to fail loudly if ffmpeg is missing."
@@ -230,9 +237,10 @@ def _add_overlay_engine_args(parser: argparse.ArgumentParser) -> None:
             "h264_vaapi",
             "libx264",
         ],
-        default="auto",
+        default=None,
         help=(
-            "ffmpeg H.264 encoder. 'auto' walks videotoolbox→nvenc→qsv→vaapi→"
+            "ffmpeg H.264 encoder. Omit to use profile.video_overlay.encoder. "
+            "'auto' walks videotoolbox→nvenc→qsv→vaapi→"
             "libx264 and picks the first one available in the local ffmpeg "
             "build. Ignored unless the resolved overlay engine is 'ffmpeg'."
         ),
@@ -301,7 +309,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output,
             video_path=args.video,
             profile=profile,
-            backend_options=_ocr_backend_options(args),
+            backend_options=_ocr_backend_options(args, profile),
         )
         clean_df = rebuild_clean_in_output_dir(args.output, profile=profile)
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
@@ -358,8 +366,8 @@ def main(argv: list[str] | None = None) -> None:
             rejected_df=_read_rejected_df(output_dir),
             trajectory_df=_read_trajectory_df(output_dir),
             trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile),
-            engine=getattr(args, "overlay_engine", "auto"),
-            encoder=getattr(args, "overlay_encoder", "auto"),
+            engine=_overlay_engine_from_args(args, overlay_config),
+            encoder=_overlay_encoder_from_args(args, overlay_config),
         )
         return
 
@@ -377,12 +385,15 @@ def main(argv: list[str] | None = None) -> None:
             output_path=args.output,
             video_frame_count=metadata.frame_count,
             video_fps=metadata.fps,
+            video_width=metadata.width,
+            video_height=metadata.height,
         )
         return
 
     if args.command == "extract":
+        _validate_runnable_profile(profile)
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
-        backend_options = _ocr_backend_options(args)
+        backend_options = _ocr_backend_options(args, profile)
         effective_fps = float(args.sample_fps or profile.default_sample_fps)
         _raw_df, clean_df = extract_telemetry(
             args.video,
@@ -390,16 +401,17 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             sample_fps=args.sample_fps,
             backend_options=backend_options,
-            workers=_resolve_workers(args, backend_options),
-            skip_detection=getattr(args, "ocr_skip_detection", False),
+            workers=_resolve_workers(args, backend_options, profile.default_ocr_workers),
+            skip_detection=_skip_detection_from_args(args, profile),
         )
         _write_trajectory_for_output(clean_df, args.output, profile=profile, sample_fps=effective_fps)
         return
 
     if args.command == "run":
+        _validate_runnable_profile(profile)
         generate_review_frames(args.video, profile, Path(args.output) / "review")
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
-        backend_options = _ocr_backend_options(args)
+        backend_options = _ocr_backend_options(args, profile)
         effective_fps = float(args.sample_fps or profile.default_sample_fps)
         _raw_df, clean_df = extract_telemetry(
             args.video,
@@ -407,8 +419,8 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             sample_fps=args.sample_fps,
             backend_options=backend_options,
-            workers=_resolve_workers(args, backend_options),
-            skip_detection=getattr(args, "ocr_skip_detection", False),
+            workers=_resolve_workers(args, backend_options, profile.default_ocr_workers),
+            skip_detection=_skip_detection_from_args(args, profile),
         )
         clean_df, trajectory_df = _write_trajectory_for_output(
             clean_df, args.output, profile=profile, sample_fps=effective_fps
@@ -423,6 +435,15 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     raise ValueError(f"Unsupported command: {args.command}")
+
+
+def _validate_runnable_profile(profile: ProfileConfig) -> None:
+    from webcalyzer.web.schema import profile_dataclass_to_model, validate_runnable_profile_model
+
+    try:
+        validate_runnable_profile_model(profile_dataclass_to_model(profile))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"Profile is not runnable: {exc}") from exc
 
 
 def _read_rejected_df(output_dir: str | Path):
@@ -543,18 +564,44 @@ def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Name
     return config
 
 
-def _ocr_backend_options(args: argparse.Namespace) -> OCRBackendOptions:
+def _ocr_backend_options(
+    args: argparse.Namespace,
+    profile: ProfileConfig | None = None,
+) -> OCRBackendOptions:
     return OCRBackendOptions(
-        backend=getattr(args, "ocr_backend", "auto"),
-        recognition_level=getattr(args, "ocr_recognition_level", "accurate"),
+        backend=getattr(args, "ocr_backend", None)
+        or (profile.ocr_backend if profile is not None else "auto"),
+        recognition_level=getattr(args, "ocr_recognition_level", None)
+        or (profile.ocr_recognition_level if profile is not None else "accurate"),
     )
 
 
-def _resolve_workers(args: argparse.Namespace, backend_options: OCRBackendOptions) -> int:
-    raw_value = getattr(args, "ocr_workers", "auto")
+def _skip_detection_from_args(args: argparse.Namespace, profile: ProfileConfig) -> bool:
+    value = getattr(args, "ocr_skip_detection", None)
+    if value is None:
+        return profile.skip_full_frame_ocr_fallback
+    return bool(value)
+
+
+def _overlay_engine_from_args(args: argparse.Namespace, config: VideoOverlayConfig) -> str:
+    return getattr(args, "overlay_engine", None) or config.engine
+
+
+def _overlay_encoder_from_args(args: argparse.Namespace, config: VideoOverlayConfig) -> str:
+    return getattr(args, "overlay_encoder", None) or config.encoder
+
+
+def _resolve_workers(
+    args: argparse.Namespace,
+    backend_options: OCRBackendOptions,
+    default_workers: int = 0,
+) -> int:
+    raw_value = getattr(args, "ocr_workers", None)
     if isinstance(raw_value, int):
         return max(1, raw_value)
     if raw_value is None:
+        if default_workers > 0:
+            return max(1, default_workers)
         raw_value = "auto"
     text = str(raw_value).strip().lower()
     if text == "auto":
@@ -640,6 +687,6 @@ def _render_overlay_if_enabled(
         rejected_df=_read_rejected_df(output_dir),
         trajectory_df=trajectory_df if trajectory_df is not None else _read_trajectory_df(output_dir),
         trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
-        engine=getattr(args, "overlay_engine", "auto"),
-        encoder=getattr(args, "overlay_encoder", "auto"),
+        engine=_overlay_engine_from_args(args, overlay_config),
+        encoder=_overlay_encoder_from_args(args, overlay_config),
     )

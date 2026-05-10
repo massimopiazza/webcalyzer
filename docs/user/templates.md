@@ -20,15 +20,21 @@ Templates are YAML profiles stored under the server templates directory. The **T
 
 Open **Run** or **Calibrate**, then choose **Profile template**. Loading a template copies its values into the form. See [run extraction](run-extraction.md) for run-time use and [calibration](calibration.md) for visual box editing.
 
-The template file is not overwritten just by editing the form. Use **Save as template**, **Save calibration**, or the **Templates** import flow to write YAML.
+The template file is not overwritten just by editing the form. Use **Save as template**, **Save calibration as template**, or the **Templates** import flow to write YAML.
 
 ### Save a template from Run
 
 On **Run**, edit the profile form and click **Save as template**. Choose a relative YAML name such as `blue_origin/my_profile.yaml`.
 
-The server validates the profile before writing it. After the save succeeds, the **Profile template** dropdown refreshes immediately and selects the new template. Field and parsing validation rules are described in [profile configuration](profile-configuration.md).
+The server validates the draft profile structure before writing it. After the save succeeds, the **Profile template** dropdown refreshes immediately and selects the new template. Runnable validation is stricter and is applied before extraction jobs start. Segment and parsing validation rules are described in [profile configuration](profile-configuration.md).
 
-Note: If validation fails, fix the inline form errors and save again. Server validation is the final authority even when the client form appears valid.
+Note: If draft validation fails, fix the inline form errors and save again. Server validation is the final authority even when the client form appears valid.
+
+### Save a template from Calibrate
+
+On **Calibrate**, click **Save calibration as template** after choosing the input video and editing segment boxes. If a template is loaded, the dialog is prefilled with that template name. Saving to that name updates the calibration while keeping the other profile settings currently loaded in the form.
+
+Use a new relative YAML name to create a separate template. If you started from a blank/default calibration profile, that file contains the current calibration plus the default non-calibration settings currently in the form.
 
 ### Import YAML
 
@@ -59,10 +65,10 @@ A template with a **parse error** badge is still listed, but it cannot be loaded
 
 Common causes are:
 
-- missing `fields`
+- missing `segments`
+- overlapping or unsorted segments
 - invalid bounding boxes
-- a `met` field with a stage
-- a velocity or altitude field without a stage
+- a canonical slot with the wrong type or stage
 - a parsing unit reference that does not exist in `units`
 - a timestamp regex that does not compile
 
@@ -77,4 +83,4 @@ After saving or importing a template:
 - reload the template from **Run**
 - open **Preview YAML** and confirm the expected keys are present
 - run a short extraction into a new output directory
-- compare the output `config_resolved.yaml` with the saved template when diagnosing defaults or overrides
+- compare the output `config_resolved.yaml` with the saved template when diagnosing defaults or CLI overrides

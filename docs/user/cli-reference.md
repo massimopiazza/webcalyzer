@@ -10,7 +10,7 @@ The `webcalyzer` command exposes each major processing stage. Use `run` for the 
 |---|---|
 | `serve` | Launch the local FastAPI and React UI. |
 | `sample-frames` | Generate representative review JPEGs and a contact sheet. |
-| `calibrate` | Launch the OpenCV desktop calibration tool. |
+| `calibrate` | Launch the OpenCV desktop calibration tool for segmented frame ranges and field slots. |
 | `extract` | Run OCR extraction and write raw and clean telemetry. |
 | `run` | Run review frame generation, extraction, trajectory reconstruction, plotting, and optional overlay rendering. |
 | `plot` | Generate plots from an existing output directory. |
@@ -75,7 +75,7 @@ webcalyzer sample-frames \
   --count 20
 ```
 
-Review frames include field bounding-box overlays. Use them to confirm [calibration](calibration.md) before running expensive OCR.
+Review frames include the active segment label and field bounding-box overlays. Use them to confirm [calibration](calibration.md) before running expensive OCR.
 
 ### Extract without overlay rendering
 
@@ -90,7 +90,9 @@ webcalyzer extract \
   --ocr-workers auto
 ```
 
-Use `--ocr-skip-detection` only after boxes are stable. It can speed up crop-based OCR, but it reduces detection fallback behavior.
+When OCR flags are omitted, the CLI uses `ocr_backend`, `ocr_recognition_level`, `default_ocr_workers`, and `skip_full_frame_ocr_fallback` from the profile. A worker value of `0` keeps automatic worker selection.
+
+Use `--ocr-skip-detection` when the full-frame OCR fallback is pulling in unrelated values from elsewhere in the image. It keeps recognition inside calibrated field crops only.
 
 ## Downstream Commands
 

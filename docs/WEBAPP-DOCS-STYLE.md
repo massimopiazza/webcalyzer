@@ -87,7 +87,7 @@ Avoid long flat pages made of many unrelated H2 headings. Use H2 headings as bro
 
 Good patterns:
 
-- `## Run Setup` with `### Load a template`, `### Select input and output paths`, and `### Set run overrides`
+- `## Run Setup` with `### Load a template`, `### Select input and output paths`, and `### Configure runtime settings`
 - `## Signal Conditioning` with `### Clean raw telemetry`, `### Precondition trajectory inputs`, and `### Interpolate sparse measurements`
 - `## Job Execution` with `### Job lifecycle`, `### Event stream`, and `### Logging capture`
 
@@ -125,8 +125,8 @@ Feature pages that describe an entity with named fields use a `### Anatomy of a 
 | Field | Description |
 |---|---|
 | **Profile name** (`profile_name`) | Identifier shown in the UI and stored in run metadata. |
-| **Default sample fps** (`default_sample_fps`) | Sampling cadence used by OCR when no run override is set. |
-| **Fields** (`fields`) | Named video regions mapped to telemetry measurements. |
+| **Sample fps** (`default_sample_fps`) | Sampling cadence used by OCR. |
+| **Segments** (`segments`) | Frame ranges with segment-specific telemetry box slots. |
 ```
 
 Rules for this table:
@@ -141,7 +141,7 @@ Rules for this table:
 
 - **Bold** for all interactive UI elements: button labels, tabs, panels, menu items, toggle labels, and dialog titles
 - `backticks` for identifiers, file paths, enum values, commands, YAML keys, function names, and literal tokens
-- Use both together when a UI element has a corresponding technical identifier: **Default sample fps** (`default_sample_fps`)
+- Use both together when a UI element has a corresponding technical identifier: **Sample fps** (`default_sample_fps`)
 - User docs should avoid source file references unless the user is explicitly editing files
 - Internal docs may use source paths and function names freely
 

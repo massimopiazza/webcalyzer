@@ -93,6 +93,7 @@ def rebuild_clean_from_raw(
             {
                 "frame_index": row["frame_index"],
                 "sample_time_s": row["sample_time_s"],
+                "segment_id": row.get("segment_id"),
                 "mission_elapsed_time_s": mission_elapsed_time_s,
                 "stage1_velocity_mps": parsed["stage1_velocity"],
                 "stage1_altitude_m": parsed["stage1_altitude"],
@@ -353,6 +354,7 @@ def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "frame_index",
         "sample_time_s",
+        "segment_id",
         "mission_elapsed_time_s",
         "stage1_velocity_mps",
         "stage1_altitude_m",

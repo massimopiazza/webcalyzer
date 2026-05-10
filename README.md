@@ -6,9 +6,9 @@ frame, sanitizing the text, and producing CSVs, plots, and a video copy with
 a synchronized telemetry plot.
 
 The repository was originally tuned for Blue Origin New Glenn-style overlays and was
-validated against it, but the calibration profile is
-generic: any printed-digit telemetry overlay with stable bounding boxes can
-be supported by writing a new YAML profile.
+validated against it, but the calibration profile is generic: any printed-digit
+telemetry overlay with segment-specific bounding boxes can be supported by
+writing a new YAML profile.
 
 ## High-level pipeline
 
@@ -20,8 +20,8 @@ be supported by writing a new YAML profile.
                                        │
                                        ▼
                             ┌─────────────────────────┐
-   2. calibrate        ───▶ │ YAML profile with field │
-                            │ bounding boxes          │
+   2. calibrate        ───▶ │ YAML profile with       │
+                            │ segments + boxes       │
                             └─────────────────────────┘
                                        │
                                        ▼
@@ -116,9 +116,11 @@ Then open <http://localhost:8765>. The UI exposes four pages:
   the top of the run page. Primary outputs are linked when the job finishes;
   review-frame files stay on disk but are not listed in the console output
   links.
-- **Calibrate**: sample fixture frames from a video and draw / resize
-  bounding boxes for each field directly on the frame, saving back to the
-  YAML profile.
+- **Calibrate**: scrub through video frames, split the video into
+  calibration segments, enable the canonical telemetry slots for each
+  segment, and draw bounding boxes directly on the frame. Save calibration
+  as a template to write the current calibration plus the profile settings
+  currently loaded in the form.
 - **Templates**: list, import (paste YAML), download, and delete templates
   in `--templates-dir`.
 - **Documentation**: read the bundled user guide and internal reference
@@ -155,10 +157,10 @@ section lists independently from page-title navigation.
 | `--video` | path | yes | - | any video file readable by OpenCV/AVFoundation | The source video. |
 | `--config` | path | yes (`extract`/`run`); optional (`rescue`) | - | path to a YAML profile | Loaded via `webcalyzer.config.load_profile`. |
 | `--output` | path | yes | - | any directory path | Created if missing; CSVs and metadata are written here. |
-| `--ocr-backend` | choice | no | `auto` | `auto`, `rapidocr`, `vision` | `auto` selects Vision on macOS when pyobjc-Vision is importable, RapidOCR otherwise. Forcing `vision` on a non-macOS host raises a clear error. |
-| `--ocr-recognition-level` | choice | no | `accurate` | `accurate`, `fast` | Vision-only. Ignored when the resolved backend is RapidOCR. |
-| `--ocr-workers` | int or `auto` | no (`extract`/`run` only) | `auto` | positive integer or `auto` | `auto` resolves to `max(1, physical_cores - 1)` for RapidOCR and `1` for Vision. |
-| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | off | - | Opt-in. Bypasses detection and runs recognition only on each calibrated field crop. |
+| `--ocr-backend` | choice | no | profile `ocr_backend`, else `auto` | `auto`, `rapidocr`, `vision` | `auto` selects Vision on macOS when pyobjc-Vision is importable, RapidOCR otherwise. Forcing `vision` on a non-macOS host raises a clear error. |
+| `--ocr-recognition-level` | choice | no | profile `ocr_recognition_level`, else `accurate` | `accurate`, `fast` | Vision-only. Ignored when the resolved backend is RapidOCR. |
+| `--ocr-workers` | int or `auto` | no (`extract`/`run` only) | profile `default_ocr_workers`, else `auto` | positive integer or `auto` | `auto` resolves to `max(1, physical_cores - 1)` for RapidOCR and `1` for Vision. |
+| `--ocr-skip-detection` | flag | no (`extract`/`run` only) | profile `skip_full_frame_ocr_fallback`, else off | - | Skips the full-frame OCR fallback and runs recognition only on calibrated field crops. |
 
 ### Subcommand-specific arguments
 
@@ -171,15 +173,15 @@ section lists independently from page-title navigation.
 | `calibrate` | `--video` | path | yes | - | - | |
 |             | `--config` | path | yes | - | - | Loaded as the starting point; saved into `--output`. |
 |             | `--output` | path | yes | - | - | Destination YAML for the edited profile. |
-| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (0.5 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
+| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (4.0 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
 |           | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Used when extraction writes trajectory outputs. |
 |           | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Used when extraction writes trajectory outputs. |
 |           | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Savitzky-Golay window length for acceleration output. |
 | `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
 |       | `--skip-video-overlay` | flag | no | overlay enabled | - | Skip the post-extract overlay render. |
 |       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
-|       | `--overlay-engine` | choice | no | `auto` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
-|       | `--overlay-encoder` | choice | no | `auto` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_*` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
+|       | `--overlay-engine` | choice | no | profile's `video_overlay.engine` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
+|       | `--overlay-encoder` | choice | no | profile's `video_overlay.encoder` | `auto`, `videotoolbox`, `nvenc`, `qsv`, `vaapi`, `libx264` (each also accepts the `h264_*` long form) | `auto` walks the hardware-encoder priority and falls through to `libx264`. Ignored when the resolved engine is `opencv`. |
 |       | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Override trajectory interpolation for this run. |
 |       | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Override trajectory integration for this run. |
 |       | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Override Savitzky-Golay window length for this run. |
@@ -283,16 +285,18 @@ The OCR step itself is split into two phases:
   offset filter, stage activation, plausibility scoring against the
   previous parsed value, and `choose_best_measurement`.
 
-`--ocr-skip-detection` (opt-in, off by default) is an alternative
-Phase A path that bypasses text detection entirely. It uses the
+The `skip_full_frame_ocr_fallback` profile setting and
+`--ocr-skip-detection` CLI flag enable an alternative Phase A path that
+bypasses full-frame recovery OCR. It uses the
 calibrated field boxes directly and runs recognition only on each
 crop, in a single batched call (RapidOCR) or a per-crop call (Vision).
 It is the fastest option on RapidOCR; on Vision it is roughly the
 same speed as the default path because Vision still detects internally
 on each crop.
 
-Per-run choices (backend, worker count, skip-detection) are recorded in
-`run_metadata.json` so result directories are self-describing.
+Resolved choices (backend, worker count, skip fallback, and recognition
+level) are recorded in `run_metadata.json` so result directories are
+self-describing.
 
 ## Subcommands
 
@@ -313,11 +317,13 @@ webcalyzer sample-frames \
   --output outputs/ng3/review
 ```
 
-### `calibrate`: interactive bounding-box editor
+### `calibrate`: interactive segmented bounding-box editor
 
-Opens an OpenCV window with the representative frames. Mouse-drag to
-draw a box, press a number key to switch field, `n`/`p` to flip pages,
-`s` to save, `q` to quit.
+Opens an OpenCV window on the source video. Mouse-drag to draw a box for
+the active canonical slot. The profile can be split into multiple
+non-overlapping frame ranges, each with its own enabled slots and boxes.
+Frame indices are authoritative; shown timestamps are derived from the
+calibration video FPS.
 
 ```bash
 webcalyzer calibrate \
@@ -328,12 +334,19 @@ webcalyzer calibrate \
 
 | Key | Action |
 |-----|--------|
-| `1`-`5` | Select field (stage1_velocity, stage1_altitude, met, stage2_velocity, stage2_altitude) |
-| `n` / `p` | Next / previous representative frame |
-| `c` | Clear the selected field's box |
-| `s` | Save the YAML profile |
+| `1`-`5` | Select canonical slot (`met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, `stage2_altitude`) |
+| `e` | Enable or disable the selected slot in the active segment |
+| `[` / `]` | Previous / next source frame |
+| `n` / `p` | Jump forward / backward by roughly one second |
+| `a` | Split at the current frame. The split frame becomes the first frame of the next segment. |
+| `b` | Set crop start to the current frame |
+| `v` | Set crop end to the frame after the current frame |
+| `t` | Prompt for a timestamp in seconds and jump there |
+| `Tab` | Jump to the next segment start |
+| `c` | Clear the selected slot's box |
+| `s` | Save the YAML profile draft |
 | `q` | Quit |
-| Mouse drag | Draw a new bounding box for the selected field |
+| Mouse drag | Draw a new bounding box for the selected enabled slot |
 
 ### `extract`:  OCR + sanitize, no plots/overlay
 
@@ -445,7 +458,7 @@ directory:
 
 | File | Purpose |
 |------|---------|
-| `telemetry_raw.csv` | One row per sampled frame, all fields, with raw OCR text, parse status, raw value, raw unit, SI value, OCR variant. Append-only source of truth. |
+| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical field raw OCR text, parse status, raw value, raw unit, SI value, and OCR variant. Append-only source of truth. |
 | `telemetry_clean.csv` | Same rows in SI units (m/s, m, s) with plausibility filtering, stage activation, and appended trajectory columns applied. |
 | `trajectory.csv` | Dense fixed-step trajectory reconstruction. Interpolated velocity/altitude live here only; the original telemetry columns keep their gaps. |
 | `telemetry_rejected.csv` | Outliers removed by `reject-outliers`. Initially empty; populated by the outlier rejection step. |
@@ -463,13 +476,26 @@ directory:
 profile_name: blue_origin_new_glenn
 description: Default New Glenn telemetry profile derived from BlueOrigin_NG-3.mp4.
 
-default_sample_fps: 0.5         # default cadence used by extract/run
+default_sample_fps: 4.0         # default cadence used by extract/run
+default_ocr_workers: 0          # default OCR workers; 0 means auto
+ocr_backend: auto               # auto, rapidocr, or vision
+ocr_recognition_level: accurate # accurate or fast for Apple Vision
+skip_full_frame_ocr_fallback: false
 fixture_frame_count: 20         # representative frame count for sample-frames/calibrate
 fixture_time_range_s: [0, 840]  # MET window (in seconds) to draw fixtures from
+
+calibration_video:
+  path: BlueOrigin_NG-3.mp4      # optional reference video used during calibration
+  fps: 59.93963768862189
+  frame_count: 53179
+  width: 1920
+  height: 1080
 
 video_overlay:
   enabled: true
   plot_mode: filtered           # 'filtered' or 'with_rejected'
+  engine: auto                  # auto, ffmpeg, or opencv
+  encoder: auto                 # auto or a supported ffmpeg H.264 encoder
   width_fraction: 0.5           # overlay panel width as fraction of frame width
   height_fraction: 0.65
   output_filename: telemetry_overlay.mp4
@@ -528,16 +554,35 @@ hardcoded_raw_data_points:       # optional synthetic raw points keyed by MET
       velocity_mps: 0.0
       altitude_m: 0.0
 
-fields:
-  stage1_velocity:              # one entry per field
-    kind: velocity              # one of: velocity, altitude, met
-    stage: stage1               # one of: stage1, stage2, null (for met)
-    bbox_x1y1x2y2: [0.123, 0.903, 0.233, 0.957]  # normalized [x0, y0, x1, y1]
-  stage1_altitude: { ... }
-  met:               { kind: met, stage: null, bbox_x1y1x2y2: [ ... ] }
-  stage2_velocity:   { ... }
-  stage2_altitude:   { ... }
+segments:
+  - id: segment_1
+    start_frame_index: 0        # inclusive
+    start_time_s: 0.0           # derived from frame index and calibration FPS
+    end_frame_index: 50349      # exclusive
+    end_time_s: 840.0
+    fields:
+      met:
+        kind: met
+        stage: null
+        bbox_x1y1x2y2: [0.415, 0.886, 0.596, 0.975]
+      stage1_velocity:
+        kind: velocity
+        stage: stage1
+        bbox_x1y1x2y2: [0.123, 0.903, 0.233, 0.957]
+      stage1_altitude: { ... }
+      stage2_velocity: { ... }
+      stage2_altitude: { ... }
 ```
+
+`segments` is the canonical calibration surface. Segment ranges must be
+ordered and non-overlapping, and runnable profiles must make them
+contiguous. `end_frame_index` is exclusive, so a split at frame `N`
+means the previous segment processes frames `< N` and the next segment
+starts at `N`. Each segment uses the five canonical slot names shown
+above. Disabled slots are omitted from YAML; during extraction their raw
+parse status is `not_configured`. Every runnable segment must define
+`met` with a valid normalized bbox. Draft templates may be saved before
+that is true.
 
 `hardcoded_raw_data_points` are merged into `telemetry_raw.csv` before clean
 telemetry is built. A point with a new `mission_elapsed_time_s` inserts a

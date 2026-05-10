@@ -8,7 +8,7 @@ import pandas as pd
 from webcalyzer.models import HardcodedRawDataPoint
 
 
-BASE_COLUMNS = ["frame_index", "sample_time_s", "mission_elapsed_time_s"]
+BASE_COLUMNS = ["frame_index", "sample_time_s", "segment_id", "mission_elapsed_time_s"]
 TELEMETRY_FIELDS = {
     "stage1_velocity": ("velocity", "m/s"),
     "stage1_altitude": ("altitude", "m"),
@@ -72,6 +72,7 @@ def _find_existing_row_index(df: pd.DataFrame, mission_elapsed_time_s: float) ->
 def _empty_raw_row(df: pd.DataFrame, mission_elapsed_time_s: float) -> dict[str, object]:
     row = {column: np.nan for column in df.columns}
     row["mission_elapsed_time_s"] = mission_elapsed_time_s
+    row["segment_id"] = pd.NA
     row["sample_time_s"] = _interpolate_column_for_met(
         df=df,
         column="sample_time_s",

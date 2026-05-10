@@ -39,9 +39,9 @@ flowchart TD
 
 ### Frame sampling
 
-`generate_review_frames(...)` uses `evenly_spaced_indices(...)` to select fixture frames from either the full video or `fixture_time_range_s`. It draws profile boxes onto the frames and writes a contact sheet.
+`generate_review_frames(...)` uses `evenly_spaced_indices(...)` to select fixture frames from either the full video or `fixture_time_range_s`. It resolves the active calibration segment for each frame, draws that segment's boxes, labels the segment, and writes a contact sheet.
 
-`build_sample_indices(...)` selects OCR frames at the effective sample rate. The effective rate is the CLI or web override when present, otherwise `ProfileConfig.default_sample_fps`.
+`build_sample_indices(...)` selects OCR frames at the effective sample rate inside the configured segment crop range. The effective rate is the CLI `--sample-fps` override when present, otherwise `ProfileConfig.default_sample_fps`.
 
 The corresponding source frame index is chosen from the video time grid. This keeps OCR cadence independent from the source frame rate. The user-facing interpretation of sampling cadence is documented in [trajectory reconstruction](../user/trajectory-reconstruction.md#use-mission-elapsed-time-as-the-clock).
 
@@ -62,17 +62,17 @@ The corresponding source frame index is chosen from the video time grid. This ke
 
 ### OCR Phase A
 
-Phase A is stateless and parallelizable. It receives frame indices, opens video captures, OCRs each sampled frame, and returns `FrameRawOCR` results.
+Phase A is stateless and parallelizable. It receives frame indices, resolves the active segment for each frame, opens video captures, OCRs each sampled frame, and returns `FrameRawOCR` results with `segment_id`.
 
 Default detection mode:
 
 ```mermaid
 flowchart TD
   frame["Sampled frame"]
-  union["Union crop<br/>all configured field boxes"]
+  union["Union crop<br/>active segment boxes"]
   variants["OCR strip variants"]
   detections["Candidate text boxes"]
-  assign["Assign detections<br/>to calibrated fields"]
+  assign["Assign detections<br/>to active segment fields"]
   quality{"Field candidate found?"}
   fallback["Fallback OCR<br/>individual field crop"]
   result["FrameRawOCR result"]
@@ -87,7 +87,7 @@ Skip-detection mode:
 ```mermaid
 flowchart TD
   frame["Sampled frame"]
-  crops["Configured field crops"]
+  crops["Active segment field crops"]
   variants["OCR crop variants"]
   result["FrameRawOCR result"]
 
@@ -158,7 +158,7 @@ The renderer path is:
 
 ```mermaid
 flowchart TD
-  settings["Profile and run overrides"]
+  settings["Profile and CLI overrides"]
   engine{"Overlay engine"}
   ffmpegAvailable{"ffmpeg available?"}
   ffmpeg["ffmpeg renderer<br/>overlay_ffmpeg.py"]

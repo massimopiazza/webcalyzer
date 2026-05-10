@@ -23,20 +23,26 @@ Every user-settable field must exist in all layers. Missing one layer creates a 
 | `profile_name` | `str` | Validated with `[A-Za-z0-9._\- ]+`. |
 | `description` | `str` | Free text. |
 | `default_sample_fps` | `float` | Must be greater than `0` and at most `240`. |
+| `default_ocr_workers` | `int` | Must be at least `0`; `0` means automatic worker selection. |
+| `ocr_backend` | `str` | `auto`, `rapidocr`, or `vision`. |
+| `ocr_recognition_level` | `str` | `accurate` or `fast`. |
+| `skip_full_frame_ocr_fallback` | `bool` | Disables the full-frame OCR recovery pass when true. |
 | `fixture_frame_count` | `int` | Must be from `1` to `2000`. |
 | `fixture_time_range_s` | `tuple[float, float]` or `None` | Optional `[start, end]`, non-negative, `end > start`. |
+| `calibration_video` | `CalibrationVideoConfig` | Optional reference video metadata from calibration. Frame indices are authoritative. |
 | `video_overlay` | `VideoOverlayConfig` | Overlay rendering settings. |
 | `trajectory` | `TrajectoryConfig` | Dense reconstruction settings. |
 | `parsing` | `ParsingProfile` or `None` | `None` means use bundled defaults. |
 | `hardcoded_raw_data_points` | `list[HardcodedRawDataPoint]` | Trusted telemetry values injected into raw data. |
-| `fields` | `dict[str, FieldConfig]` | At least one field required. |
+| `segments` | `list[CalibrationSegmentConfig]` | Ordered calibration ranges with segment-specific canonical fields. |
 
 ### Nested profile groups
 
 | Group | Required shape | Notes |
 |---|---|---|
-| `fields.*` | `kind`, `stage`, `bbox_x1y1x2y2` | UI labels `kind` as **Type**. `stage` must be `null` only for `met`. |
-| `video_overlay` | `enabled`, `plot_mode`, `width_fraction`, `height_fraction`, `output_filename`, `include_audio` | Fractions are constrained to the visible frame and filename cannot contain path separators. |
+| `segments.*` | `id`, `start_frame_index`, `start_time_s`, `end_frame_index`, `end_time_s`, `fields` | `end_frame_index` is exclusive. Runnable profiles require contiguous ranges. |
+| `segments.*.fields.*` | canonical `kind`, `stage`, `bbox_x1y1x2y2` | Slot names are fixed: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, `stage2_altitude`. |
+| `video_overlay` | `enabled`, `plot_mode`, `engine`, `encoder`, `width_fraction`, `height_fraction`, `output_filename`, `include_audio` | Fractions are constrained to the visible frame and filename cannot contain path separators. |
 | `trajectory` | interpolation, integration, smoothing, derivative, and `launch_site` settings | Launch-site values are optional but ranges are enforced when present. |
 | `parsing.velocity` | unit definitions and inference settings | Unit references must point to declared unit names. |
 | `parsing.altitude` | unit definitions and inference settings | SI conversion target is meters. |
@@ -88,7 +94,8 @@ Keep these defaults aligned:
 
 | Current field | Accepted alias or compatibility behavior |
 |---|---|
-| `fields.*.bbox_x1y1x2y2` | `fields.*.box` |
+| `segments.*.fields.*.bbox_x1y1x2y2` | `segments.*.fields.*.box` |
+| `segments` | Legacy top-level `fields` is loaded into `segment_1` when present. New saves always write `segments`. |
 | `fixture_time_range_s` | Mapping with `start` and `end`, mapping with `lower` and `upper`, or legacy `fixture_reference_times_s` min and max. |
 | `hardcoded_raw_data_points` | `hardcoded_raw_points` |
 | `mission_elapsed_time_s` | `met_s` or `timestamp_s` inside a hardcoded point. |
@@ -103,8 +110,9 @@ Server validation is final. Client validation exists for inline UX and should mi
 
 - numeric ranges for sampling, fixture counts, overlay fractions, launch site, smoothing, and derivative parameters
 - regex compilation for MET timestamp patterns
-- bounding box range and ordering
-- stage/type consistency for fields
+- bounding box range and ordering when a slot has a bbox
+- canonical slot names and stage/type consistency inside segments
+- draft versus runnable validation: templates can save incomplete segments, jobs require contiguous segments and a valid `met` bbox in every segment
 - valid enum values for interpolation, integration, smoothing mode, overlay plot mode, and field type
 - unit references for default and inferred units
 - at least one telemetry value in every hardcoded raw data point
@@ -140,6 +148,7 @@ Then check:
 - `GET /api/meta`
 - `GET /api/templates`
 - `GET /api/templates/<existing>`
-- `POST /api/profile/validate`
+- `POST /api/profile/validate-draft`
+- `POST /api/profile/validate-runnable`
 - `POST /api/profile/preview-yaml`
 - `webcalyzer run --video <video> --config <profile> --output <dir>` starts from the same profile shape

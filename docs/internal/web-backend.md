@@ -52,7 +52,7 @@ Do not bypass these helpers in new endpoints.
 
 `GET /api/templates/{name}` loads YAML into `ProfileConfig`, converts it to `ProfileModel`, and returns JSON.
 
-`PUT /api/templates/{name}` validates posted JSON with `ProfileModel.model_validate(...)`, converts to `ProfileConfig`, and saves YAML with `save_profile(...)`.
+`PUT /api/templates/{name}` validates posted JSON as a draft profile with `ProfileModel.model_validate(...)`, converts to `ProfileConfig`, and saves YAML with `save_profile(...)`.
 
 `POST /api/templates/import` accepts raw YAML text, writes it only after path validation, validates that `load_profile(...)` succeeds, and removes the file if parsing fails.
 
@@ -60,9 +60,13 @@ Note: The frontend refreshes template pickers after a save. Backend template end
 
 ### Profile validation
 
-`POST /api/profile/validate` validates JSON and returns normalized JSON.
+`POST /api/profile/validate-draft` validates JSON and returns normalized JSON. Draft validation is used for template and calibration saves.
 
-`POST /api/profile/preview-yaml` validates JSON, converts it through `serialize_for_yaml(...)`, and returns YAML text.
+`POST /api/profile/validate-runnable` applies draft validation plus run-readiness checks such as contiguous segments and a valid `met` box in every segment. Job submission uses this stricter path.
+
+`POST /api/profile/validate` is retained as a draft-validation alias.
+
+`POST /api/profile/preview-yaml` validates draft JSON, converts it through `serialize_for_yaml(...)`, and returns YAML text.
 
 Validation errors are cleaned by `_format_validation_error(...)` so FastAPI responses contain JSON-serializable details instead of raw Pydantic exception context.
 
@@ -70,7 +74,7 @@ Validation errors are cleaned by `_format_validation_error(...)` so FastAPI resp
 
 ### Job lifecycle
 
-`POST /api/jobs/run` validates paths and profile JSON, builds `JobOptions`, and submits the job to `JobManager`. The phase order is documented in [pipeline.md](pipeline.md#full-run-phases).
+`POST /api/jobs/run` validates paths and runnable profile JSON, builds `JobOptions`, and submits the job to `JobManager`. The phase order is documented in [pipeline.md](pipeline.md#full-run-phases).
 
 `JobManager` enforces one active job:
 
@@ -98,7 +102,7 @@ flowchart TD
   phases -->|exception| error --> sse
 ```
 
-Cancellation is cooperative. Long phases should call `_check_cancel(job)` at phase boundaries or at safe checkpoints.
+Cancellation is cooperative at phase boundaries and safe checkpoints. Cancellable OCR extraction polls while worker chunks are pending and terminates the multiprocessing pool instead of waiting for queued OCR results to finish, including when the web runner uses a single OCR worker.
 
 ### Event stream
 

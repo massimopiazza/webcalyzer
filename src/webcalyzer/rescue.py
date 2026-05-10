@@ -42,6 +42,7 @@ OFFSET_SCHEDULE: list[tuple[str, list[int]]] = [
 class RescueTarget:
     row_index: int
     frame_index: int
+    segment_id: str | None
     mission_elapsed_time_s: float | None
     field_name: str
     kind: str
@@ -51,6 +52,8 @@ def _collect_targets(raw_df: pd.DataFrame) -> list[RescueTarget]:
     targets: list[RescueTarget] = []
     for row_index, row in raw_df.iterrows():
         frame_index = int(row["frame_index"])
+        segment_raw = row.get("segment_id")
+        segment_id = str(segment_raw) if pd.notna(segment_raw) else None
         met = row.get("mission_elapsed_time_s")
         met_val = float(met) if pd.notna(met) else None
         for field_name, kind in MEASUREMENT_FIELDS:
@@ -60,6 +63,7 @@ def _collect_targets(raw_df: pd.DataFrame) -> list[RescueTarget]:
                     RescueTarget(
                         row_index=row_index,
                         frame_index=frame_index,
+                        segment_id=segment_id,
                         mission_elapsed_time_s=met_val,
                         field_name=field_name,
                         kind=kind,
@@ -71,6 +75,7 @@ def _collect_targets(raw_df: pd.DataFrame) -> list[RescueTarget]:
                 RescueTarget(
                     row_index=row_index,
                     frame_index=frame_index,
+                    segment_id=segment_id,
                     mission_elapsed_time_s=met_val,
                     field_name="met",
                     kind="met",
@@ -210,7 +215,6 @@ def rescue_raw_dataframe(
 
     capture = open_capture(video_path)
     frame_count = int(round(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
-    strip_box = _build_strip_union_box(profile)
 
     try:
         targets = _collect_targets(raw_df)
@@ -225,6 +229,14 @@ def rescue_raw_dataframe(
         for processed, row_index in enumerate(ordered_rows, start=1):
             row_targets = grouped[row_index]
             primary_frame_index = int(raw_df.iloc[row_index]["frame_index"])
+            segment = profile.segment_by_id(row_targets[0].segment_id)
+            if segment is None:
+                segment = profile.active_segment_for_frame(primary_frame_index)
+            if segment is None:
+                continue
+            strip_box = _build_strip_union_box(segment.fields)
+            if strip_box is None:
+                continue
             current_met = raw_df.iloc[row_index]["mission_elapsed_time_s"]
             current_met_val = float(current_met) if pd.notna(current_met) else None
 
@@ -291,7 +303,10 @@ def rescue_raw_dataframe(
                         if field_name in field_absent_at_primary:
                             continue
                         target = remaining[field_name]
-                        field_cfg = profile.fields[field_name]
+                        field_cfg = segment.fields.get(field_name)
+                        if field_cfg is None or field_cfg.box is None:
+                            del remaining[field_name]
+                            continue
                         cache_key = (frame_idx, field_name, tier)
                         if cache_key in candidates_cache:
                             candidates = candidates_cache[cache_key]

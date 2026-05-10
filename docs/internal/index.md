@@ -20,7 +20,7 @@ Note: The YAML profile shape is the cross-surface contract. If a configuration f
 
 **ProfileConfig.** Canonical Python dataclass representation of a run profile. Pipeline code reads this structure directly.
 
-**ProfileModel.** Pydantic v2 validation mirror used by the web backend. API write and run endpoints validate posted JSON through this model.
+**ProfileModel.** Pydantic v2 validation mirror used by the web backend. Template writes use draft validation; run endpoints add runnable validation.
 
 **Profile DTO.** TypeScript mirror of `ProfileModel` used by the web frontend. Zod performs inline validation before the server validates again.
 

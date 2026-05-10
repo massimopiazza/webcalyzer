@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from webcalyzer.config import default_parsing_profile
 from webcalyzer.models import (
     Box,
+    CalibrationSegmentConfig,
+    CalibrationVideoConfig,
+    CANONICAL_FIELD_DEFINITIONS,
+    CANONICAL_FIELD_ORDER,
     FieldConfig,
     FieldKindParsing,
     HardcodedRawDataPoint,
@@ -24,6 +28,21 @@ from webcalyzer.trajectory import INTEGRATION_METHODS, INTERPOLATION_METHODS
 InterpolationMethod = Literal["linear", "pchip", "akima", "cubic"]
 IntegrationMethod = Literal["euler", "midpoint", "trapezoid", "rk4", "simpson"]
 PlotMode = Literal["filtered", "with_rejected"]
+OcrBackend = Literal["auto", "rapidocr", "vision"]
+OcrRecognitionLevel = Literal["accurate", "fast"]
+OverlayEngine = Literal["auto", "ffmpeg", "opencv"]
+OverlayEncoder = Literal[
+    "auto",
+    "videotoolbox",
+    "h264_videotoolbox",
+    "nvenc",
+    "h264_nvenc",
+    "qsv",
+    "h264_qsv",
+    "vaapi",
+    "h264_vaapi",
+    "libx264",
+]
 DerivativeSmoothingMode = Literal["interp", "nearest", "mirror", "constant", "wrap"]
 FieldKind = Literal["velocity", "altitude", "met"]
 FieldStage = Literal["stage1", "stage2"]
@@ -36,6 +55,8 @@ class StrictModel(BaseModel):
 class VideoOverlayModel(StrictModel):
     enabled: bool = True
     plot_mode: PlotMode = "filtered"
+    engine: OverlayEngine = "auto"
+    encoder: OverlayEncoder = "auto"
     width_fraction: float = Field(0.5, ge=0.05, le=1.0)
     height_fraction: float = Field(0.55, ge=0.05, le=1.0)
     output_filename: str = Field("telemetry_overlay.mp4", min_length=1, max_length=255)
@@ -75,13 +96,15 @@ class TrajectoryModel(StrictModel):
 class FieldModel(StrictModel):
     kind: FieldKind
     stage: FieldStage | None = None
-    bbox_x1y1x2y2: tuple[float, float, float, float]
+    bbox_x1y1x2y2: tuple[float, float, float, float] | None = None
 
     @field_validator("bbox_x1y1x2y2")
     @classmethod
     def _validate_bbox(
-        cls, value: tuple[float, float, float, float]
-    ) -> tuple[float, float, float, float]:
+        cls, value: tuple[float, float, float, float] | None
+    ) -> tuple[float, float, float, float] | None:
+        if value is None:
+            return value
         x0, y0, x1, y1 = value
         for component in value:
             if not 0.0 <= component <= 1.0:
@@ -98,6 +121,37 @@ class FieldModel(StrictModel):
         else:
             if self.stage is None:
                 raise ValueError(f"{self.kind} fields must declare a stage")
+        return self
+
+
+class CalibrationVideoModel(StrictModel):
+    path: str | None = None
+    fps: float | None = Field(None, gt=0.0)
+    frame_count: int | None = Field(None, ge=0)
+    width: int | None = Field(None, ge=0)
+    height: int | None = Field(None, ge=0)
+
+
+class SegmentModel(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    start_frame_index: int = Field(ge=0)
+    start_time_s: float = Field(ge=0.0)
+    end_frame_index: int = Field(ge=0)
+    end_time_s: float = Field(ge=0.0)
+    fields: dict[str, FieldModel] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _segment_consistency(self) -> "SegmentModel":
+        if self.end_frame_index < self.start_frame_index:
+            raise ValueError("end_frame_index must be greater than or equal to start_frame_index")
+        for name, field_model in self.fields.items():
+            if name not in CANONICAL_FIELD_DEFINITIONS:
+                raise ValueError(f"Unsupported canonical field {name!r}")
+            expected_kind, expected_stage = CANONICAL_FIELD_DEFINITIONS[name]
+            if field_model.kind != expected_kind or field_model.stage != expected_stage:
+                raise ValueError(
+                    f"{name} must use kind={expected_kind!r} and stage={expected_stage!r}"
+                )
         return self
 
 
@@ -217,13 +271,18 @@ class ProfileModel(StrictModel):
     profile_name: str = Field(min_length=1, max_length=128)
     description: str = ""
     default_sample_fps: float = Field(3.0, gt=0.0, le=240.0)
+    default_ocr_workers: int = Field(0, ge=0)
+    ocr_backend: OcrBackend = "auto"
+    ocr_recognition_level: OcrRecognitionLevel = "accurate"
+    skip_full_frame_ocr_fallback: bool = False
     fixture_frame_count: int = Field(20, ge=1, le=2000)
     fixture_time_range_s: tuple[float, float] | None = None
+    calibration_video: CalibrationVideoModel = Field(default_factory=CalibrationVideoModel)
     video_overlay: VideoOverlayModel = Field(default_factory=VideoOverlayModel)
     trajectory: TrajectoryModel = Field(default_factory=TrajectoryModel)
     parsing: ParsingModel | None = None
     hardcoded_raw_data_points: list[HardcodedRawPointModel] = Field(default_factory=list)
-    fields: dict[str, FieldModel] = Field(min_length=1)
+    segments: list[SegmentModel] = Field(min_length=1)
 
     @field_validator("profile_name")
     @classmethod
@@ -249,9 +308,12 @@ class ProfileModel(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def _at_least_one_field(self) -> "ProfileModel":
-        if not self.fields:
-            raise ValueError("at least one field must be defined")
+    def _segments_are_ordered(self) -> "ProfileModel":
+        previous_end: int | None = None
+        for segment in self.segments:
+            if previous_end is not None and segment.start_frame_index < previous_end:
+                raise ValueError("segments must be sorted and non-overlapping")
+            previous_end = segment.end_frame_index
         return self
 
 
@@ -265,7 +327,7 @@ def _field_dataclass_to_model(name: str, field: FieldConfig) -> FieldModel:
     return FieldModel(
         kind=field.kind,  # type: ignore[arg-type]
         stage=field.stage,  # type: ignore[arg-type]
-        bbox_x1y1x2y2=(box.x0, box.y0, box.x1, box.y1),
+        bbox_x1y1x2y2=(box.x0, box.y0, box.x1, box.y1) if box is not None else None,
     )
 
 
@@ -292,17 +354,33 @@ def profile_dataclass_to_model(profile: ProfileConfig) -> ProfileModel:
             met=MetParsingModel(timestamp_patterns=list(profile.parsing.met.timestamp_patterns)),
             custom_words=list(profile.parsing.custom_words),
         )
-    fields = {
-        name: _field_dataclass_to_model(name, field) for name, field in profile.fields.items()
-    }
+    segments = [
+        SegmentModel(
+            id=segment.id,
+            start_frame_index=segment.start_frame_index,
+            start_time_s=segment.start_time_s,
+            end_frame_index=segment.end_frame_index,
+            end_time_s=segment.end_time_s,
+            fields={
+                name: _field_dataclass_to_model(name, segment.fields[name])
+                for name in segment.ordered_field_names()
+            },
+        )
+        for segment in profile.segments
+    ]
     return ProfileModel(
         profile_name=profile.profile_name,
         description=profile.description or "",
         default_sample_fps=profile.default_sample_fps,
+        default_ocr_workers=profile.default_ocr_workers,
+        ocr_backend=profile.ocr_backend,  # type: ignore[arg-type]
+        ocr_recognition_level=profile.ocr_recognition_level,  # type: ignore[arg-type]
+        skip_full_frame_ocr_fallback=profile.skip_full_frame_ocr_fallback,
         fixture_frame_count=profile.fixture_frame_count,
         fixture_time_range_s=tuple(profile.fixture_time_range_s)
         if profile.fixture_time_range_s is not None
         else None,
+        calibration_video=CalibrationVideoModel(**profile.calibration_video.to_dict()),
         video_overlay=VideoOverlayModel(**profile.video_overlay.to_dict()),
         trajectory=TrajectoryModel(
             **{
@@ -327,7 +405,7 @@ def profile_dataclass_to_model(profile: ProfileConfig) -> ProfileModel:
             )
             for point in profile.hardcoded_raw_data_points
         ],
-        fields=fields,
+        segments=segments,
     )
 
 
@@ -336,7 +414,7 @@ def _model_field_to_dataclass(name: str, model: FieldModel) -> FieldConfig:
         name=name,
         kind=model.kind,
         stage=model.stage,
-        box=Box.from_sequence(list(model.bbox_x1y1x2y2)),
+        box=Box.from_sequence(list(model.bbox_x1y1x2y2)) if model.bbox_x1y1x2y2 is not None else None,
     )
 
 
@@ -375,10 +453,15 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
         profile_name=model.profile_name,
         description=model.description,
         default_sample_fps=float(model.default_sample_fps),
+        default_ocr_workers=int(model.default_ocr_workers),
+        ocr_backend=model.ocr_backend,
+        ocr_recognition_level=model.ocr_recognition_level,
+        skip_full_frame_ocr_fallback=model.skip_full_frame_ocr_fallback,
         fixture_frame_count=int(model.fixture_frame_count),
         fixture_time_range_s=tuple(model.fixture_time_range_s)
         if model.fixture_time_range_s is not None
         else None,
+        calibration_video=CalibrationVideoConfig(**model.calibration_video.model_dump()),
         video_overlay=VideoOverlayConfig(**model.video_overlay.model_dump()),
         trajectory=TrajectoryConfig(
             enabled=model.trajectory.enabled,
@@ -407,8 +490,53 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
             )
             for point in model.hardcoded_raw_data_points
         ],
-        fields={name: _model_field_to_dataclass(name, model_field) for name, model_field in model.fields.items()},
+        segments=[
+            CalibrationSegmentConfig(
+                id=segment.id,
+                start_frame_index=segment.start_frame_index,
+                start_time_s=segment.start_time_s,
+                end_frame_index=segment.end_frame_index,
+                end_time_s=segment.end_time_s,
+                fields={
+                    name: _model_field_to_dataclass(name, segment.fields[name])
+                    for name in CANONICAL_FIELD_ORDER
+                    if name in segment.fields
+                },
+            )
+            for segment in model.segments
+        ],
     )
+
+
+def validate_runnable_profile_model(model: ProfileModel) -> ProfileModel:
+    if not model.segments:
+        raise ValueError("At least one segment is required")
+
+    previous_end: int | None = None
+    for index, segment in enumerate(model.segments):
+        label = segment.id or f"segment_{index + 1}"
+        if segment.end_frame_index <= segment.start_frame_index:
+            raise ValueError(f"{label}: end_frame_index must be greater than start_frame_index")
+        if previous_end is not None and segment.start_frame_index != previous_end:
+            raise ValueError(f"{label}: segments must be contiguous")
+        previous_end = segment.end_frame_index
+
+        if "met" not in segment.fields:
+            raise ValueError(f"{label}: met field is required")
+        for name, field_model in segment.fields.items():
+            if field_model.bbox_x1y1x2y2 is None:
+                raise ValueError(f"{label}: {name} must define bbox_x1y1x2y2")
+
+    video = model.calibration_video
+    if video.frame_count is not None:
+        first = model.segments[0]
+        last = model.segments[-1]
+        if last.end_frame_index > video.frame_count:
+            raise ValueError("Last segment end_frame_index exceeds calibration video frame_count")
+        if first.start_frame_index >= video.frame_count:
+            raise ValueError("First segment start_frame_index exceeds calibration video frame_count")
+
+    return model
 
 
 def default_parsing_model() -> ParsingModel:
@@ -422,14 +550,23 @@ def default_parsing_model() -> ParsingModel:
             fixture_frame_count=20,
             fixture_time_range_s=None,
             parsing=default_parsing_profile(),
-            fields={
-                "stage1_velocity": FieldConfig(
-                    name="stage1_velocity",
-                    kind="velocity",
-                    stage="stage1",
-                    box=Box(0.0, 0.0, 0.1, 0.1),
+            segments=[
+                CalibrationSegmentConfig(
+                    id="segment_1",
+                    start_frame_index=0,
+                    start_time_s=0.0,
+                    end_frame_index=1,
+                    end_time_s=1.0,
+                    fields={
+                        "stage1_velocity": FieldConfig(
+                            name="stage1_velocity",
+                            kind="velocity",
+                            stage="stage1",
+                            box=Box(0.0, 0.0, 0.1, 0.1),
+                        )
+                    },
                 )
-            },
+            ],
         )
     ).parsing  # type: ignore[return-value]
 

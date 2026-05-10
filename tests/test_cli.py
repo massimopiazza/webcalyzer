@@ -6,7 +6,7 @@ from webcalyzer.cli import _resolve_workers, build_parser
 from webcalyzer.ocr_factory import OCRBackendOptions
 
 
-def test_ocr_workers_defaults_to_auto() -> None:
+def test_ocr_workers_defaults_to_profile_value() -> None:
     parser = build_parser()
     extract_args = parser.parse_args(
         ["extract", "--video", "video.mp4", "--config", "profile.yaml", "--output", "outputs/run"]
@@ -15,8 +15,14 @@ def test_ocr_workers_defaults_to_auto() -> None:
         ["run", "--video", "video.mp4", "--config", "profile.yaml", "--output", "outputs/run"]
     )
 
-    assert extract_args.ocr_workers == "auto"
-    assert run_args.ocr_workers == "auto"
+    assert extract_args.ocr_workers is None
+    assert run_args.ocr_workers is None
+    assert extract_args.ocr_backend is None
+    assert run_args.ocr_backend is None
+    assert extract_args.ocr_recognition_level is None
+    assert run_args.ocr_recognition_level is None
+    assert extract_args.ocr_skip_detection is None
+    assert run_args.ocr_skip_detection is None
 
 
 def test_omitted_ocr_workers_resolves_like_auto(monkeypatch) -> None:
@@ -37,3 +43,11 @@ def test_none_ocr_workers_resolves_like_auto(monkeypatch) -> None:
     workers = _resolve_workers(args, OCRBackendOptions(backend="rapidocr"))
 
     assert workers == 3
+
+
+def test_none_ocr_workers_uses_profile_default() -> None:
+    args = argparse.Namespace(ocr_workers=None)
+
+    workers = _resolve_workers(args, OCRBackendOptions(backend="rapidocr"), default_workers=5)
+
+    assert workers == 5

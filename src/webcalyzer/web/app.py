@@ -39,6 +39,7 @@ from webcalyzer.web.schema import (
     profile_dataclass_to_model,
     serialize_for_yaml,
     trajectory_choices,
+    validate_runnable_profile_model,
 )
 
 
@@ -252,13 +253,25 @@ def create_app(config: ServeConfig) -> FastAPI:
         target = _resolve_template_path(config, name, must_exist=True)
         return FileResponse(target, media_type="text/yaml", filename=target.name)
 
-    @app.post("/api/profile/validate")
-    def validate_profile(profile: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    @app.post("/api/profile/validate-draft")
+    def validate_profile_draft(profile: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
             model = ProfileModel.model_validate(profile)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=_format_validation_error(exc)) from exc
         return {"profile": model.model_dump(mode="json")}
+
+    @app.post("/api/profile/validate-runnable")
+    def validate_profile_runnable(profile: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            model = validate_runnable_profile_model(ProfileModel.model_validate(profile))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=_format_validation_error(exc)) from exc
+        return {"profile": model.model_dump(mode="json")}
+
+    @app.post("/api/profile/validate")
+    def validate_profile(profile: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        return validate_profile_draft(profile)
 
     @app.post("/api/profile/preview-yaml")
     def preview_yaml(profile: dict[str, Any] = Body(...)) -> Response:
@@ -300,7 +313,7 @@ def create_app(config: ServeConfig) -> FastAPI:
             raise HTTPException(status_code=422, detail=f"Missing field: {exc}") from exc
 
         try:
-            model = ProfileModel.model_validate(profile_payload)
+            model = validate_runnable_profile_model(ProfileModel.model_validate(profile_payload))
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=_format_validation_error(exc)) from exc
         profile = model_to_profile_dataclass(model)
@@ -310,12 +323,16 @@ def create_app(config: ServeConfig) -> FastAPI:
             output_dir=output_dir,
             profile=profile,
             sample_fps=_optional_float(payload.get("sample_fps")),
-            ocr_backend=str(payload.get("ocr_backend", "auto")),
-            ocr_recognition_level=str(payload.get("ocr_recognition_level", "accurate")),
-            ocr_workers=int(payload.get("ocr_workers", 0)),
-            ocr_skip_detection=bool(payload.get("ocr_skip_detection", False)),
-            overlay_engine=str(payload.get("overlay_engine", "auto")),
-            overlay_encoder=str(payload.get("overlay_encoder", "auto")),
+            ocr_backend=str(payload.get("ocr_backend", profile.ocr_backend)),
+            ocr_recognition_level=str(
+                payload.get("ocr_recognition_level", profile.ocr_recognition_level)
+            ),
+            ocr_workers=int(payload.get("ocr_workers", profile.default_ocr_workers)),
+            ocr_skip_detection=bool(
+                payload.get("ocr_skip_detection", profile.skip_full_frame_ocr_fallback)
+            ),
+            overlay_engine=str(payload.get("overlay_engine", profile.video_overlay.engine)),
+            overlay_encoder=str(payload.get("overlay_encoder", profile.video_overlay.encoder)),
         )
         loop = asyncio.get_running_loop()
         try:

@@ -100,11 +100,11 @@ The web runner and CLI use the same pipeline functions. The web layer adds JSON 
 ```mermaid
 flowchart LR
   form["React form state<br/>useProfileForm(...)"]
-  zod["Inline validation<br/>profileSchema.safeParse(...)"]
+  zod["Inline validation<br/>draft and runnable Zod schemas"]
   inline["Inline field errors<br/>Run button disabled"]
   post["POST /api/jobs/run"]
   paths["Path guards<br/>safe_resolve(...)"]
-  pydantic["Server validation<br/>ProfileModel.model_validate(...)"]
+  pydantic["Server validation<br/>draft plus runnable checks"]
   dataclass["Runtime conversion<br/>model_to_profile_dataclass(...)"]
   job["JobManager.submit(...)"]
   events["SSE events<br/>RunPanel console"]
@@ -114,7 +114,7 @@ flowchart LR
   zod -->|valid| post --> paths --> pydantic --> dataclass --> job --> events
 ```
 
-The server validates every run request even when the frontend form already passed. The client check exists for inline UX only. Frontend state ownership is documented in [web-frontend.md](web-frontend.md#profile-form-state).
+The server validates every run request even when the frontend form already passed. Template saves use draft validation, while extraction jobs use runnable validation. The client check exists for inline UX only. Frontend state ownership is documented in [web-frontend.md](web-frontend.md#profile-form-state).
 
 ### Local filesystem boundary
 

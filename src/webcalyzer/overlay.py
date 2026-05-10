@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -87,9 +88,12 @@ def render_telemetry_overlay_video(
     *,
     engine: str = "auto",
     encoder: str = "auto",
+    cancel_check: Callable[[], None] | None = None,
 ) -> Path | None:
     if not config.enabled:
         return None
+    if cancel_check is not None:
+        cancel_check()
 
     plot_mode = config.plot_mode.strip().lower()
     if plot_mode not in {"filtered", "with_rejected"}:
@@ -108,6 +112,8 @@ def render_telemetry_overlay_video(
         config=config,
         plot_mode=plot_mode,
     )
+    if cancel_check is not None:
+        cancel_check()
 
     selected_engine = _resolve_overlay_engine(engine)
     rendered_path: Path | None = None
@@ -121,6 +127,7 @@ def render_telemetry_overlay_video(
                 plan=plan,
                 include_audio=config.include_audio,
                 encoder=encoder,
+                cancel_check=cancel_check,
             )
         except Exception as exc:  # pragma: no cover - safety fallback
             print(f"[webcalyzer] ffmpeg overlay engine failed ({exc}); falling back to opencv")
@@ -131,9 +138,12 @@ def render_telemetry_overlay_video(
             output_path=output_path,
             plan=plan,
             include_audio=config.include_audio,
+            cancel_check=cancel_check,
         )
 
     if rendered_path is not None:
+        if cancel_check is not None:
+            cancel_check()
         _render_preview_gif(
             source_video=rendered_path,
             source_duration_s=float(plan.metadata.duration_s),
@@ -403,6 +413,7 @@ def _render_via_opencv(
     output_path: Path,
     plan: OverlayPlan,
     include_audio: bool,
+    cancel_check: Callable[[], None] | None = None,
 ) -> Path | None:
     metadata = plan.metadata
     temp_path = output_path.with_name(f"{output_path.stem}.noaudio{output_path.suffix}")
@@ -422,6 +433,8 @@ def _render_via_opencv(
     frame_index = 0
     try:
         while True:
+            if cancel_check is not None:
+                cancel_check()
             ok, frame = capture.read()
             if not ok or frame is None:
                 break
@@ -440,6 +453,8 @@ def _render_via_opencv(
             frame_index += 1
             if frame_index % max(1, int(round(fps * 30))) == 0:
                 print(f"[webcalyzer] rendered overlay video frame {frame_index}/{metadata.frame_count}")
+            if cancel_check is not None:
+                cancel_check()
     finally:
         capture.release()
         writer.release()
