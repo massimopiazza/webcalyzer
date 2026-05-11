@@ -10,7 +10,7 @@ from webcalyzer.config import load_profile
 from webcalyzer.extract import _field_specific_option_is_valid, _stage2_measurement_is_active
 from webcalyzer.models import HardcodedRawDataPoint, ProfileConfig
 from webcalyzer.raw_points import apply_hardcoded_raw_data_points
-from webcalyzer.sanitize import choose_best_measurement, parse_measurement_options
+from webcalyzer.sanitize import resolve_measurement_series
 
 
 def rebuild_clean_from_raw(
@@ -21,79 +21,55 @@ def rebuild_clean_from_raw(
 ) -> pd.DataFrame:
     raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_raw_data_points)
     parsing = profile.parsing if profile is not None else None
-    state = {
-        "stage1_velocity": _empty_rebuild_field_state(),
-        "stage1_altitude": _empty_rebuild_field_state(),
-        "stage2_velocity": _empty_rebuild_field_state(),
-        "stage2_altitude": _empty_rebuild_field_state(),
-    }
+    met_values = [
+        _optional_float(row["mission_elapsed_time_s"])
+        for _, row in raw_df.iterrows()
+    ]
+    parsed_by_field: dict[str, list[float | None]] = {}
+    hardcoded_by_row: list[set[str]] = [set() for _ in range(len(raw_df))]
+
+    for field_name, kind in FIELD_NAME_KINDS:
+        raw_candidates_by_sample: list[list[tuple[str, str]]] = []
+        hardcoded_values: list[float | None] = []
+        for row_position, (_, row) in enumerate(raw_df.iterrows()):
+            hardcoded_value = _hardcoded_si_value(row, field_name)
+            hardcoded_values.append(hardcoded_value)
+            if hardcoded_value is not None:
+                hardcoded_by_row[row_position].add(field_name)
+                raw_candidates_by_sample.append([])
+                continue
+            raw_text = row.get(f"{field_name}_raw_text")
+            raw_candidates_by_sample.append([] if pd.isna(raw_text) else [(str(raw_text), "raw")])
+
+        resolved = resolve_measurement_series(
+            raw_candidates_by_sample,
+            kind=kind,
+            parsing=parsing,
+            met_values=met_values,
+            option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
+                field_name,
+                option,
+                met_s,
+            ),
+        )
+        values: list[float | None] = []
+        for hardcoded_value, result in zip(hardcoded_values, resolved):
+            values.append(
+                hardcoded_value
+                if hardcoded_value is not None
+                else (result.chosen.value_si if result.chosen else None)
+            )
+        parsed_by_field[field_name] = values
+
     stage2_activated = False
     rows: list[dict[str, object]] = []
-
-    for _, row in raw_df.iterrows():
+    for row_position, (_, row) in enumerate(raw_df.iterrows()):
         mission_elapsed_time_s = row["mission_elapsed_time_s"]
-        parsed: dict[str, float | None] = {}
-        hardcoded_fields: set[str] = set()
-        for field_name, kind in [
-            ("stage1_velocity", "velocity"),
-            ("stage1_altitude", "altitude"),
-            ("stage2_velocity", "velocity"),
-            ("stage2_altitude", "altitude"),
-        ]:
-            hardcoded_value = _hardcoded_si_value(row, field_name)
-            if hardcoded_value is not None:
-                hardcoded_fields.add(field_name)
-                parsed[field_name] = hardcoded_value
-                if not pd.isna(mission_elapsed_time_s):
-                    state[field_name]["prev_val"] = hardcoded_value
-                    state[field_name]["prev_met"] = mission_elapsed_time_s
-                continue
-
-            raw_text = row.get(f"{field_name}_raw_text")
-            if pd.isna(raw_text):
-                parsed[field_name] = None
-                continue
-            field_state = state[field_name]
-            preferred_unit = field_state["prev_explicit_unit"] or field_state["prev_unit"]
-            options = parse_measurement_options(
-                str(raw_text),
-                kind=kind,
-                variant="raw",
-                parsing=parsing,
-                preferred_unit=preferred_unit,
-            )
-            current_met_value = (
-                float(mission_elapsed_time_s)
-                if mission_elapsed_time_s is not None and not pd.isna(mission_elapsed_time_s)
-                else None
-            )
-            options = [
-                option
-                for option in options
-                if _field_specific_option_is_valid(field_name, option, current_met_value)
-            ]
-            chosen = choose_best_measurement(
-                options=options,
-                kind=kind,
-                previous_value_si=state[field_name]["prev_val"],
-                previous_met_s=state[field_name]["prev_met"],
-                current_met_s=mission_elapsed_time_s,
-                preferred_unit=preferred_unit,
-            )
-            value = chosen.value_si if chosen else None
-            parsed[field_name] = value
-            if value is not None and not pd.isna(mission_elapsed_time_s):
-                state[field_name]["prev_val"] = value
-                state[field_name]["prev_met"] = mission_elapsed_time_s
-                if chosen is not None:
-                    state[field_name]["prev_unit"] = chosen.unit
-                    if chosen.explicit_unit:
-                        state[field_name]["prev_explicit_unit"] = chosen.unit
-
+        parsed = {field_name: parsed_by_field[field_name][row_position] for field_name, _kind in FIELD_NAME_KINDS}
         stage2_velocity = parsed["stage2_velocity"]
         stage2_altitude = parsed["stage2_altitude"]
         if stage2_velocity is not None or stage2_altitude is not None:
-            stage2_is_hardcoded = bool({"stage2_velocity", "stage2_altitude"} & hardcoded_fields)
+            stage2_is_hardcoded = bool({"stage2_velocity", "stage2_altitude"} & hardcoded_by_row[row_position])
             if _stage2_measurement_is_active(stage2_velocity, stage2_altitude):
                 stage2_activated = True
             elif not stage2_activated and not stage2_is_hardcoded:
@@ -115,13 +91,21 @@ def rebuild_clean_from_raw(
     return pd.DataFrame(rows)
 
 
-def _empty_rebuild_field_state() -> dict[str, float | str | None]:
-    return {
-        "prev_val": None,
-        "prev_met": None,
-        "prev_unit": None,
-        "prev_explicit_unit": None,
-    }
+FIELD_NAME_KINDS = [
+    ("stage1_velocity", "velocity"),
+    ("stage1_altitude", "altitude"),
+    ("stage2_velocity", "velocity"),
+    ("stage2_altitude", "altitude"),
+]
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def rebuild_clean_in_output_dir(output_dir: str | Path, profile: ProfileConfig | None = None) -> pd.DataFrame:

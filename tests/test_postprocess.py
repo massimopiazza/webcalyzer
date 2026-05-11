@@ -268,3 +268,40 @@ def test_rebuild_clean_uses_recent_explicit_unit_for_unitless_altitude() -> None
     clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
 
     assert clean_df["stage2_altitude_m"].tolist() == [166000.0, 166000.0, 166000.0]
+
+
+def test_rebuild_clean_recovers_missing_k_in_kilometer_unit() -> None:
+    raw_df = pd.DataFrame(
+        [
+            {
+                "frame_index": 0,
+                "sample_time_s": 1080.0,
+                "mission_elapsed_time_s": 1080.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166 KM",
+            },
+            {
+                "frame_index": 1,
+                "sample_time_s": 1082.0,
+                "mission_elapsed_time_s": 1082.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166 KM",
+            },
+            {
+                "frame_index": 2,
+                "sample_time_s": 1084.0,
+                "mission_elapsed_time_s": 1084.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166 M",
+            },
+        ]
+    )
+    profile = ProfileConfig(
+        profile_name="km_feed",
+        description="",
+        default_sample_fps=1.0,
+        fixture_frame_count=1,
+        fixture_time_range_s=None,
+        parsing=default_parsing_profile(),
+    )
+
+    clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
+
+    assert clean_df["stage2_altitude_m"].tolist() == [166000.0, 166000.0, 166000.0]

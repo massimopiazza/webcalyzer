@@ -26,9 +26,11 @@ $$
 x_{\mathrm{SI}} = x_{\mathrm{raw}} c_{\mathrm{unit}}
 $$
 
-Here $x_{\mathrm{raw}}$ is the parsed number and $c_{\mathrm{unit}}$ is the configured conversion factor. Velocity is stored in meters per second, and altitude is stored in meters.
+Here $x_{\mathrm{raw}}$ is the parsed number and $c_{\mathrm{unit}}$ is the configured conversion factor. Velocity is stored in meters per second, and altitude is stored in meters. The conversion is applied through Pint using the profile's unit definitions, so the same parser path handles built-in units and profile-defined units.
 
-Remark: The quality of every later trajectory output depends on correct unit identification. If the parser chooses miles instead of feet, or kilometers per hour instead of miles per hour, the reconstructed trajectory will be physically wrong even if OCR read the digits correctly.
+Unit identification is alias-driven. Webcalyzer first tries exact unit aliases, then fuzzy unit recovery for OCR mistakes, then configured inference rules. For each measurement series, it also looks for a dominant explicit unit and can use that context to recover an isolated missing or malformed unit label. If the evidence is weak or all options imply an implausible jump, it leaves a gap in the clean telemetry instead of forcing a value.
+
+Remark: The quality of every later trajectory output depends on correct unit identification. If the parser chooses miles instead of feet, or kilometers per hour instead of miles per hour, the reconstructed trajectory will be physically wrong even if OCR read the digits correctly. Start diagnosis from the unit-source, confidence, candidate-count, and reject-reason columns in `telemetry_raw.csv`.
 
 ### Use mission elapsed time as the clock
 

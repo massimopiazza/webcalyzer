@@ -5,6 +5,7 @@ from webcalyzer.sanitize import (
     detect_unit,
     parse_measurement_options,
     parse_met,
+    resolve_measurement_series,
 )
 
 
@@ -131,6 +132,75 @@ def test_altitude_parser_accepts_high_stage2_kilometer_values() -> None:
     assert chosen is not None
     assert chosen.unit == "KM"
     assert chosen.value_si == 802000.0
+
+
+def test_parser_recovers_fuzzy_unit_alias() -> None:
+    profile = default_parsing_profile()
+
+    options = parse_measurement_options(
+        "ALTITUDE 166 KMN",
+        kind="altitude",
+        variant="raw",
+        parsing=profile,
+    )
+
+    chosen = choose_best_measurement(
+        options,
+        kind="altitude",
+        previous_value_si=165000.0,
+        previous_met_s=1080.0,
+        current_met_s=1082.0,
+    )
+    assert chosen is not None
+    assert chosen.unit == "KM"
+    assert chosen.value_si == 166000.0
+    assert chosen.unit_source == "fuzzy"
+    assert chosen.unit_match_score is not None
+    assert chosen.unit_match_score >= 82.0
+
+
+def test_series_resolver_recovers_missing_k_in_km_unit() -> None:
+    profile = default_parsing_profile()
+
+    results = resolve_measurement_series(
+        [
+            [("ALTITUDE 166 KM", "raw")],
+            [("ALTITUDE 166 KM", "raw")],
+            [("ALTITUDE 166 M", "raw")],
+            [("ALTITUDE 167 KM", "raw")],
+        ],
+        kind="altitude",
+        parsing=profile,
+        met_values=[1080.0, 1082.0, 1084.0, 1086.0],
+    )
+
+    assert [result.chosen.value_si if result.chosen else None for result in results] == [
+        166000.0,
+        166000.0,
+        166000.0,
+        167000.0,
+    ]
+    assert results[2].chosen is not None
+    assert results[2].chosen.unit_source == "inferred_dominant"
+
+
+def test_series_resolver_prefers_gap_when_exact_and_context_units_both_jump() -> None:
+    profile = default_parsing_profile()
+
+    results = resolve_measurement_series(
+        [
+            [("ALTITUDE 166 KM", "raw")],
+            [("ALTITUDE 166 KM", "raw")],
+            [("ALTITUDE 500 M", "raw")],
+            [("ALTITUDE 167 KM", "raw")],
+        ],
+        kind="altitude",
+        parsing=profile,
+        met_values=[1080.0, 1082.0, 1084.0, 1086.0],
+    )
+
+    assert results[2].chosen is None
+    assert results[2].reject_reason == "low_confidence_or_jump"
 
 
 def test_default_parsing_profile_has_baseline_custom_words() -> None:

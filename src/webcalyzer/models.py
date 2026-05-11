@@ -436,6 +436,12 @@ class OCRObservation:
     raw_value: float | None
     normalized_si_value: float | None
     variant: str | None
+    parse_confidence: float | None = None
+    unit_source: str | None = None
+    unit_match_text: str | None = None
+    unit_match_score: float | None = None
+    candidate_count: int | None = None
+    reject_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -5,14 +5,13 @@ import json
 import multiprocessing as mp
 import time
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 import pandas as pd
 
 from webcalyzer.config import save_profile
 from webcalyzer.models import (
     Box,
-    CANONICAL_FIELD_DEFINITIONS,
     CANONICAL_FIELD_ORDER,
     CalibrationSegmentConfig,
     ExtractionRow,
@@ -23,26 +22,13 @@ from webcalyzer.models import (
 from webcalyzer.ocr import OCRBackend, OCRDetection
 from webcalyzer.ocr_factory import OCRBackendOptions, make_backend, resolve_backend_name
 from webcalyzer.raw_points import apply_hardcoded_raw_data_points
-from webcalyzer.sanitize import MeasurementOption, choose_best_measurement, parse_measurement_options, parse_met_candidates
+from webcalyzer.sanitize import (
+    MeasurementOption,
+    parse_measurement_options,
+    parse_met_candidates,
+    resolve_measurement_series,
+)
 from webcalyzer.video import build_sample_indices, crop_box, get_video_metadata, iterate_frames
-
-
-@dataclass(slots=True)
-class FieldState:
-    previous_value_si: float | None = None
-    previous_met_s: float | None = None
-    previous_unit: str | None = None
-    previous_explicit_unit: str | None = None
-
-
-@dataclass(slots=True)
-class StageState:
-    activated: bool = False
-    fields: dict[str, FieldState] | None = None
-
-    def __post_init__(self) -> None:
-        if self.fields is None:
-            self.fields = {}
 
 
 @dataclass(slots=True)
@@ -379,11 +365,8 @@ def _run_phase_b(
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     raw_rows: list[dict[str, object]] = []
     clean_rows: list[dict[str, object]] = []
-    stage_states = {
-        "stage1": StageState(),
-        "stage2": StageState(),
-    }
     met_observations: list[tuple[float, float]] = []
+    frame_contexts: list[dict[str, object]] = []
 
     parsing = profile.parsing
     for frame_data in raw_frames:
@@ -435,46 +418,72 @@ def _run_phase_b(
                 variant=met_choice.variant,
             )
 
-        chosen_by_field: dict[str, MeasurementOption | None] = {}
-        for field_name in CANONICAL_FIELD_ORDER:
-            if field_name == "met":
+        frame_contexts.append(
+            {
+                "frame_data": frame_data,
+                "sample_time_s": sample_time_s,
+                "segment_id": frame_data.segment_id,
+                "mission_elapsed_time_s": mission_elapsed_time_s,
+                "configured_fields": configured_fields,
+                "ocr_candidates_by_field": ocr_candidates_by_field,
+                "per_field_obs": per_field_obs,
+            }
+        )
+
+    for field_name in CANONICAL_FIELD_ORDER:
+        if field_name == "met":
+            continue
+        raw_candidates_by_sample: list[list[tuple[str, str]]] = []
+        met_values: list[float | None] = []
+        configured_by_sample: list[bool] = []
+        kind: str | None = None
+        for context in frame_contexts:
+            configured_fields = context["configured_fields"]
+            field_cfg = configured_fields.get(field_name) if isinstance(configured_fields, dict) else None
+            configured = field_cfg is not None and field_cfg.kind != "met"
+            configured_by_sample.append(configured)
+            met_values.append(context["mission_elapsed_time_s"])
+            if configured:
+                kind = field_cfg.kind
+                candidates_by_field = context["ocr_candidates_by_field"]
+                candidates = candidates_by_field.get(field_name, []) if isinstance(candidates_by_field, dict) else []
+                raw_candidates_by_sample.append(list(candidates))
+            else:
+                raw_candidates_by_sample.append([])
+
+        if kind is None:
+            for context in frame_contexts:
+                per_field_obs = context["per_field_obs"]
+                if isinstance(per_field_obs, dict):
+                    per_field_obs[field_name] = _not_configured_observation(field_name)
+            continue
+
+        resolved = resolve_measurement_series(
+            raw_candidates_by_sample,
+            kind=kind,
+            parsing=parsing,
+            met_values=met_values,
+            option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
+                field_name,
+                option,
+                met_s,
+            ),
+        )
+
+        for context, is_configured, candidates, result in zip(
+            frame_contexts,
+            configured_by_sample,
+            raw_candidates_by_sample,
+            resolved,
+        ):
+            per_field_obs = context["per_field_obs"]
+            if not isinstance(per_field_obs, dict):
                 continue
-            field_cfg = configured_fields.get(field_name)
-            if field_cfg is None:
+            if not is_configured:
                 per_field_obs[field_name] = _not_configured_observation(field_name)
                 continue
-            if field_cfg.kind == "met":
-                continue
-            stage_state = stage_states[field_cfg.stage]
-            field_state = stage_state.fields.setdefault(field_name, FieldState())
-            preferred_unit = field_state.previous_explicit_unit or field_state.previous_unit
-            options: list[MeasurementOption] = []
-            for raw_text, variant in ocr_candidates_by_field.get(field_name, []):
-                options.extend(
-                    parse_measurement_options(
-                        raw_text,
-                        kind=field_cfg.kind,
-                        variant=variant,
-                        parsing=parsing,
-                        preferred_unit=preferred_unit,
-                    )
-                )
-            options = [
-                option
-                for option in options
-                if _field_specific_option_is_valid(field_name, option, mission_elapsed_time_s)
-            ]
-            chosen = choose_best_measurement(
-                options=options,
-                kind=field_cfg.kind,
-                previous_value_si=field_state.previous_value_si,
-                previous_met_s=field_state.previous_met_s,
-                current_met_s=mission_elapsed_time_s,
-                preferred_unit=preferred_unit,
-            )
+            chosen = result.chosen
             if chosen is None:
-                chosen_by_field[field_name] = None
-                candidates = ocr_candidates_by_field.get(field_name, [])
                 per_field_obs[field_name] = OCRObservation(
                     field_name=field_name,
                     raw_text=candidates[0][0] if candidates else None,
@@ -483,9 +492,10 @@ def _run_phase_b(
                     raw_value=None,
                     normalized_si_value=None,
                     variant=candidates[0][1] if candidates else None,
+                    candidate_count=result.candidate_count,
+                    reject_reason=result.reject_reason,
                 )
             else:
-                chosen_by_field[field_name] = chosen
                 per_field_obs[field_name] = OCRObservation(
                     field_name=field_name,
                     raw_text=chosen.raw_text,
@@ -494,7 +504,22 @@ def _run_phase_b(
                     raw_value=chosen.raw_value,
                     normalized_si_value=chosen.value_si,
                     variant=chosen.variant,
+                    parse_confidence=chosen.parse_confidence,
+                    unit_source=chosen.unit_source,
+                    unit_match_text=chosen.unit_match_text,
+                    unit_match_score=chosen.unit_match_score,
+                    candidate_count=result.candidate_count,
+                    reject_reason=None,
                 )
+
+    stage2_activated = False
+    for context in frame_contexts:
+        frame_data = context["frame_data"]
+        per_field_obs = context["per_field_obs"]
+        sample_time_s = context["sample_time_s"]
+        mission_elapsed_time_s = context["mission_elapsed_time_s"]
+        if not isinstance(per_field_obs, dict) or not isinstance(frame_data, FrameRawOCR):
+            continue
 
         stage1_velocity = per_field_obs["stage1_velocity"].normalized_si_value
         stage1_altitude = per_field_obs["stage1_altitude"].normalized_si_value
@@ -503,44 +528,10 @@ def _run_phase_b(
 
         if stage2_velocity is not None or stage2_altitude is not None:
             if _stage2_measurement_is_active(stage2_velocity, stage2_altitude):
-                stage_states["stage2"].activated = True
-            elif not stage_states["stage2"].activated:
+                stage2_activated = True
+            elif not stage2_activated:
                 stage2_velocity = None
                 stage2_altitude = None
-
-        if stage1_velocity is None and stage1_altitude is None:
-            stage_states["stage1"].activated = False
-        else:
-            stage_states["stage1"].activated = True
-
-        _update_field_state(
-            stage_states["stage1"],
-            "stage1_velocity",
-            stage1_velocity,
-            mission_elapsed_time_s,
-            chosen_by_field.get("stage1_velocity"),
-        )
-        _update_field_state(
-            stage_states["stage1"],
-            "stage1_altitude",
-            stage1_altitude,
-            mission_elapsed_time_s,
-            chosen_by_field.get("stage1_altitude"),
-        )
-        _update_field_state(
-            stage_states["stage2"],
-            "stage2_velocity",
-            stage2_velocity,
-            mission_elapsed_time_s,
-            chosen_by_field.get("stage2_velocity"),
-        )
-        _update_field_state(
-            stage_states["stage2"],
-            "stage2_altitude",
-            stage2_altitude,
-            mission_elapsed_time_s,
-            chosen_by_field.get("stage2_altitude"),
-        )
 
         raw_row: dict[str, object] = {
             "frame_index": frame_data.frame_index,
@@ -555,6 +546,12 @@ def _run_phase_b(
             raw_row[f"{name}_raw_value"] = obs.raw_value
             raw_row[f"{name}_si_value"] = obs.normalized_si_value
             raw_row[f"{name}_variant"] = obs.variant
+            raw_row[f"{name}_parse_confidence"] = obs.parse_confidence
+            raw_row[f"{name}_unit_source"] = obs.unit_source
+            raw_row[f"{name}_unit_match_text"] = obs.unit_match_text
+            raw_row[f"{name}_unit_match_score"] = obs.unit_match_score
+            raw_row[f"{name}_candidate_count"] = obs.candidate_count
+            raw_row[f"{name}_reject_reason"] = obs.reject_reason
         raw_rows.append(raw_row)
 
         clean_rows.append(
@@ -712,24 +709,6 @@ def _met_kinematic_bound(*, kind: str, mission_elapsed_time_s: float) -> float |
     if kind == "velocity":
         return effective_acceleration_g * g0 * mission_elapsed_time_s
     return None
-
-
-def _update_field_state(
-    stage_state: StageState,
-    field_name: str,
-    value_si: float | None,
-    mission_elapsed_time_s: float | None,
-    chosen: MeasurementOption | None = None,
-) -> None:
-    if value_si is None or mission_elapsed_time_s is None:
-        return
-    field_state = stage_state.fields.setdefault(field_name, FieldState())
-    field_state.previous_value_si = value_si
-    field_state.previous_met_s = mission_elapsed_time_s
-    if chosen is not None:
-        field_state.previous_unit = chosen.unit
-        if chosen.explicit_unit:
-            field_state.previous_explicit_unit = chosen.unit
 
 
 def _build_profile_sample_indices(*, metadata, profile: ProfileConfig, target_fps: float) -> list[int]:

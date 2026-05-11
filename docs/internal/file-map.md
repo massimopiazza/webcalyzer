@@ -26,7 +26,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `calibration.py` | OpenCV desktop calibration UI for segmented frame ranges and field slots. |
 | `cli.py` | Argparse setup and subcommand orchestration. |
 | `config.py` | YAML load/save, parser defaults, profile compatibility aliases, and flow-style list serialization. |
-| `extract.py` | Main OCR extraction pipeline, including Phase A workers and Phase B sequential state logic. |
+| `extract.py` | Main OCR extraction pipeline, including Phase A workers and Phase B sequential parser logic. |
 | `fixtures.py` | Review frame annotation and contact sheet generation. |
 | `models.py` | Runtime dataclasses for profiles, segments, fields, observations, metadata, and extraction rows. |
 | `ocr.py` | OCR backend protocol, RapidOCR backend, preprocessing variants, and rescue OCR helpers. |
@@ -37,7 +37,8 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `postprocess.py` | Raw-to-clean rebuild, Mahalanobis outlier rejection, rejected file writing, and profile loading from output dirs. |
 | `raw_points.py` | Hardcoded raw data point injection and raw dataframe normalization. |
 | `rescue.py` | Multi-variant re-OCR for failed raw samples and output-directory rescue workflow. |
-| `sanitize.py` | OCR text normalization, MET parsing, unit detection, numeric parsing, and best-measurement selection. |
+| `sanitize.py` | OCR text normalization, MET parsing, unit detection, numeric parsing, fuzzy unit matching, and measurement-series resolution. |
+| `units.py` | Pint-backed unit registry construction and SI conversion for profile-defined telemetry units. |
 | `trajectory.py` | Trajectory interpolation, integration, coarse-step smoothing, WGS84 direct geodesic, and CSV output. |
 | `video.py` | OpenCV video metadata, sample indices, frame reads, crops, drawing, writing, and contact sheets. |
 | `vision_backend.py` | Apple Vision OCR backend and coordinate conversion helpers. |

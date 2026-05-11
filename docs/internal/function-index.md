@@ -40,12 +40,13 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `_ocr_frame(...)` | `src/webcalyzer/extract.py` | OCRs one sampled frame. |
 | `_ocr_with_detection(...)` | `src/webcalyzer/extract.py` | Runs strip OCR, assigns detections, and uses field fallback. |
 | `_ocr_skip_detection(...)` | `src/webcalyzer/extract.py` | Runs OCR directly on calibrated field crops. |
-| `_run_phase_b(...)` | `src/webcalyzer/extract.py` | Runs sequential MET, stage, plausibility, and measurement selection logic. |
+| `_run_phase_b(...)` | `src/webcalyzer/extract.py` | Runs sequential MET parsing, measurement-series resolution, stage activation, and raw row writing. |
 | `normalize_text(text)` | `src/webcalyzer/sanitize.py` | Normalizes OCR text before parsing. |
 | `detect_unit(text, kind, parsing)` | `src/webcalyzer/sanitize.py` | Finds a configured unit alias for a measurement type. |
 | `parse_met_candidates(text, parsing)` | `src/webcalyzer/sanitize.py` | Returns possible MET values from OCR text. |
 | `parse_measurement_options(...)` | `src/webcalyzer/sanitize.py` | Returns possible parsed telemetry values with unit candidates. |
-| `choose_best_measurement(...)` | `src/webcalyzer/sanitize.py` | Selects the most plausible measurement option. |
+| `resolve_measurement_series(...)` | `src/webcalyzer/sanitize.py` | Resolves measurement candidates across a time series with dominant-unit recovery and gap fallback. |
+| `converter_for(...)` | `src/webcalyzer/units.py` | Builds or reuses a Pint-backed converter for one telemetry kind. |
 | `resolve_backend_name(name)` | `src/webcalyzer/ocr_factory.py` | Resolves `auto`, `rapidocr`, or `vision` backend requests. |
 | `make_backend(options)` | `src/webcalyzer/ocr_factory.py` | Constructs the selected OCR backend. |
 

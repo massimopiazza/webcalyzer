@@ -283,8 +283,16 @@ The OCR step itself is split into two phases:
   parallel.
 - **Phase B (sequential)** Walk the per-frame OCR results in frame
   order and apply the order-dependent logic: MET tracking with rolling
-  offset filter, stage activation, plausibility scoring against the
-  previous parsed value, and `choose_best_measurement`.
+  offset filter, time-series unit resolution, stage activation, and
+  plausibility filtering.
+
+Phase B uses the configured unit aliases with exact matching first,
+RapidFuzz fallback matching second, and Pint-backed unit conversion into SI
+units. Measurement fields are resolved over the whole time series instead
+of one sample at a time, so a dominant explicit unit can recover isolated
+OCR unit mistakes such as `166 M` inside a run of `166 KM` readings. When
+the time-series evidence is weak or every interpretation would create an
+implausible jump, the parser leaves a gap rather than forcing a value.
 
 The `skip_full_frame_ocr_fallback` profile setting and
 `--ocr-skip-detection` CLI flag enable an alternative Phase A path that
@@ -464,7 +472,7 @@ child directory created under the specified output parent:
 
 | File | Purpose |
 |------|---------|
-| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical field raw OCR text, parse status, raw value, raw unit, SI value, and OCR variant. Append-only source of truth. |
+| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical field raw OCR text, parse status, raw value, raw unit, SI value, OCR variant, parse confidence, unit source, unit match score, candidate count, and reject reason. Append-only source of truth. |
 | `telemetry_clean.csv` | Same rows in SI units (m/s, m, s) with plausibility filtering, stage activation, and appended trajectory columns applied. |
 | `trajectory.csv` | Dense fixed-step trajectory reconstruction. Interpolated velocity/altitude live here only; the original telemetry columns keep their gaps. |
 | `telemetry_rejected.csv` | Outliers removed by `reject-outliers`. Initially empty; populated by the outlier rejection step. |
@@ -528,7 +536,9 @@ trajectory:
 
 # Optional. When omitted, the built-in MPH/FT/MI/T+ vocabulary is used.
 # Add this block to retarget the OCR pipeline to a feed that uses different
-# units, language, or timestamp formatting without code changes. customWords
+# units, language, or timestamp formatting without code changes. Unit
+# aliases are exact-matched first, then fuzzy-matched with RapidFuzz.
+# Pint applies the configured si_factor conversion. customWords
 # (Apple Vision) are auto-derived from the alias list below.
 parsing:
   velocity:

@@ -86,7 +86,9 @@ $$
 x_{\mathrm{SI}} = x_{\mathrm{raw}} \cdot c_{\mathrm{unit}}
 $$
 
-The conversion factor $c_{\mathrm{unit}}$ comes from the selected unit definition. For velocity, the SI target is meters per second. For altitude, the SI target is meters.
+The conversion factor $c_{\mathrm{unit}}$ comes from the selected unit definition. Pint performs the conversion using profile-defined unit names backed by these factors. For velocity, the SI target is meters per second. For altitude, the SI target is meters.
+
+The parser uses exact alias matching first, fuzzy matching for likely OCR unit mistakes, and then profile or time-series inference when no reliable explicit unit is available. Low-confidence readings are left as gaps when the surrounding series does not support a recovery.
 
 For mission elapsed time parsing, configure one or more regex patterns. Patterns must compile as regular expressions and should capture the time-like text printed by the overlay.
 

@@ -9,7 +9,7 @@ Each full run writes a self-contained timestamped output directory under the sel
 | File or directory | Description |
 |---|---|
 | `review/` | Sampled JPEG frames and `contact_sheet.jpg` for visual calibration review. The JPEGs include active segment labels and field bounding boxes. |
-| `telemetry_raw.csv` | Raw OCR observations after parsing, including `segment_id`, parse status, and per-field details. |
+| `telemetry_raw.csv` | Raw OCR observations after parsing, including `segment_id`, parse status, unit diagnostics, confidence, and per-field details. |
 | `telemetry_clean.csv` | Rebuilt telemetry table after filtering, stage logic, and anchor-point injection. This is the main retained dataset. |
 | `telemetry_rejected.csv` | Points rejected by outlier processing, when available. |
 | `trajectory.csv` | Dense trajectory reconstruction and augmented values, when trajectory is enabled. |
@@ -31,14 +31,18 @@ Note: Review files are written to disk, but they are not listed among the finish
 
 ### Review raw telemetry
 
-Open `telemetry_raw.csv` when you need to diagnose OCR behavior. It preserves raw text, units, parse status, and field-level observations used to build the clean table.
+Open `telemetry_raw.csv` when you need to diagnose OCR behavior. It preserves raw text, units, parse status, unit source, confidence, candidate count, reject reason, and field-level observations used to build the clean table.
 
 Use raw telemetry to answer questions such as:
 
 - Did OCR see the digits at all?
 - Was the unit label detected correctly?
+- Was the unit recovered by exact match, fuzzy match, profile inference, or dominant time-series evidence?
+- Was a candidate rejected because every plausible interpretation would jump too far?
 - Did field fallback produce a better candidate than strip OCR?
 - Did a hardcoded anchor point get injected?
+
+For each telemetry field, the diagnostic columns follow the field prefix. For example, `stage2_altitude_unit_source` can be `exact`, `fuzzy`, `inferred_dominant`, `inferred_recent`, or `inferred_profile`. `stage2_altitude_reject_reason` is populated when the parser leaves a gap.
 
 ### Review clean telemetry
 

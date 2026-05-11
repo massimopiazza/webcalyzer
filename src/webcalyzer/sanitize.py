@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import re
+from typing import Callable
+
+from rapidfuzz import fuzz, process
 
 from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, UnitAlias
+from webcalyzer.units import converter_for
 
 
 # Legacy hard-coded conversions; kept for backward compatibility with call
@@ -37,6 +41,17 @@ class MeasurementOption:
     value_si: float
     explicit_unit: bool
     variant: str
+    unit_source: str = "unknown"
+    unit_match_text: str | None = None
+    unit_match_score: float | None = None
+    parse_confidence: float = 0.0
+
+
+@dataclass(slots=True)
+class MeasurementSeriesResult:
+    chosen: MeasurementOption | None
+    candidate_count: int
+    reject_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -44,6 +59,17 @@ class TimedValue:
     raw_text: str
     value: float
     variant: str
+
+
+@dataclass(frozen=True, slots=True)
+class UnitMatch:
+    unit_name: str
+    source: str
+    match_text: str
+    score: float
+
+
+OptionFilter = Callable[[MeasurementOption, float | None], bool]
 
 
 def normalize_text(text: str) -> str:
@@ -113,16 +139,110 @@ def detect_unit(text: str, kind: str, parsing: ParsingProfile | None = None) -> 
     order (e.g. specific multi-letter aliases before single-letter ones).
     """
 
+    match = _detect_unit_matches(text, kind=kind, parsing=parsing, include_fuzzy=False)
+    return match[0].unit_name if match else None
+
+
+def _detect_unit_matches(
+    text: str,
+    kind: str,
+    parsing: ParsingProfile | None = None,
+    *,
+    include_fuzzy: bool = True,
+) -> list[UnitMatch]:
     upper = normalize_text(text)
     kind_parsing = _resolve_kind_parsing(kind, parsing)
+    exact_matches = _exact_unit_matches(upper, kind_parsing)
+    if exact_matches or not include_fuzzy:
+        return exact_matches
+    return _fuzzy_unit_matches(upper, kind_parsing)
+
+
+def _exact_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[UnitMatch]:
+    matches: list[UnitMatch] = []
+    seen: set[str] = set()
+    alias_rows = sorted(
+        (
+            (unit.name, alias)
+            for unit in kind_parsing.units
+            for alias in unit.aliases
+            if alias
+        ),
+        key=lambda item: len(item[1]),
+        reverse=True,
+    )
+    for unit_name, alias in alias_rows:
+        pattern = rf"(?<![A-Z0-9]){re.escape(normalize_text(alias))}(?![A-Z0-9])"
+        if re.search(pattern, upper) and unit_name not in seen:
+            matches.append(
+                UnitMatch(
+                    unit_name=unit_name,
+                    source="exact",
+                    match_text=alias,
+                    score=100.0,
+                )
+            )
+            seen.add(unit_name)
+    return matches
+
+
+def _fuzzy_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[UnitMatch]:
+    tokens = _unit_like_tokens(upper)
+    if not tokens:
+        return []
+    choices: dict[str, tuple[str, str]] = {}
     for unit in kind_parsing.units:
         for alias in unit.aliases:
-            if not alias:
+            normalized_alias = normalize_text(alias)
+            if len(normalized_alias.replace("/", "")) < 2:
                 continue
-            pattern = rf"(?<![A-Z0-9]){re.escape(alias)}(?![A-Z0-9])"
-            if re.search(pattern, upper):
-                return unit.name
-    return None
+            choices[normalized_alias] = (unit.name, alias)
+    if not choices:
+        return []
+
+    matches: list[UnitMatch] = []
+    seen: set[str] = set()
+    for token in tokens:
+        match = process.extractOne(
+            token,
+            list(choices.keys()),
+            scorer=fuzz.WRatio,
+            score_cutoff=82,
+        )
+        if match is None:
+            continue
+        alias_text, score, _index = match
+        unit_name, raw_alias = choices[alias_text]
+        if unit_name in seen:
+            continue
+        matches.append(
+            UnitMatch(
+                unit_name=unit_name,
+                source="fuzzy",
+                match_text=token if token != alias_text else raw_alias,
+                score=float(score),
+            )
+        )
+        seen.add(unit_name)
+    matches.sort(key=lambda item: item.score, reverse=True)
+    return matches
+
+
+def _unit_like_tokens(upper: str) -> list[str]:
+    raw_tokens = re.findall(r"[A-ZА-Я]{1,8}(?:/[A-ZА-Я]{1,8})?", upper)
+    stop_words = {
+        "ALT",
+        "ALTITUDE",
+        "FORCE",
+        "G",
+        "GLENN",
+        "NEW",
+        "SPEED",
+        "STAGE",
+        "T",
+        "VELOCITY",
+    }
+    return [token for token in raw_tokens if token not in stop_words]
 
 
 def parse_met_candidates(
@@ -189,32 +309,34 @@ def parse_measurement_options(
     variant: str,
     parsing: ParsingProfile | None = None,
     preferred_unit: str | None = None,
+    dominant_unit: str | None = None,
 ) -> list[MeasurementOption]:
     tokens = _extract_numeric_tokens(text)
     if not tokens:
         return []
 
     kind_parsing = _resolve_kind_parsing(kind, parsing)
-    explicit_unit = detect_unit(text, kind=kind, parsing=parsing)
+    unit_matches = _detect_unit_matches(text, kind=kind, parsing=parsing)
+    converter = converter_for(kind, kind_parsing)
     options: list[MeasurementOption] = []
     for token in tokens:
-        inferred_unit_names = (
-            [explicit_unit]
-            if explicit_unit
-            else _infer_unit_names(
-                kind_parsing=kind_parsing,
-                token=token,
-                preferred_unit=preferred_unit,
-            )
+        unit_candidates = _unit_candidates_for_token(
+            kind_parsing=kind_parsing,
+            token=token,
+            unit_matches=unit_matches,
+            preferred_unit=preferred_unit,
+            dominant_unit=dominant_unit,
         )
-        for unit_name in inferred_unit_names:
+        for unit_name, unit_source, match_text, match_score in unit_candidates:
             unit = _lookup_unit(kind_parsing, unit_name)
             if unit is None:
                 continue
             raw_value = _parse_token_to_number(token=token, unit=unit, kind=kind)
             if raw_value is None:
                 continue
-            value_si = float(raw_value) * unit.si_factor
+            value_si = converter.convert_to_si(float(raw_value), unit.name)
+            if value_si is None:
+                continue
             options.append(
                 MeasurementOption(
                     raw_text=text,
@@ -222,12 +344,67 @@ def parse_measurement_options(
                     raw_value=raw_value,
                     unit=unit.name,
                     value_si=value_si,
-                    explicit_unit=explicit_unit is not None,
+                    explicit_unit=unit_source in {"exact", "fuzzy"},
                     variant=variant,
+                    unit_source=unit_source,
+                    unit_match_text=match_text,
+                    unit_match_score=match_score,
+                    parse_confidence=_parse_confidence(unit_source, match_score),
                 )
             )
     options.sort(key=lambda item: len(item.raw_token), reverse=True)
     return options
+
+
+def _unit_candidates_for_token(
+    *,
+    kind_parsing: FieldKindParsing,
+    token: str,
+    unit_matches: list[UnitMatch],
+    preferred_unit: str | None,
+    dominant_unit: str | None,
+) -> list[tuple[str, str, str | None, float | None]]:
+    candidates: list[tuple[str, str, str | None, float | None]] = []
+    seen: set[str] = set()
+
+    def add(unit_name: str | None, source: str, match_text: str | None, match_score: float | None) -> None:
+        if unit_name is None:
+            return
+        normalized = unit_name.upper()
+        if normalized in seen:
+            return
+        if _lookup_unit(kind_parsing, normalized) is None:
+            return
+        candidates.append((normalized, source, match_text, match_score))
+        seen.add(normalized)
+
+    for match in unit_matches:
+        add(match.unit_name, match.source, match.match_text, match.score)
+
+    dominant = dominant_unit.upper() if dominant_unit else None
+    preferred = preferred_unit.upper() if preferred_unit else None
+    add(dominant, "inferred_dominant", None, None)
+    add(preferred, "inferred_recent", None, None)
+
+    if not unit_matches:
+        for unit_name in _infer_unit_names(kind_parsing=kind_parsing, token=token):
+            add(unit_name, "inferred_profile", None, None)
+
+    return candidates
+
+
+def _parse_confidence(unit_source: str, match_score: float | None) -> float:
+    if unit_source == "exact":
+        return 1.0
+    if unit_source == "fuzzy":
+        return max(0.0, min(0.95, 0.55 + 0.40 * float(match_score or 0.0) / 100.0))
+    if unit_source == "inferred_dominant":
+        return 0.82
+    if unit_source == "inferred_recent":
+        return 0.78
+    if unit_source == "inferred_profile":
+        return 0.62
+    return 0.0
 
 
 def _lookup_unit(kind_parsing: FieldKindParsing, unit_name: str) -> UnitAlias | None:
@@ -309,9 +486,10 @@ def choose_best_measurement(
 
         score = 0.0
         if option.explicit_unit:
-            score += 3.0
+            score += 3.0 if option.unit_source == "exact" else 2.2
         elif preferred_unit and option.unit == preferred_unit.upper():
             score += 1.5
+        score += option.parse_confidence
         if option.raw_token.count(",") or option.raw_token.count(".") or option.raw_token.count(":"):
             score += 0.5
 
@@ -333,3 +511,200 @@ def choose_best_measurement(
             best_score = score
             best_value = option.value_si
     return best
+
+
+def resolve_measurement_series(
+    raw_candidates_by_sample: list[list[tuple[str, str]]],
+    *,
+    kind: str,
+    parsing: ParsingProfile | None,
+    met_values: list[float | None],
+    option_filter: OptionFilter | None = None,
+) -> list[MeasurementSeriesResult]:
+    """Resolve OCR measurement candidates using local parses and time continuity."""
+
+    dominant_unit = _dominant_explicit_unit(raw_candidates_by_sample, kind=kind, parsing=parsing)
+    parsed_options: list[list[MeasurementOption]] = []
+    candidate_counts: list[int] = []
+    for candidates, met_s in zip(raw_candidates_by_sample, met_values):
+        options: list[MeasurementOption] = []
+        for text, variant in candidates:
+            options.extend(
+                parse_measurement_options(
+                    text,
+                    kind=kind,
+                    variant=variant,
+                    parsing=parsing,
+                    dominant_unit=dominant_unit,
+                )
+            )
+        if option_filter is not None:
+            options = [option for option in options if option_filter(option, met_s)]
+        options = _dedupe_options(options)
+        parsed_options.append(options)
+        candidate_counts.append(len(options))
+
+    chosen = _viterbi_resolve(parsed_options, kind=kind, met_values=met_values, dominant_unit=dominant_unit)
+    results: list[MeasurementSeriesResult] = []
+    for index, option in enumerate(chosen):
+        if option is None:
+            reject_reason = "no_candidates" if candidate_counts[index] == 0 else "low_confidence_or_jump"
+        else:
+            reject_reason = None
+        results.append(
+            MeasurementSeriesResult(
+                chosen=option,
+                candidate_count=candidate_counts[index],
+                reject_reason=reject_reason,
+            )
+        )
+    return results
+
+
+def _dominant_explicit_unit(
+    raw_candidates_by_sample: list[list[tuple[str, str]]],
+    *,
+    kind: str,
+    parsing: ParsingProfile | None,
+) -> str | None:
+    counts: dict[str, int] = {}
+    for candidates in raw_candidates_by_sample:
+        seen_this_sample: set[str] = set()
+        for text, _variant in candidates:
+            for match in _detect_unit_matches(text, kind=kind, parsing=parsing):
+                if match.source == "fuzzy" and match.score < 90.0:
+                    continue
+                seen_this_sample.add(match.unit_name.upper())
+        for unit_name in seen_this_sample:
+            counts[unit_name] = counts.get(unit_name, 0) + 1
+    if not counts:
+        return None
+    unit_name, count = max(counts.items(), key=lambda item: item[1])
+    total = sum(counts.values())
+    if count >= 2 and count / max(total, 1) >= 0.6:
+        return unit_name
+    if count >= 2 and len(counts) == 1:
+        return unit_name
+    return None
+
+
+def _dedupe_options(options: list[MeasurementOption]) -> list[MeasurementOption]:
+    best_by_key: dict[tuple[str, str], MeasurementOption] = {}
+    for option in options:
+        key = (option.raw_token, option.unit)
+        current = best_by_key.get(key)
+        if current is None or _local_option_cost(option, dominant_unit=None) < _local_option_cost(
+            current,
+            dominant_unit=None,
+        ):
+            best_by_key[key] = option
+    return sorted(best_by_key.values(), key=lambda item: (item.raw_token, item.unit))
+
+
+def _viterbi_resolve(
+    options_by_sample: list[list[MeasurementOption]],
+    *,
+    kind: str,
+    met_values: list[float | None],
+    dominant_unit: str | None,
+) -> list[MeasurementOption | None]:
+    if not options_by_sample:
+        return []
+
+    states_by_sample: list[list[MeasurementOption | None]] = [
+        [None] + options for options in options_by_sample
+    ]
+    costs: list[list[float]] = []
+    backrefs: list[list[int | None]] = []
+
+    first_costs = [
+        _state_local_cost(state, dominant_unit=dominant_unit)
+        for state in states_by_sample[0]
+    ]
+    costs.append(first_costs)
+    backrefs.append([None for _state in states_by_sample[0]])
+
+    for index in range(1, len(states_by_sample)):
+        current_states = states_by_sample[index]
+        previous_states = states_by_sample[index - 1]
+        current_costs: list[float] = []
+        current_backrefs: list[int | None] = []
+        for state in current_states:
+            best_cost = math.inf
+            best_prev: int | None = None
+            local_cost = _state_local_cost(state, dominant_unit=dominant_unit)
+            for prev_index, prev_state in enumerate(previous_states):
+                transition_cost = _transition_cost(
+                    prev_state,
+                    state,
+                    kind=kind,
+                    previous_met_s=met_values[index - 1],
+                    current_met_s=met_values[index],
+                )
+                total_cost = costs[index - 1][prev_index] + local_cost + transition_cost
+                if total_cost < best_cost:
+                    best_cost = total_cost
+                    best_prev = prev_index
+            current_costs.append(best_cost)
+            current_backrefs.append(best_prev)
+        costs.append(current_costs)
+        backrefs.append(current_backrefs)
+
+    last_index = min(range(len(costs[-1])), key=lambda idx: costs[-1][idx])
+    selected: list[MeasurementOption | None] = [None for _ in states_by_sample]
+    for index in range(len(states_by_sample) - 1, -1, -1):
+        selected[index] = states_by_sample[index][last_index]
+        previous = backrefs[index][last_index]
+        if previous is None:
+            break
+        last_index = previous
+    return selected
+
+
+def _state_local_cost(option: MeasurementOption | None, *, dominant_unit: str | None) -> float:
+    if option is None:
+        return 2.8
+    return _local_option_cost(option, dominant_unit=dominant_unit)
+
+
+def _local_option_cost(option: MeasurementOption, *, dominant_unit: str | None) -> float:
+    source_cost = {
+        "exact": 0.15,
+        "fuzzy": 0.75 + (100.0 - float(option.unit_match_score or 0.0)) / 25.0,
+        "inferred_dominant": 0.95,
+        "inferred_recent": 1.15,
+        "inferred_profile": 1.9,
+    }.get(option.unit_source, 2.5)
+    if dominant_unit and option.unit != dominant_unit.upper():
+        source_cost += 0.45
+    return source_cost
+
+
+def _transition_cost(
+    previous: MeasurementOption | None,
+    current: MeasurementOption | None,
+    *,
+    kind: str,
+    previous_met_s: float | None,
+    current_met_s: float | None,
+) -> float:
+    if previous is None and current is None:
+        return 0.15
+    if previous is None or current is None:
+        return 0.75
+    if previous_met_s is None or current_met_s is None or previous_met_s == current_met_s:
+        return 0.5 if previous.unit == current.unit else 1.5
+
+    max_rate = {
+        "velocity": 250.0,
+        "altitude": 6000.0,
+    }.get(kind, math.inf)
+    dt = abs(float(current_met_s) - float(previous_met_s))
+    if dt <= 0.0 or not math.isfinite(dt):
+        return 0.0
+    rate = abs(current.value_si - previous.value_si) / dt
+    if rate > 3.0 * max_rate:
+        return math.inf
+    rate_cost = 0.0 if rate <= max_rate else 1.5 * (rate / max_rate - 1.0)
+    unit_cost = 0.0 if previous.unit == current.unit else 1.25
+    return rate_cost + unit_cost

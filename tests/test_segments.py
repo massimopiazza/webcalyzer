@@ -92,7 +92,7 @@ def test_phase_b_uses_recent_explicit_unit_for_unitless_altitude() -> None:
         ],
     )
 
-    _raw_rows, clean_rows = _run_phase_b(
+    raw_rows, clean_rows = _run_phase_b(
         profile=profile,
         metadata_fps=1.0,
         raw_frames=[
@@ -127,3 +127,6 @@ def test_phase_b_uses_recent_explicit_unit_for_unitless_altitude() -> None:
     )
 
     assert [row["stage2_altitude_m"] for row in clean_rows] == [166000.0, 166000.0, 166000.0]
+    assert raw_rows[1]["stage2_altitude_unit_source"] == "inferred_dominant"
+    assert raw_rows[1]["stage2_altitude_parse_confidence"] > 0.8
+    assert raw_rows[1]["stage2_altitude_candidate_count"] >= 2

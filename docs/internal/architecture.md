@@ -28,6 +28,7 @@ src/webcalyzer/
   config.py              YAML load, save, defaults, and legacy aliases
   extract.py             OCR Phase A and Phase B extraction pipeline
   sanitize.py            OCR text normalization, unit parsing, MET parsing
+  units.py               Pint-backed unit conversion
   postprocess.py         Clean rebuild and outlier rejection
   trajectory.py          Interpolation, integration, downrange reconstruction
   acceleration.py        Velocity smoothing and acceleration derivation
