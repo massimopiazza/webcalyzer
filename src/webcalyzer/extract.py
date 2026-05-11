@@ -31,6 +31,8 @@ from webcalyzer.video import build_sample_indices, crop_box, get_video_metadata,
 class FieldState:
     previous_value_si: float | None = None
     previous_met_s: float | None = None
+    previous_unit: str | None = None
+    previous_explicit_unit: str | None = None
 
 
 @dataclass(slots=True)
@@ -124,7 +126,7 @@ def extract_telemetry(
         from webcalyzer.postprocess import rebuild_clean_from_raw
 
         raw_df = apply_hardcoded_raw_data_points(raw_df, profile.hardcoded_raw_data_points)
-        clean_df = rebuild_clean_from_raw(raw_df)
+        clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
     else:
         clean_df = pd.DataFrame(clean_rows)
     raw_df.to_csv(output_path / "telemetry_raw.csv", index=False)
@@ -433,6 +435,7 @@ def _run_phase_b(
                 variant=met_choice.variant,
             )
 
+        chosen_by_field: dict[str, MeasurementOption | None] = {}
         for field_name in CANONICAL_FIELD_ORDER:
             if field_name == "met":
                 continue
@@ -444,11 +447,16 @@ def _run_phase_b(
                 continue
             stage_state = stage_states[field_cfg.stage]
             field_state = stage_state.fields.setdefault(field_name, FieldState())
+            preferred_unit = field_state.previous_explicit_unit or field_state.previous_unit
             options: list[MeasurementOption] = []
             for raw_text, variant in ocr_candidates_by_field.get(field_name, []):
                 options.extend(
                     parse_measurement_options(
-                        raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+                        raw_text,
+                        kind=field_cfg.kind,
+                        variant=variant,
+                        parsing=parsing,
+                        preferred_unit=preferred_unit,
                     )
                 )
             options = [
@@ -462,8 +470,10 @@ def _run_phase_b(
                 previous_value_si=field_state.previous_value_si,
                 previous_met_s=field_state.previous_met_s,
                 current_met_s=mission_elapsed_time_s,
+                preferred_unit=preferred_unit,
             )
             if chosen is None:
+                chosen_by_field[field_name] = None
                 candidates = ocr_candidates_by_field.get(field_name, [])
                 per_field_obs[field_name] = OCRObservation(
                     field_name=field_name,
@@ -475,6 +485,7 @@ def _run_phase_b(
                     variant=candidates[0][1] if candidates else None,
                 )
             else:
+                chosen_by_field[field_name] = chosen
                 per_field_obs[field_name] = OCRObservation(
                     field_name=field_name,
                     raw_text=chosen.raw_text,
@@ -502,10 +513,34 @@ def _run_phase_b(
         else:
             stage_states["stage1"].activated = True
 
-        _update_field_state(stage_states["stage1"], "stage1_velocity", stage1_velocity, mission_elapsed_time_s)
-        _update_field_state(stage_states["stage1"], "stage1_altitude", stage1_altitude, mission_elapsed_time_s)
-        _update_field_state(stage_states["stage2"], "stage2_velocity", stage2_velocity, mission_elapsed_time_s)
-        _update_field_state(stage_states["stage2"], "stage2_altitude", stage2_altitude, mission_elapsed_time_s)
+        _update_field_state(
+            stage_states["stage1"],
+            "stage1_velocity",
+            stage1_velocity,
+            mission_elapsed_time_s,
+            chosen_by_field.get("stage1_velocity"),
+        )
+        _update_field_state(
+            stage_states["stage1"],
+            "stage1_altitude",
+            stage1_altitude,
+            mission_elapsed_time_s,
+            chosen_by_field.get("stage1_altitude"),
+        )
+        _update_field_state(
+            stage_states["stage2"],
+            "stage2_velocity",
+            stage2_velocity,
+            mission_elapsed_time_s,
+            chosen_by_field.get("stage2_velocity"),
+        )
+        _update_field_state(
+            stage_states["stage2"],
+            "stage2_altitude",
+            stage2_altitude,
+            mission_elapsed_time_s,
+            chosen_by_field.get("stage2_altitude"),
+        )
 
         raw_row: dict[str, object] = {
             "frame_index": frame_data.frame_index,
@@ -638,7 +673,7 @@ def _field_specific_option_is_valid(
         "stage1_velocity": 2500.0,
         "stage1_altitude": 150000.0,
         "stage2_velocity": 9000.0,
-        "stage2_altitude": 600000.0,
+        "stage2_altitude": 2000000.0,
     }
     upper_bound = upper_bounds.get(field_name)
     if upper_bound is None:
@@ -679,12 +714,22 @@ def _met_kinematic_bound(*, kind: str, mission_elapsed_time_s: float) -> float |
     return None
 
 
-def _update_field_state(stage_state: StageState, field_name: str, value_si: float | None, mission_elapsed_time_s: float | None) -> None:
+def _update_field_state(
+    stage_state: StageState,
+    field_name: str,
+    value_si: float | None,
+    mission_elapsed_time_s: float | None,
+    chosen: MeasurementOption | None = None,
+) -> None:
     if value_si is None or mission_elapsed_time_s is None:
         return
     field_state = stage_state.fields.setdefault(field_name, FieldState())
     field_state.previous_value_si = value_si
     field_state.previous_met_s = mission_elapsed_time_s
+    if chosen is not None:
+        field_state.previous_unit = chosen.unit
+        if chosen.explicit_unit:
+            field_state.previous_explicit_unit = chosen.unit
 
 
 def _build_profile_sample_indices(*, metadata, profile: ProfileConfig, target_fps: float) -> list[int]:

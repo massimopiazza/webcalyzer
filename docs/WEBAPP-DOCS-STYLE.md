@@ -147,7 +147,7 @@ Rules for this table:
 
 Examples:
 
-- Click **Run pipeline** after selecting **Input video** and **Output directory**.
+- Click **Run pipeline** after selecting **Input video** and **Output parent folder**.
 - Set `video_overlay.plot_mode` to `with_rejected` to include outlier markers.
 - The web endpoint writes through `save_template(...)`.
 
@@ -192,13 +192,13 @@ Task sections give step-by-step instructions using a consistent pattern:
 ```markdown
 ## Run an extraction
 
-Open **Run**, select a profile template, choose an input video, and choose an output directory. Click **Run pipeline** to start the job.
+Open **Run**, select a profile template, choose an input video, and choose an output parent folder. Click **Run pipeline** to start the job.
 
 Fill in:
 
 - **Profile template:** YAML profile used to configure fields, parsing, trajectory, and overlay settings
 - **Input video:** source webcast video readable by OpenCV or AVFoundation
-- **Output directory:** directory where CSVs, plots, review frames, and overlay files are written
+- **Output parent folder:** directory where the run creates a timestamped child folder for CSVs, plots, review frames, and overlay files
 
 Note: The run button stays disabled until the profile is valid and both paths are selected.
 ```

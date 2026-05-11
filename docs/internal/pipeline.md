@@ -194,4 +194,6 @@ webcalyzer reconstruct-trajectory --output <dir>
 webcalyzer render-overlay --video <video> --output <dir>
 ```
 
-For web execution, run the same scenario through **Run** and confirm that the output directory contains raw telemetry, clean telemetry, trajectory output when enabled, plots, `config_resolved.yaml`, and overlay video when enabled.
+`run` treats `<dir>` as an output parent and writes artifacts into a timestamped child directory. Use that child directory for downstream `reconstruct-trajectory` and `render-overlay` checks.
+
+For web execution, run the same scenario through **Run** and confirm that the timestamped output directory contains raw telemetry, clean telemetry, trajectory output when enabled, plots, `config_resolved.yaml`, and overlay video when enabled.

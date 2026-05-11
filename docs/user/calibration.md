@@ -77,7 +77,7 @@ If you start from a blank/default profile and save a new file, the new template 
 The saved template can be loaded on **Run** or used directly with the CLI:
 
 ```bash
-webcalyzer run --video /path/to/video.mp4 --config /path/to/profile.yaml --output /path/to/output
+webcalyzer run --video /path/to/video.mp4 --config /path/to/profile.yaml --output /path/to/output-parent
 ```
 
 For direct edits to segment ranges, bbox values, and parsing settings, use [profile configuration](profile-configuration.md).

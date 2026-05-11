@@ -18,6 +18,7 @@ from webcalyzer.postprocess import (
     rebuild_clean_in_output_dir,
 )
 from webcalyzer.rescue import rescue_output_dir
+from webcalyzer.run_paths import timestamped_run_output_dir
 from webcalyzer.trajectory import (
     INTEGRATION_METHODS,
     INTERPOLATION_METHODS,
@@ -409,29 +410,31 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         _validate_runnable_profile(profile)
-        generate_review_frames(args.video, profile, Path(args.output) / "review")
+        output_dir = timestamped_run_output_dir(args.output, args.config)
+        print(f"[webcalyzer] output directory: {output_dir}")
+        generate_review_frames(args.video, profile, output_dir / "review")
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
         backend_options = _ocr_backend_options(args, profile)
         effective_fps = float(args.sample_fps or profile.default_sample_fps)
         _raw_df, clean_df = extract_telemetry(
             args.video,
             profile,
-            args.output,
+            output_dir,
             sample_fps=args.sample_fps,
             backend_options=backend_options,
             workers=_resolve_workers(args, backend_options, profile.default_ocr_workers),
             skip_detection=_skip_detection_from_args(args, profile),
         )
         clean_df, trajectory_df = _write_trajectory_for_output(
-            clean_df, args.output, profile=profile, sample_fps=effective_fps
+            clean_df, output_dir, profile=profile, sample_fps=effective_fps
         )
         create_plots(
             clean_df,
-            args.output,
+            output_dir,
             trajectory_df=trajectory_df,
-            trajectory_config=_trajectory_config_from_profile(args.output, profile=profile, args=args),
+            trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
         )
-        _render_overlay_if_enabled(args.video, clean_df, args.output, profile, args, trajectory_df=trajectory_df)
+        _render_overlay_if_enabled(args.video, clean_df, output_dir, profile, args, trajectory_df=trajectory_df)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")

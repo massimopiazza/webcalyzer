@@ -110,10 +110,11 @@ Then open <http://localhost:8765>. The UI exposes four pages:
 
 - **Run**: load any YAML profile from `--templates-dir`, edit every field
   the YAML supports (with inline validation), pick a video and an output
-  directory via the server-side file browser, then run the same pipeline as
-  `webcalyzer run`. Live stdout/stderr streams back over Server-Sent Events.
+  parent folder via the server-side file browser, then run the same pipeline
+  as `webcalyzer run`. Each run creates a timestamped child folder named
+  `<YAML-FILENAME>_yyyy-mm-ddThh-mm-ss`. Live stdout/stderr streams back over Server-Sent Events.
   The run console opens as a focused dialog by default and can be docked at
-  the top of the run page. Primary outputs are linked when the job finishes;
+  the top of the run page. Primary outputs are linked as they are written;
   review-frame files stay on disk but are not listed in the console output
   links.
 - **Calibrate**: scrub through video frames, split the video into
@@ -366,15 +367,19 @@ webcalyzer extract \
 ### `run`: extract + plot + render overlay
 
 The convenience subcommand. Equivalent to running `sample-frames`,
-`extract`, `plot`, and `render-overlay` back to back into the same
-output directory.
+`extract`, `plot`, and `render-overlay` back to back into a timestamped
+child directory under `--output`. The child folder is named
+`<YAML-FILENAME>_yyyy-mm-ddThh-mm-ss`.
 
 ```bash
 webcalyzer run \
   --video BlueOrigin_NG-3.mp4 \
   --config configs/blue_origin/new_glenn_ng3.yaml \
-  --output outputs/ng3
+  --output outputs
 ```
+
+Downstream commands operate on the timestamped child directory created by
+`run`, not the parent passed to `--output`.
 
 ### `plot`: regenerate plots from an existing run
 
@@ -453,8 +458,9 @@ fit within 1280×720.
 
 ## Output files
 
-Every successful `extract` / `run` writes the following into the output
-directory:
+Every successful `extract` writes the following into the specified output
+directory. Every successful `run` writes the same files into the timestamped
+child directory created under the specified output parent:
 
 | File | Purpose |
 |------|---------|

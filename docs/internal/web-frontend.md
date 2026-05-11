@@ -77,7 +77,7 @@ Note: In user-facing UI text, call field `kind` the field **Type**. Keep `kind` 
 
 ### Run console
 
-`RunPanel` subscribes to `/api/jobs/{id}/events` with `EventSource`. It appends logs, tracks phase events, exposes cancellation, and links finished output files through `api.jobFileUrl(...)`. Server-side job behavior is documented in [web-backend.md](web-backend.md#job-lifecycle).
+`RunPanel` subscribes to `/api/jobs/{id}/events` with `EventSource`. It appends logs, tracks phase events, applies `progress` event output lists, exposes cancellation, and links output files through `api.jobFileUrl(...)`. Server-side job behavior is documented in [web-backend.md](web-backend.md#job-lifecycle).
 
 The console has two presentation modes:
 

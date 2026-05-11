@@ -141,7 +141,7 @@ export function RunPage({
       return;
     }
     if (!outputDir) {
-      toast.error("Select an output directory.");
+      toast.error("Select an output parent folder.");
       return;
     }
     if (!state.isRunnable) {
@@ -153,6 +153,7 @@ export function RunPage({
       const job = await api.runJob({
         video_path: videoPath,
         output_dir: outputDir,
+        template_name: templateName,
         profile: state.profile as ProfileDTO,
         sample_fps: null,
         ocr_backend: state.profile.ocr_backend,
@@ -233,7 +234,7 @@ export function RunPage({
               <Field label="Input video" required>
                 <PathPicker value={videoPath} onChange={setVideoPath} mode="video" />
               </Field>
-              <Field label="Output directory" required>
+              <Field label="Output parent folder" required>
                 <PathPicker value={outputDir} onChange={setOutputDir} mode="directory" />
               </Field>
             </div>

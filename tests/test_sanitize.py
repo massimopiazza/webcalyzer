@@ -89,6 +89,50 @@ def test_parsing_profile_enables_custom_unit_aliases() -> None:
     assert round(chosen.value_si, 3) == 100.0
 
 
+def test_altitude_parser_keeps_recent_explicit_unit_for_unitless_text() -> None:
+    profile = default_parsing_profile()
+    options = parse_measurement_options(
+        "ALTITUDE 166",
+        kind="altitude",
+        variant="raw",
+        parsing=profile,
+        preferred_unit="KM",
+    )
+    chosen = choose_best_measurement(
+        options,
+        kind="altitude",
+        previous_value_si=166000.0,
+        previous_met_s=1092.0,
+        current_met_s=1106.0,
+        preferred_unit="KM",
+    )
+
+    assert chosen is not None
+    assert chosen.unit == "KM"
+    assert chosen.value_si == 166000.0
+
+
+def test_altitude_parser_accepts_high_stage2_kilometer_values() -> None:
+    profile = default_parsing_profile()
+    options = parse_measurement_options(
+        "ALTITUDE 802 KM",
+        kind="altitude",
+        variant="raw",
+        parsing=profile,
+    )
+    chosen = choose_best_measurement(
+        options,
+        kind="altitude",
+        previous_value_si=799000.0,
+        previous_met_s=2126.0,
+        current_met_s=2128.0,
+    )
+
+    assert chosen is not None
+    assert chosen.unit == "KM"
+    assert chosen.value_si == 802000.0
+
+
 def test_default_parsing_profile_has_baseline_custom_words() -> None:
     profile = default_parsing_profile()
     assert "MPH" in profile.custom_words

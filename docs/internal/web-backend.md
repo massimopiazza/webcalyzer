@@ -110,7 +110,7 @@ Cancellation is cooperative at phase boundaries and safe checkpoints. Cancellabl
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | `str` | Examples include `phase`, `log`, `done`, `error`, and `cancelled`. |
+| `kind` | `str` | Examples include `phase`, `log`, `progress`, `done`, `error`, and `cancelled`. |
 | `message` | `str` | Human-readable event text. |
 | `payload` | `dict or null` | Optional structured data. |
 | `timestamp` | `str` | Event timestamp serialized for the client. |
@@ -119,7 +119,9 @@ The stream closes after `done`, `error`, or `cancelled`.
 
 ### Output files
 
-The job runner records finished output paths relative to the output directory. The frontend links those paths through `api.jobFileUrl(...)`; see [web-frontend.md](web-frontend.md#run-console).
+The job runner creates a timestamped child directory under the requested output parent folder before executing phases. The child directory name is based on the submitted template filename and local wall-clock time.
+
+The job runner refreshes output paths after each phase that can write artifacts and emits `progress` events with `payload.outputs` and `payload.new_outputs`. Paths are relative to the timestamped output directory. The frontend links those paths through `api.jobFileUrl(...)`; see [web-frontend.md](web-frontend.md#run-console).
 
 Files under `review/` are intentionally excluded from the run console output list. Review JPEGs and contact sheets still exist on disk, but they are not shown among the primary finished artifacts.
 

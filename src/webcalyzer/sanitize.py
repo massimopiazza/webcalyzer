@@ -188,6 +188,7 @@ def parse_measurement_options(
     kind: str,
     variant: str,
     parsing: ParsingProfile | None = None,
+    preferred_unit: str | None = None,
 ) -> list[MeasurementOption]:
     tokens = _extract_numeric_tokens(text)
     if not tokens:
@@ -198,7 +199,13 @@ def parse_measurement_options(
     options: list[MeasurementOption] = []
     for token in tokens:
         inferred_unit_names = (
-            [explicit_unit] if explicit_unit else _infer_unit_names(kind_parsing=kind_parsing, token=token)
+            [explicit_unit]
+            if explicit_unit
+            else _infer_unit_names(
+                kind_parsing=kind_parsing,
+                token=token,
+                preferred_unit=preferred_unit,
+            )
         )
         for unit_name in inferred_unit_names:
             unit = _lookup_unit(kind_parsing, unit_name)
@@ -231,7 +238,11 @@ def _lookup_unit(kind_parsing: FieldKindParsing, unit_name: str) -> UnitAlias | 
     return None
 
 
-def _infer_unit_names(kind_parsing: FieldKindParsing, token: str) -> list[str]:
+def _infer_unit_names(
+    kind_parsing: FieldKindParsing,
+    token: str,
+    preferred_unit: str | None = None,
+) -> list[str]:
     """Pick which unit candidates to try when the OCR text has no explicit unit.
 
     The candidate set is profile-driven: a feed where velocity is only ever
@@ -252,6 +263,9 @@ def _infer_unit_names(kind_parsing: FieldKindParsing, token: str) -> list[str]:
     primary = kind_parsing.ambiguous_default_unit
     if primary and primary in candidates:
         candidates = [primary] + [name for name in candidates if name != primary]
+    preferred = preferred_unit.upper() if preferred_unit else None
+    if preferred and preferred in available:
+        candidates = [preferred] + [name for name in candidates if name != preferred]
     return candidates
 
 
@@ -271,13 +285,14 @@ def choose_best_measurement(
     previous_value_si: float | None,
     previous_met_s: float | None,
     current_met_s: float | None,
+    preferred_unit: str | None = None,
 ) -> MeasurementOption | None:
     if not options:
         return None
 
     bounds = {
         "velocity": (0.0, 12000.0),
-        "altitude": (-100.0, 500000.0),
+        "altitude": (-100.0, 2000000.0),
     }
     max_rate = {
         "velocity": 250.0,
@@ -295,6 +310,8 @@ def choose_best_measurement(
         score = 0.0
         if option.explicit_unit:
             score += 3.0
+        elif preferred_unit and option.unit == preferred_unit.upper():
+            score += 1.5
         if option.raw_token.count(",") or option.raw_token.count(".") or option.raw_token.count(":"):
             score += 0.5
 

@@ -22,10 +22,10 @@ def rebuild_clean_from_raw(
     raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_raw_data_points)
     parsing = profile.parsing if profile is not None else None
     state = {
-        "stage1_velocity": {"prev_val": None, "prev_met": None},
-        "stage1_altitude": {"prev_val": None, "prev_met": None},
-        "stage2_velocity": {"prev_val": None, "prev_met": None},
-        "stage2_altitude": {"prev_val": None, "prev_met": None},
+        "stage1_velocity": _empty_rebuild_field_state(),
+        "stage1_altitude": _empty_rebuild_field_state(),
+        "stage2_velocity": _empty_rebuild_field_state(),
+        "stage2_altitude": _empty_rebuild_field_state(),
     }
     stage2_activated = False
     rows: list[dict[str, object]] = []
@@ -53,8 +53,14 @@ def rebuild_clean_from_raw(
             if pd.isna(raw_text):
                 parsed[field_name] = None
                 continue
+            field_state = state[field_name]
+            preferred_unit = field_state["prev_explicit_unit"] or field_state["prev_unit"]
             options = parse_measurement_options(
-                str(raw_text), kind=kind, variant="raw", parsing=parsing
+                str(raw_text),
+                kind=kind,
+                variant="raw",
+                parsing=parsing,
+                preferred_unit=preferred_unit,
             )
             current_met_value = (
                 float(mission_elapsed_time_s)
@@ -72,12 +78,17 @@ def rebuild_clean_from_raw(
                 previous_value_si=state[field_name]["prev_val"],
                 previous_met_s=state[field_name]["prev_met"],
                 current_met_s=mission_elapsed_time_s,
+                preferred_unit=preferred_unit,
             )
             value = chosen.value_si if chosen else None
             parsed[field_name] = value
             if value is not None and not pd.isna(mission_elapsed_time_s):
                 state[field_name]["prev_val"] = value
                 state[field_name]["prev_met"] = mission_elapsed_time_s
+                if chosen is not None:
+                    state[field_name]["prev_unit"] = chosen.unit
+                    if chosen.explicit_unit:
+                        state[field_name]["prev_explicit_unit"] = chosen.unit
 
         stage2_velocity = parsed["stage2_velocity"]
         stage2_altitude = parsed["stage2_altitude"]
@@ -102,6 +113,15 @@ def rebuild_clean_from_raw(
             }
         )
     return pd.DataFrame(rows)
+
+
+def _empty_rebuild_field_state() -> dict[str, float | str | None]:
+    return {
+        "prev_val": None,
+        "prev_met": None,
+        "prev_unit": None,
+        "prev_explicit_unit": None,
+    }
 
 
 def rebuild_clean_in_output_dir(output_dir: str | Path, profile: ProfileConfig | None = None) -> pd.DataFrame:

@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 
+from webcalyzer.config import default_parsing_profile
 from webcalyzer.models import HardcodedRawDataPoint
+from webcalyzer.models import ProfileConfig
 from webcalyzer.postprocess import (
     apply_mahalanobis_outlier_rejection_with_rejected,
     apply_outlier_rejection_in_output_dir,
@@ -229,3 +231,40 @@ def test_hardcoded_stage2_zero_is_not_suppressed_before_activation() -> None:
 
     assert clean_df.loc[0, "stage2_velocity_mps"] == 0.0
     assert clean_df.loc[0, "stage2_altitude_m"] == 0.0
+
+
+def test_rebuild_clean_uses_recent_explicit_unit_for_unitless_altitude() -> None:
+    raw_df = pd.DataFrame(
+        [
+            {
+                "frame_index": 0,
+                "sample_time_s": 1080.0,
+                "mission_elapsed_time_s": 1080.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166 KM",
+            },
+            {
+                "frame_index": 1,
+                "sample_time_s": 1094.0,
+                "mission_elapsed_time_s": 1094.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166",
+            },
+            {
+                "frame_index": 2,
+                "sample_time_s": 1110.0,
+                "mission_elapsed_time_s": 1110.0,
+                "stage2_altitude_raw_text": "ALTITUDE 166 KM",
+            },
+        ]
+    )
+    profile = ProfileConfig(
+        profile_name="km_feed",
+        description="",
+        default_sample_fps=1.0,
+        fixture_frame_count=1,
+        fixture_time_range_s=None,
+        parsing=default_parsing_profile(),
+    )
+
+    clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
+
+    assert clean_df["stage2_altitude_m"].tolist() == [166000.0, 166000.0, 166000.0]

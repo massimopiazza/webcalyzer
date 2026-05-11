@@ -236,6 +236,7 @@ class JobManager:
             output_path / "review",
             cancel_check=lambda: self._check_cancel(job),
         )
+        self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 
         self._emit(
@@ -252,6 +253,7 @@ class JobManager:
             skip_detection=options.ocr_skip_detection,
             cancel_check=lambda: self._check_cancel(job),
         )
+        self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 
         self._emit(
@@ -264,6 +266,7 @@ class JobManager:
             options.profile.trajectory,
             sample_fps=effective_fps,
         )
+        self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 
         self._emit(
@@ -276,6 +279,7 @@ class JobManager:
             trajectory_df=trajectory_df,
             trajectory_config=options.profile.trajectory,
         )
+        self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 
         if options.profile.video_overlay.enabled:
@@ -298,6 +302,7 @@ class JobManager:
                 encoder=options.overlay_encoder,
                 cancel_check=lambda: self._check_cancel(job),
             )
+            self._refresh_output_paths(job, output_path)
         else:
             self._emit(
                 job,
@@ -305,7 +310,22 @@ class JobManager:
             )
 
         save_profile(options.profile, output_path / "config_resolved.yaml")
+        self._refresh_output_paths(job, output_path)
+
+    def _refresh_output_paths(self, job: JobRecord, output_path: Path) -> None:
+        previous = set(job.output_paths)
         job.output_paths = sorted(_collect_output_paths(output_path))
+        added = [path for path in job.output_paths if path not in previous]
+        if not added:
+            return
+        self._emit(
+            job,
+            JobEvent(
+                "progress",
+                "Output files updated",
+                {"outputs": job.output_paths, "new_outputs": added},
+            ),
+        )
 
 
 def _physical_cpu_count() -> int:

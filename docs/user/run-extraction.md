@@ -10,7 +10,7 @@ The **Run** page performs the full telemetry pipeline from a selected video and 
 |---|---|
 | **Profile template** | YAML profile loaded from the configured templates directory. Loading a template replaces the current form values. |
 | **Input video** | Source webcast video. The path must be inside one of the server roots. |
-| **Output directory** | Destination for CSVs, plots, metadata, review frames, and optional overlay video. The path must be inside one of the server roots. |
+| **Output parent folder** | Parent folder for run outputs. The app creates a timestamped child folder inside it. The path must be inside one of the server roots. |
 | **Profile form** | Editable profile surface. The run button stays disabled until the form passes client validation. |
 | **Run console** | Live status, phase events, stdout and stderr logs, cancellation, and finished output links. |
 
@@ -24,7 +24,7 @@ Note: Loading another template replaces unsaved form edits. Save the current pro
 
 ### Select input and output paths
 
-Click **Input video** and choose a supported video file from the file browser. Click **Output directory** and choose or type the destination folder.
+Click **Input video** and choose a supported video file from the file browser. Click **Output parent folder** and choose or type the destination folder. The run writes into a new child folder named `<YAML-FILENAME>_yyyy-mm-ddThh-mm-ss`.
 
 The file picker is server-side. It sees the filesystem from the FastAPI process and only exposes paths under the configured roots.
 
@@ -67,13 +67,13 @@ Close the dialog with the **Dock run console** X or by clicking outside the dial
 | **Focused dialog** | The maximize-style icon returns the console to the centered focused view. | Watch a running job without page distractions. |
 | **Docked on page** | The console sits at the top of the run page. | Keep the console in the page flow while checking configuration or output links. |
 
-The console stream includes phase events, regular logs, warnings, errors, and the final output list. Files inside `review/` are generated for visual inspection but are not shown in the finished output-link list.
+The console stream includes phase events, regular logs, warnings, errors, and output links as files are written. Files inside `review/` are generated for visual inspection but are not shown in the output-link list.
 
 ### Cancel a run
 
 Click **Cancel** in the run console. Cancellation is checked between major phases and inside long-running work. During OCR extraction, including the default one-worker Vision path, the backend runs cancellable worker chunks and terminates the OCR worker pool as soon as the cancel request is observed.
 
-Cancelled jobs keep files that were already written. For a clean retry, choose a new output directory or remove partial files manually.
+Cancelled jobs keep files that were already written. For a clean retry, start another run from the same parent folder to get a fresh timestamped child folder, or remove partial files manually.
 
 ## Verification
 

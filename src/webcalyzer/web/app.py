@@ -22,6 +22,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from webcalyzer.config import load_profile, save_profile
+from webcalyzer.run_paths import timestamped_run_output_dir
 from webcalyzer.video import evenly_spaced_indices, get_video_metadata, read_frame
 
 from webcalyzer.web.files import (
@@ -307,7 +308,7 @@ def create_app(config: ServeConfig) -> FastAPI:
     async def run_job(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
             video_path = _ensure_within(config, payload["video_path"])
-            output_dir = _ensure_within_writable(config, payload["output_dir"])
+            output_parent = _ensure_within_writable(config, payload["output_dir"])
             profile_payload = payload["profile"]
         except KeyError as exc:
             raise HTTPException(status_code=422, detail=f"Missing field: {exc}") from exc
@@ -317,6 +318,8 @@ def create_app(config: ServeConfig) -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=_format_validation_error(exc)) from exc
         profile = model_to_profile_dataclass(model)
+        profile_source_name = payload.get("template_name") or profile.profile_name
+        output_dir = timestamped_run_output_dir(output_parent, str(profile_source_name))
 
         options = JobOptions(
             video_path=video_path,

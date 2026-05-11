@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+from datetime import datetime
 import threading
 import time
 
@@ -7,8 +8,9 @@ import pytest
 
 from webcalyzer.models import ProfileConfig, VideoOverlayConfig
 from webcalyzer.ocr_factory import OCRBackendOptions
+from webcalyzer.run_paths import timestamped_run_output_dir
 from webcalyzer.web import jobs as jobs_module
-from webcalyzer.web.jobs import JobManager, JobOptions, _collect_output_paths
+from webcalyzer.web.jobs import JobManager, JobOptions, JobRecord, _collect_output_paths
 
 
 def test_collect_output_paths_omits_review_files(tmp_path: Path) -> None:
@@ -19,6 +21,56 @@ def test_collect_output_paths_omits_review_files(tmp_path: Path) -> None:
     (tmp_path / "review" / "frame_00.jpg").write_bytes(b"jpeg")
 
     assert set(_collect_output_paths(tmp_path)) == {"plot.pdf", "data/telemetry.csv"}
+
+
+def test_timestamped_run_output_dir_uses_yaml_filename(tmp_path: Path) -> None:
+    output_dir = timestamped_run_output_dir(
+        tmp_path,
+        "configs/Falcon9_EchoStar-XXV.yaml",
+        now=datetime(2026, 5, 11, 2, 3, 4),
+    )
+
+    assert output_dir == tmp_path / "Falcon9_EchoStar-XXV_2026-05-11T02-03-04"
+
+
+def test_refresh_output_paths_emits_progress_for_new_files(tmp_path: Path) -> None:
+    profile = ProfileConfig(
+        profile_name="progress_test",
+        description="",
+        default_sample_fps=1.0,
+        fixture_frame_count=1,
+        fixture_time_range_s=None,
+        video_overlay=VideoOverlayConfig(enabled=False),
+    )
+    job = JobRecord(
+        id="job",
+        state="running",
+        started_at=time.time(),
+        ended_at=None,
+        options=JobOptions(
+            video_path=tmp_path / "video.mp4",
+            output_dir=tmp_path,
+            profile=profile,
+            sample_fps=None,
+            ocr_backend=OCRBackendOptions().backend,
+            ocr_recognition_level=OCRBackendOptions().recognition_level,
+            ocr_workers=1,
+            ocr_skip_detection=False,
+            overlay_engine="auto",
+            overlay_encoder="auto",
+        ),
+    )
+    manager = JobManager()
+
+    (tmp_path / "telemetry_raw.csv").write_text("", encoding="utf-8")
+    manager._refresh_output_paths(job, tmp_path)
+
+    assert job.output_paths == ["telemetry_raw.csv"]
+    assert job.events[-1].kind == "progress"
+    assert job.events[-1].payload == {
+        "outputs": ["telemetry_raw.csv"],
+        "new_outputs": ["telemetry_raw.csv"],
+    }
 
 
 def test_job_cancel_stops_running_extraction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

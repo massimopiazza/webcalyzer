@@ -1,6 +1,6 @@
 # Outputs and Review
 
-Each run writes a self-contained output directory. The files are designed so you can inspect OCR quality, rerun downstream stages, compare configuration choices, and reproduce the run later. Review the outputs before trusting a rendered overlay video.
+Each full run writes a self-contained timestamped output directory under the selected output parent folder. The folder name is `<YAML-FILENAME>_yyyy-mm-ddThh-mm-ss`. The files are designed so you can inspect OCR quality, rerun downstream stages, compare configuration choices, and reproduce the run later. Review the outputs before trusting a rendered overlay video.
 
 ## Output Directory
 

@@ -12,7 +12,7 @@ Webcalyzer runs as a local application. The backend is a Python package with a c
 | **Web bundle** | Static React files under `web/dist/`, served by the FastAPI process. |
 | **Root** (`--root`) | Directory the web file browser may read from and write to. Pass more than one root when videos and outputs live in different trees. |
 | **Templates dir** (`--templates-dir`) | Directory containing YAML profile templates. The default is `<current working directory>/configs`. |
-| **Output directory** | Destination chosen for each run. It receives CSVs, plots, metadata, review frames, and optional video overlays. |
+| **Output parent folder** | Destination chosen for each full run. A timestamped child folder receives CSVs, plots, metadata, review frames, and optional video overlays. |
 
 ### Install webcalyzer
 
@@ -72,13 +72,13 @@ Fill in:
 - **Templates dir:** directory containing profile YAML files
 - **Host and port:** bind address for the local server, default `127.0.0.1:8765`
 
-Note: The file browser rejects paths outside configured roots. Add another `--root` if a video, template, or output directory is not visible.
+Note: The file browser rejects paths outside configured roots. Add another `--root` if a video, template, or output parent folder is not visible.
 
 ## First Run
 
 ### Run the included profile
 
-Open **Run**, load `blue_origin/new_glenn_ng3.yaml`, choose an input video, choose an output directory, then click **Run pipeline**. The full run workflow is documented in [run extraction](run-extraction.md).
+Open **Run**, load `blue_origin/new_glenn_ng3.yaml`, choose an input video, choose an output parent folder, then click **Run pipeline**. The full run workflow is documented in [run extraction](run-extraction.md).
 
 The run console opens as a focused dialog while the job runs. Use the console control to dock it into the page when you want to keep editing or inspecting the run form behind it.
 

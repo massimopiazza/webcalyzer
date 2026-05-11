@@ -30,8 +30,10 @@ Use `run` for normal processing:
 webcalyzer run \
   --video /path/to/video.mp4 \
   --config configs/blue_origin/new_glenn_ng3.yaml \
-  --output outputs/my-run
+  --output outputs
 ```
+
+This creates a child directory such as `outputs/new_glenn_ng3_2026-05-11T02-03-04`.
 
 Add a sample-rate override for fast experiments:
 
@@ -39,7 +41,7 @@ Add a sample-rate override for fast experiments:
 webcalyzer run \
   --video /path/to/video.mp4 \
   --config configs/blue_origin/new_glenn_ng3.yaml \
-  --output outputs/quick-check \
+  --output outputs \
   --sample-fps 0.1
 ```
 
@@ -156,9 +158,9 @@ Note: `render-overlay` reads `telemetry_clean.csv`, optional `telemetry_rejected
 For a configuration change, run at least:
 
 ```bash
-webcalyzer run --video /path/to/video.mp4 --config /path/to/profile.yaml --output /path/to/output
-webcalyzer reconstruct-trajectory --output /path/to/output
-webcalyzer render-overlay --video /path/to/video.mp4 --output /path/to/output
+webcalyzer run --video /path/to/video.mp4 --config /path/to/profile.yaml --output /path/to/output-parent
+webcalyzer reconstruct-trajectory --output /path/to/output-parent/profile_yyyy-mm-ddThh-mm-ss
+webcalyzer render-overlay --video /path/to/video.mp4 --output /path/to/output-parent/profile_yyyy-mm-ddThh-mm-ss
 ```
 
 For a local environment check without a full run, use:

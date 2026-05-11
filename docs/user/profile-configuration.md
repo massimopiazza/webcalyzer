@@ -168,7 +168,7 @@ Fill in:
 - **Height fraction:** overlay panel height relative to the source frame
 - **Include source audio:** attempts to mux original audio into the rendered copy
 
-Note: The output filename must not contain path separators. Choose the output directory separately on **Run**.
+Note: The output filename must not contain path separators. Choose the output parent folder separately on **Run**.
 
 ## YAML and Verification
 

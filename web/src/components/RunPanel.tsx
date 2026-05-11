@@ -33,6 +33,7 @@ type Props = {
 export function RunPanel({ jobId, onCleared }: Props) {
   const [job, setJob] = useState<JobSummary | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
+  const [liveOutputs, setLiveOutputs] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<ConsoleViewMode>("dialog");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -40,17 +41,20 @@ export function RunPanel({ jobId, onCleared }: Props) {
     if (!jobId) {
       setJob(null);
       setEvents([]);
+      setLiveOutputs([]);
       return;
     }
     let cancelled = false;
     setViewMode("dialog");
     setEvents([]);
+    setLiveOutputs([]);
     api
       .job(jobId)
       .then((data) => {
         if (cancelled) return;
         setJob(data);
         setEvents(data.events);
+        setLiveOutputs(data.outputs);
       })
       .catch((err: ApiError) => toast.error(err.message));
 
@@ -59,8 +63,16 @@ export function RunPanel({ jobId, onCleared }: Props) {
       try {
         const event = JSON.parse(msg.data) as JobEvent;
         setEvents((prev) => [...prev, event]);
+        const outputs = outputsFromEvent(event);
+        if (outputs) setLiveOutputs(outputs);
         if (event.kind === "done" || event.kind === "error" || event.kind === "cancelled") {
-          api.job(jobId).then(setJob).catch(() => null);
+          api
+            .job(jobId)
+            .then((data) => {
+              setJob(data);
+              setLiveOutputs(data.outputs);
+            })
+            .catch(() => null);
           source.close();
         }
       } catch {
@@ -105,6 +117,7 @@ export function RunPanel({ jobId, onCleared }: Props) {
     <RunConsoleContent
       events={events}
       job={job}
+      liveOutputs={liveOutputs}
       phase={phase}
       scrollRef={scrollRef}
       viewMode={viewMode}
@@ -138,6 +151,7 @@ export function RunPanel({ jobId, onCleared }: Props) {
 function RunConsoleContent({
   events,
   job,
+  liveOutputs,
   phase,
   scrollRef,
   viewMode,
@@ -147,6 +161,7 @@ function RunConsoleContent({
 }: {
   events: JobEvent[];
   job: JobSummary | null;
+  liveOutputs: string[];
   phase: string | null;
   scrollRef: React.RefObject<HTMLDivElement>;
   viewMode: ConsoleViewMode;
@@ -156,7 +171,7 @@ function RunConsoleContent({
 }) {
   const isRunning = job?.state === "queued" || job?.state === "running";
   const isDialog = viewMode === "dialog";
-  const visibleOutputs = job?.outputs.filter((relpath) => !relpath.startsWith("review/")) ?? [];
+  const visibleOutputs = liveOutputs.filter((relpath) => !relpath.startsWith("review/"));
 
   return (
     <div className={cn("flex min-h-0 flex-col", isDialog && "max-h-[calc(100vh-1rem)]")}>
@@ -297,6 +312,14 @@ function LogLine({ event }: { event: JobEvent }) {
       <span className="text-muted-foreground">[{event.kind}]</span> {event.message}
     </div>
   );
+}
+
+function outputsFromEvent(event: JobEvent): string[] | null {
+  const value = event.payload.outputs;
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    return null;
+  }
+  return value;
 }
 
 function StateBadge({ state }: { state?: JobSummary["state"] }) {
