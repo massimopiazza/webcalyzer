@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
   Crosshair,
   GitBranchPlus,
   LoaderCircle,
+  MoreVertical,
+  Plus,
   RotateCcw,
   Scissors,
+  Search,
   X,
 } from "lucide-react";
-import { ApiError, ProfileDTO, VideoMetadata, api } from "@/lib/api";
+import { ApiError, ProfileDTO, QuantityDTO, VideoMetadata, api } from "@/lib/api";
 import { useProfileForm } from "@/lib/profileForm";
 import {
   CANONICAL_FIELD_DEFINITIONS,
@@ -17,7 +20,9 @@ import {
   CanonicalFieldName,
   FieldValue,
   Profile,
+  QuantityValue,
   SegmentValue,
+  customFieldValue,
   defaultSegmentFields,
   emptyProfile,
 } from "@/lib/schema";
@@ -25,6 +30,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/Field";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { SaveAsTemplateButton, TemplatePicker } from "@/components/TemplatePicker";
 import { PathPicker } from "@/components/PathPicker";
 import { PageHeader } from "@/components/PageHeader";
@@ -41,6 +55,8 @@ export type CalibrationBaseline = {
 
 const FRAME_PREVIEW_CADENCE_MS = 120;
 const FRAME_LOADING_DELAY_MS = 500;
+const FIELD_BOX_FILL_ALPHA = 0.13;
+const FIELD_DRAFT_FILL_ALPHA = 0.2;
 
 const FIELD_COLORS: Record<CanonicalFieldName, string> = {
   met: "#5cc4ff",
@@ -50,8 +66,25 @@ const FIELD_COLORS: Record<CanonicalFieldName, string> = {
   stage2_altitude: "#ffd64d",
 };
 
-function fieldFor(name: CanonicalFieldName): FieldValue {
-  const def = CANONICAL_FIELD_DEFINITIONS[name];
+type FieldSlotName = string;
+type QuantityOption = QuantityValue & Pick<QuantityDTO, "field_name" | "is_default">;
+type VisibleFieldSlotsBySegment = FieldSlotName[][];
+
+const CANONICAL_FIELD_LABELS: Record<CanonicalFieldName, string> = {
+  met: "time",
+  stage1_velocity: "stage1_velocity",
+  stage1_altitude: "stage1_altitude",
+  stage2_velocity: "stage2_velocity",
+  stage2_altitude: "stage2_altitude",
+};
+
+function fieldFor(name: FieldSlotName, profile?: Profile): FieldValue {
+  if (name.startsWith("custom_")) {
+    const quantity = profile?.custom_telemetry_quantities.find((item) => `custom_${item.slug}` === name);
+    if (quantity) return customFieldValue(quantity);
+  }
+  const def = CANONICAL_FIELD_DEFINITIONS[name as CanonicalFieldName];
+  if (!def) return { kind: "custom", stage: null, quantity_id: null, bbox_x1y1x2y2: null };
   return { kind: def.kind, stage: def.stage, bbox_x1y1x2y2: null };
 }
 
@@ -63,13 +96,15 @@ export type CalibratePagePersistedState = {
   metadata: VideoMetadata | null;
   frameIndex: number;
   previewFrameIndex: number;
-  activeSlot: CanonicalFieldName;
+  activeSlot: FieldSlotName;
   calibrationBaseline: CalibrationBaseline | null;
+  visibleFieldSlotsBySegment: VisibleFieldSlotsBySegment;
 };
 
 export function createDefaultCalibratePageState(): CalibratePagePersistedState {
+  const profile = emptyProfile();
   return {
-    profile: emptyProfile(),
+    profile,
     templateName: null,
     templateRefreshKey: 0,
     videoPath: "",
@@ -78,6 +113,7 @@ export function createDefaultCalibratePageState(): CalibratePagePersistedState {
     previewFrameIndex: 0,
     activeSlot: "met",
     calibrationBaseline: null,
+    visibleFieldSlotsBySegment: deriveVisibleFieldSlots(profile),
   };
 }
 
@@ -95,10 +131,19 @@ export function CalibratePage({
   const [metadata, setMetadata] = useState<VideoMetadata | null>(persistedState.metadata);
   const [frameIndex, setFrameIndex] = useState(persistedState.frameIndex);
   const [previewFrameIndex, setPreviewFrameIndex] = useState(persistedState.previewFrameIndex);
-  const [activeSlot, setActiveSlot] = useState<CanonicalFieldName>(persistedState.activeSlot);
+  const [activeSlot, setActiveSlot] = useState<FieldSlotName>(persistedState.activeSlot);
   const [calibrationBaseline, setCalibrationBaseline] =
     useState<CalibrationBaseline | null>(persistedState.calibrationBaseline);
+  const [visibleFieldSlotsBySegment, setVisibleFieldSlotsBySegment] =
+    useState<VisibleFieldSlotsBySegment>(
+      persistedState.visibleFieldSlotsBySegment ?? deriveVisibleFieldSlots(persistedState.profile),
+    );
   const [drawing, setDrawing] = useState<Box | null>(null);
+  const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
+  const [quantitySearch, setQuantitySearch] = useState("");
+  const [quantityOptions, setQuantityOptions] = useState<QuantityOption[]>([]);
+  const [quantityOptionsLoading, setQuantityOptionsLoading] = useState(false);
+  const videoPanelRef = useRef<HTMLDivElement | null>(null);
   const frameIndexRef = useRef(persistedState.frameIndex);
   const previewFrameAtRef = useRef(performance.now());
   const sliderDraggingRef = useRef(false);
@@ -115,6 +160,18 @@ export function CalibratePage({
     [state.profile.segments, frameIndex],
   );
   const activeSegment = state.profile.segments[activeSegmentIndex] ?? state.profile.segments[0];
+  const activeVisibleSlots = useMemo(
+    () =>
+      activeSegment
+        ? normalizeVisibleSlotsForSegment(
+            visibleFieldSlotsBySegment[activeSegmentIndex],
+            activeSegment,
+            state.profile,
+          )
+        : [],
+    [activeSegment, activeSegmentIndex, state.profile, visibleFieldSlotsBySegment],
+  );
+  const [slotPanelMaxHeight, setSlotPanelMaxHeight] = useState<number | null>(null);
 
   const hasCalibrationChanges = useMemo(() => {
     if (!templateName || !calibrationBaseline) return false;
@@ -133,6 +190,28 @@ export function CalibratePage({
   }, [calibrationBaseline, state.profile]);
 
   useEffect(() => {
+    if (activeVisibleSlots.length === 0 || activeVisibleSlots.includes(activeSlot)) return;
+    setActiveSlot(nextVisibleSlot(activeVisibleSlots, activeSlot));
+  }, [activeSlot, activeVisibleSlots]);
+
+  useEffect(() => {
+    const element = videoPanelRef.current;
+    if (!element) {
+      setSlotPanelMaxHeight(null);
+      return;
+    }
+    const update = () => setSlotPanelMaxHeight(element.getBoundingClientRect().height);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [metadata, activeSegmentIndex]);
+
+  useEffect(() => {
     onPersistedStateChange({
       profile: state.profile,
       templateName,
@@ -143,6 +222,7 @@ export function CalibratePage({
       previewFrameIndex,
       activeSlot,
       calibrationBaseline,
+      visibleFieldSlotsBySegment,
     });
   }, [
     activeSlot,
@@ -154,6 +234,7 @@ export function CalibratePage({
     state.profile,
     templateName,
     templateRefreshKey,
+    visibleFieldSlotsBySegment,
     videoPath,
   ]);
 
@@ -257,6 +338,29 @@ export function CalibratePage({
   useEffect(() => cancelFrameHold, [cancelFrameHold]);
 
   useEffect(() => {
+    if (!quantityDialogOpen) return;
+    let cancelled = false;
+    setQuantityOptionsLoading(true);
+    api
+      .quantities()
+      .then(({ quantities }) => {
+        if (cancelled) return;
+        setQuantityOptions(
+          mergeQuantityOptions(quantities, state.profile.custom_telemetry_quantities),
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) toast.error((err as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setQuantityOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [quantityDialogOpen, state.profile.custom_telemetry_quantities]);
+
+  useEffect(() => {
     const isTypingTarget = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) return false;
       if (target.isContentEditable) return true;
@@ -288,11 +392,24 @@ export function CalibratePage({
     if (!path) return;
     try {
       const video = await api.videoMetadata(path);
+      const segmentFields = defaultFieldsForProfile(state.profile);
+      const nextSegments = [
+        {
+          id: "segment_1",
+          start_frame_index: 0,
+          start_time_s: 0,
+          end_frame_index: video.frame_count,
+          end_time_s: timeForFrame(video.frame_count, video.fps),
+          visible_fields: fieldSlotsForProfile(state.profile),
+          fields: segmentFields,
+        },
+      ];
       setMetadata(video);
       setFrameIndex(0);
       frameIndexRef.current = 0;
       setPreviewFrameIndex(0);
       previewFrameAtRef.current = performance.now();
+      setVisibleFieldSlotsBySegment(deriveVisibleFieldSlots({ ...state.profile, segments: nextSegments }));
       state.setProfile((prev) => ({
         ...prev,
         calibration_video: {
@@ -302,16 +419,7 @@ export function CalibratePage({
           width: video.width,
           height: video.height,
         },
-        segments: [
-          {
-            id: "segment_1",
-            start_frame_index: 0,
-            start_time_s: 0,
-            end_frame_index: video.frame_count,
-            end_time_s: timeForFrame(video.frame_count, video.fps),
-            fields: defaultSegmentFields(),
-          },
-        ],
+        segments: nextSegments,
       }));
     } catch (err) {
       toast.error((err as ApiError).message);
@@ -330,6 +438,7 @@ export function CalibratePage({
     state.reset(nextProfile);
     setTemplateName(name);
     setCalibrationBaseline(calibrationFromProfile(nextProfile));
+    setVisibleFieldSlotsBySegment(deriveVisibleFieldSlots(nextProfile));
     applyCalibrationViewState(nextProfile);
   };
 
@@ -376,6 +485,7 @@ export function CalibratePage({
     setCalibrationBaseline(null);
     setDrawing(null);
     setActiveSlot("met");
+    setVisibleFieldSlotsBySegment(deriveVisibleFieldSlots(blankProfile));
     applyCalibrationViewState(blankProfile);
   };
 
@@ -387,6 +497,13 @@ export function CalibratePage({
       calibration_video: baseline.calibration_video,
       segments: baseline.segments,
     }));
+    setVisibleFieldSlotsBySegment(
+      deriveVisibleFieldSlots({
+        ...state.profile,
+        calibration_video: baseline.calibration_video,
+        segments: baseline.segments,
+      }),
+    );
     applyCalibrationViewState({
       ...state.profile,
       calibration_video: baseline.calibration_video,
@@ -402,7 +519,7 @@ export function CalibratePage({
     patchSegments((segments) => {
       const next = [...segments];
       const segment = cloneSegment(next[activeSegmentIndex]);
-      const field = segment.fields[activeSlot] ?? fieldFor(activeSlot);
+      const field = segment.fields[activeSlot] ?? fieldFor(activeSlot, state.profile);
       field.bbox_x1y1x2y2 = normalizeBox(box);
       segment.fields[activeSlot] = field;
       next[activeSegmentIndex] = segment;
@@ -411,62 +528,183 @@ export function CalibratePage({
     setActiveSlot(nextEnabledSlot(activeSegment.fields, activeSlot));
   };
 
-  const toggleSlot = (name: CanonicalFieldName, enabled: boolean) => {
-    if (!enabled && name === activeSlot) {
-      const nextFields = { ...activeSegment.fields };
-      delete nextFields[name];
-      setActiveSlot(nextEnabledSlot(nextFields, activeSlot));
-    }
+  const toggleSlot = (name: FieldSlotName, enabled: boolean) => {
     patchSegments((segments) => {
       const next = [...segments];
       const segment = cloneSegment(next[activeSegmentIndex]);
-      if (enabled) segment.fields[name] = segment.fields[name] ?? fieldFor(name);
-      else delete segment.fields[name];
+      if (enabled) {
+        if (!segment.visible_fields.includes(name)) segment.visible_fields.push(name);
+        segment.fields[name] = segment.fields[name] ?? fieldFor(name, state.profile);
+      } else {
+        delete segment.fields[name];
+      }
       next[activeSegmentIndex] = segment;
       return next;
     });
   };
 
+  const removeQuantityFromCurrentSegment = (name: FieldSlotName) => {
+    const nextVisibleSlots = activeVisibleSlots.filter((slotName) => slotName !== name);
+    if (name === activeSlot) setActiveSlot(nextVisibleSlot(nextVisibleSlots, activeSlot));
+    setVisibleFieldSlotsBySegment((previous) =>
+      state.profile.segments.map((segment, index) =>
+        index === activeSegmentIndex
+          ? normalizeVisibleSlotsForSegment(previous[index], segment, state.profile).filter(
+              (slotName) => slotName !== name,
+            )
+          : normalizeVisibleSlotsForSegment(previous[index], segment, state.profile),
+      ),
+    );
+    patchSegments((segments) => {
+      const next = [...segments];
+      const segment = cloneSegment(next[activeSegmentIndex]);
+      delete segment.fields[name];
+      segment.visible_fields = segment.visible_fields.filter((slotName) => slotName !== name);
+      next[activeSegmentIndex] = segment;
+      return next;
+    });
+  };
+
+  const removeQuantityFromAllSegments = (name: FieldSlotName) => {
+    const nextVisibleSlots = activeVisibleSlots.filter((slotName) => slotName !== name);
+    if (name === activeSlot) setActiveSlot(nextVisibleSlot(nextVisibleSlots, activeSlot));
+    setVisibleFieldSlotsBySegment((previous) =>
+      state.profile.segments.map((segment, index) =>
+        normalizeVisibleSlotsForSegment(previous[index], segment, state.profile).filter(
+          (slotName) => slotName !== name,
+        ),
+      ),
+    );
+    patchSegments((segments) =>
+      segments.map((segment) => {
+        if (!(name in segment.fields) && !segment.visible_fields.includes(name)) return segment;
+        const next = cloneSegment(segment);
+        delete next.fields[name];
+        next.visible_fields = next.visible_fields.filter((slotName) => slotName !== name);
+        return next;
+      }),
+    );
+  };
+
+  const openQuantityDialog = () => {
+    setQuantitySearch("");
+    setQuantityDialogOpen(true);
+  };
+
+  const addQuantityToAllSegments = (quantity: QuantityOption) => {
+    const fieldName = fieldNameForQuantity(quantity);
+    const isCanonical = isCanonicalFieldName(fieldName);
+    setVisibleFieldSlotsBySegment((previous) =>
+      state.profile.segments.map((segment, index) =>
+        addVisibleSlot(
+          normalizeVisibleSlotsForSegment(previous[index], segment, state.profile),
+          fieldName,
+          state.profile.custom_telemetry_quantities,
+        ),
+      ),
+    );
+    state.setProfile((prev) => {
+      const alreadyInProfile = prev.custom_telemetry_quantities.some(
+        (current) => current.id === quantity.id,
+      );
+      const profileQuantity = toProfileQuantity(quantity);
+      return {
+        ...prev,
+        custom_telemetry_quantities: isCanonical || alreadyInProfile
+          ? prev.custom_telemetry_quantities
+          : [...prev.custom_telemetry_quantities, profileQuantity],
+        segments: prev.segments.map((segment) => ({
+          ...segment,
+          visible_fields: addVisibleSlot(
+            normalizeVisibleSlotsForSegment(segment.visible_fields, segment, prev),
+            fieldName,
+            prev.custom_telemetry_quantities,
+          ),
+          fields: {
+            ...segment.fields,
+            [fieldName]: segment.fields[fieldName] ?? (
+              isCanonical ? fieldFor(fieldName, prev) : customFieldValue(profileQuantity)
+            ),
+          },
+        })),
+      };
+    });
+    setActiveSlot(fieldName);
+    setQuantityDialogOpen(false);
+  };
+
   const splitAtFrame = () => {
     if (!metadata) return;
-    patchSegments((segments) => {
-      const index = activeSegmentForFrame(segments, frameIndex);
-      const segment = segments[index];
-      if (!segment || frameIndex <= segment.start_frame_index || frameIndex >= segment.end_frame_index) {
-        toast.error("Choose a frame inside a segment before splitting.");
-        return segments;
-      }
-      const first = cloneSegment(segment);
-      const second: SegmentValue = {
-        id: "segment_new",
-        start_frame_index: frameIndex,
-        start_time_s: timeForFrame(frameIndex, metadata.fps),
-        end_frame_index: segment.end_frame_index,
-        end_time_s: segment.end_time_s,
-        fields: defaultSegmentFields(),
-      };
-      first.end_frame_index = frameIndex;
-      first.end_time_s = timeForFrame(frameIndex, metadata.fps);
-      const next = [...segments.slice(0, index), first, second, ...segments.slice(index + 1)];
-      return renumber(next);
-    });
+    const segments = state.profile.segments;
+    const index = activeSegmentForFrame(segments, frameIndex);
+    const segment = segments[index];
+    if (!segment || frameIndex <= segment.start_frame_index || frameIndex >= segment.end_frame_index) {
+      toast.error("Choose a frame inside a segment before splitting.");
+      return;
+    }
+    const first = cloneSegment(segment);
+    const second = cloneSegment(segment);
+    first.end_frame_index = frameIndex;
+    first.end_time_s = timeForFrame(frameIndex, metadata.fps);
+    second.id = "segment_new";
+    second.start_frame_index = frameIndex;
+    second.start_time_s = timeForFrame(frameIndex, metadata.fps);
+    const nextSegments = renumber([
+      ...segments.slice(0, index),
+      first,
+      second,
+      ...segments.slice(index + 1),
+    ]);
+    const sourceVisibleSlots = normalizeVisibleSlotsForSegment(
+      visibleFieldSlotsBySegment[index],
+      segment,
+      state.profile,
+    );
+    first.visible_fields = sourceVisibleSlots;
+    second.visible_fields = [...sourceVisibleSlots];
+    setVisibleFieldSlotsBySegment([
+      ...visibleFieldSlotsBySegment.slice(0, index),
+      sourceVisibleSlots,
+      [...sourceVisibleSlots],
+      ...visibleFieldSlotsBySegment.slice(index + 1),
+    ]);
+    state.setProfile((prev) => ({ ...prev, segments: nextSegments }));
   };
 
   const mergeSplitAtBoundary = (rightSegmentIndex: number) => {
     if (!metadata) return;
-    patchSegments((segments) => {
-      if (rightSegmentIndex <= 0 || rightSegmentIndex >= segments.length) return segments;
-      const left = cloneSegment(segments[rightSegmentIndex - 1]);
-      const right = segments[rightSegmentIndex];
-      left.end_frame_index = right.end_frame_index;
-      left.end_time_s = right.end_time_s;
-      const next = [
-        ...segments.slice(0, rightSegmentIndex - 1),
-        left,
-        ...segments.slice(rightSegmentIndex + 1),
-      ];
-      return renumber(next);
-    });
+    const segments = state.profile.segments;
+    if (rightSegmentIndex <= 0 || rightSegmentIndex >= segments.length) return;
+    const left = cloneSegment(segments[rightSegmentIndex - 1]);
+    const right = segments[rightSegmentIndex];
+    left.end_frame_index = right.end_frame_index;
+    left.end_time_s = right.end_time_s;
+    const nextSegments = renumber([
+      ...segments.slice(0, rightSegmentIndex - 1),
+      left,
+      ...segments.slice(rightSegmentIndex + 1),
+    ]);
+    const leftVisibleSlots = normalizeVisibleSlotsForSegment(
+      visibleFieldSlotsBySegment[rightSegmentIndex - 1],
+      segments[rightSegmentIndex - 1],
+      state.profile,
+    );
+    const rightVisibleSlots = normalizeVisibleSlotsForSegment(
+      visibleFieldSlotsBySegment[rightSegmentIndex],
+      right,
+      state.profile,
+    );
+    left.visible_fields = mergeVisibleSlots(
+      leftVisibleSlots,
+      rightVisibleSlots,
+      state.profile.custom_telemetry_quantities,
+    );
+    setVisibleFieldSlotsBySegment([
+      ...visibleFieldSlotsBySegment.slice(0, rightSegmentIndex - 1),
+      left.visible_fields,
+      ...visibleFieldSlotsBySegment.slice(rightSegmentIndex + 1),
+    ]);
+    state.setProfile((prev) => ({ ...prev, segments: nextSegments }));
   };
 
   const setCropStart = () => {
@@ -579,16 +817,21 @@ export function CalibratePage({
                 <Button size="sm" onClick={splitAtFrame}>
                   <GitBranchPlus className="mr-1 h-4 w-4" /> Split here
                 </Button>
+                <Button size="sm" variant="outline" onClick={openQuantityDialog}>
+                  <Plus className="mr-1 h-4 w-4" /> Add quantity
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
-                <div className="rounded-md border border-border/70 bg-black/40">
+              <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div ref={videoPanelRef} className="rounded-md border border-border/70 bg-black/40">
                   <CalibrationCanvas
                     videoPath={videoPath}
                     frameIndex={previewFrameIndex}
                     fields={activeSegment.fields}
+                    visibleSlots={activeVisibleSlots}
                     activeSlot={activeSlot}
+                    customQuantities={state.profile.custom_telemetry_quantities}
                     drawing={drawing}
                     onDrawing={setDrawing}
                     onCommit={updateActiveBbox}
@@ -596,9 +839,14 @@ export function CalibratePage({
                 </div>
                 <SlotPanel
                   segment={activeSegment}
+                  visibleSlots={activeVisibleSlots}
                   activeSlot={activeSlot}
+                  customQuantities={state.profile.custom_telemetry_quantities}
+                  maxHeight={slotPanelMaxHeight}
                   onActiveSlot={setActiveSlot}
                   onToggle={toggleSlot}
+                  onRemoveFromCurrentSegment={removeQuantityFromCurrentSegment}
+                  onRemoveFromAllSegments={removeQuantityFromAllSegments}
                 />
               </div>
               <div className="space-y-3">
@@ -697,7 +945,141 @@ export function CalibratePage({
           </Card>
         )}
       </div>
+      <AddQuantityDialog
+        open={quantityDialogOpen}
+        onOpenChange={setQuantityDialogOpen}
+        quantities={quantityOptions}
+        loading={quantityOptionsLoading}
+        search={quantitySearch}
+        onSearchChange={setQuantitySearch}
+        profile={state.profile}
+        visibleFieldSlotsBySegment={visibleFieldSlotsBySegment}
+        onSelect={addQuantityToAllSegments}
+      />
     </>
+  );
+}
+
+function AddQuantityDialog({
+  open,
+  onOpenChange,
+  quantities,
+  loading,
+  search,
+  onSearchChange,
+  profile,
+  visibleFieldSlotsBySegment,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  quantities: QuantityOption[];
+  loading: boolean;
+  search: string;
+  onSearchChange: (value: string) => void;
+  profile: Profile;
+  visibleFieldSlotsBySegment: VisibleFieldSlotsBySegment;
+  onSelect: (quantity: QuantityOption) => void;
+}) {
+  const filtered = useMemo(() => filterQuantities(quantities, search), [quantities, search]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[calc(100vh-3rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="px-6 pb-4 pt-6">
+          <DialogTitle>Add quantity</DialogTitle>
+          <DialogDescription>
+            Choose a quantity to enable across every calibration segment.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="border-y border-border/70 bg-muted/10 px-6 py-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Search name, dimensionality, unit, or field name"
+              className="pl-9"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {loading ? (
+            <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+              Loading quantities
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+              {quantities.length === 0
+                ? "No quantities are defined in the library yet."
+                : "No quantities match this search."}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((quantity) => {
+                const fieldName = fieldNameForQuantity(quantity);
+                const visibleSegments = profile.segments.filter((segment, index) =>
+                  normalizeVisibleSlotsForSegment(
+                    visibleFieldSlotsBySegment[index],
+                    segment,
+                    profile,
+                  ).includes(fieldName),
+                ).length;
+                const visibleEverywhere =
+                  profile.segments.length > 0 && visibleSegments === profile.segments.length;
+                return (
+                  <button
+                    type="button"
+                    key={quantity.id}
+                    disabled={visibleEverywhere}
+                    onClick={() => onSelect(quantity)}
+                    className={cn(
+                      "group w-full rounded-lg border p-4 text-left transition-colors",
+                      visibleEverywhere
+                        ? "cursor-default border-border/50 bg-muted/10 opacity-70"
+                        : "border-border/70 bg-muted/20 hover:border-primary/60 hover:bg-primary/10",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-foreground">
+                          {quantity.name}
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-xs">
+                          <span className="rounded-md border border-border/70 px-2 py-0.5 text-muted-foreground">
+                            {quantity.dimensionality}
+                          </span>
+                          <span className="rounded-md border border-border/70 px-2 py-0.5 text-primary">
+                            {quantity.display_unit}
+                          </span>
+                          <span className="rounded-md border border-border/70 px-2 py-0.5 text-muted-foreground">
+                            {displayFieldName(fieldName)}
+                          </span>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="shrink-0 normal-case tracking-normal">
+                        {visibleEverywhere
+                          ? "visible in all"
+                          : visibleSegments > 0
+                            ? `${visibleSegments}/${profile.segments.length} segments`
+                            : "not visible"}
+                      </Badge>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <DialogFooter className="border-t border-border/70 bg-card/95 px-6 py-4">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -705,7 +1087,9 @@ function CalibrationCanvas({
   videoPath,
   frameIndex,
   fields,
+  visibleSlots,
   activeSlot,
+  customQuantities,
   drawing,
   onDrawing,
   onCommit,
@@ -713,7 +1097,9 @@ function CalibrationCanvas({
   videoPath: string;
   frameIndex: number;
   fields: SegmentValue["fields"];
-  activeSlot: CanonicalFieldName;
+  visibleSlots: FieldSlotName[];
+  activeSlot: FieldSlotName;
+  customQuantities: QuantityValue[];
   drawing: Box | null;
   onDrawing: (next: Box | null) => void;
   onCommit: (box: Box) => void;
@@ -722,8 +1108,30 @@ function CalibrationCanvas({
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isSlowLoading, setIsSlowLoading] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+  const captureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null);
   const pendingLoadStartedAtRef = useRef<number | null>(null);
   const activeEnabled = Boolean(fields[activeSlot]);
+
+  const cancelDrawing = useCallback(() => {
+    const capture = captureRef.current;
+    if (capture?.element.hasPointerCapture?.(capture.pointerId)) {
+      capture.element.releasePointerCapture(capture.pointerId);
+    }
+    captureRef.current = null;
+    startRef.current = null;
+    onDrawing(null);
+  }, [onDrawing]);
+
+  useEffect(() => {
+    if (!drawing) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      cancelDrawing();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cancelDrawing, drawing]);
 
   useEffect(() => {
     if (!videoPath) {
@@ -781,7 +1189,9 @@ function CalibrationCanvas({
     if (!point) return;
     startRef.current = point;
     onDrawing([point.x, point.y, point.x, point.y]);
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
+    const target = event.currentTarget as HTMLElement;
+    target.setPointerCapture(event.pointerId);
+    captureRef.current = { element: target, pointerId: event.pointerId };
   };
 
   const onPointerMove = (event: React.PointerEvent) => {
@@ -795,10 +1205,11 @@ function CalibrationCanvas({
     if (startRef.current && drawing) onCommit(drawing);
     onDrawing(null);
     startRef.current = null;
-    const target = event.target as HTMLElement;
-    if (target.hasPointerCapture?.(event.pointerId)) {
-      target.releasePointerCapture(event.pointerId);
+    const capture = captureRef.current;
+    if (capture?.element.hasPointerCapture?.(capture.pointerId)) {
+      capture.element.releasePointerCapture(capture.pointerId);
     }
+    captureRef.current = null;
   };
 
   return (
@@ -808,7 +1219,7 @@ function CalibrationCanvas({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={cancelDrawing}
     >
       {imgUrl && (
         <img
@@ -828,12 +1239,12 @@ function CalibrationCanvas({
         </div>
       )}
       <svg className="pointer-events-none absolute inset-0 h-full w-full">
-        {CANONICAL_FIELD_ORDER.map((name) => {
+        {visibleSlots.map((name) => {
           const field = fields[name];
           const box = field?.bbox_x1y1x2y2;
           if (!box) return null;
           const [x0, y0, x1, y1] = box;
-          const color = FIELD_COLORS[name];
+          const color = colorForField(name);
           const active = name === activeSlot;
           return (
             <g key={name} opacity={active ? 1 : 0.72}>
@@ -842,7 +1253,7 @@ function CalibrationCanvas({
                 y={`${y0 * 100}%`}
                 width={`${(x1 - x0) * 100}%`}
                 height={`${(y1 - y0) * 100}%`}
-                fill={`${color}22`}
+                fill={colorWithAlpha(color, FIELD_BOX_FILL_ALPHA)}
                 stroke={color}
                 strokeWidth={active ? 2 : 1.25}
               />
@@ -854,7 +1265,7 @@ function CalibrationCanvas({
                 fill={color}
                 style={{ paintOrder: "stroke", stroke: "#000", strokeWidth: 3 }}
               >
-                {name}
+                {labelForField(name, customQuantities)}
               </text>
             </g>
           );
@@ -865,8 +1276,8 @@ function CalibrationCanvas({
             y={`${Math.min(drawing[1], drawing[3]) * 100}%`}
             width={`${Math.abs(drawing[2] - drawing[0]) * 100}%`}
             height={`${Math.abs(drawing[3] - drawing[1]) * 100}%`}
-            fill={`${FIELD_COLORS[activeSlot]}33`}
-            stroke={FIELD_COLORS[activeSlot]}
+            fill={colorWithAlpha(colorForField(activeSlot), FIELD_DRAFT_FILL_ALPHA)}
+            stroke={colorForField(activeSlot)}
             strokeWidth={2}
             strokeDasharray="4 2"
           />
@@ -883,52 +1294,152 @@ function CalibrationCanvas({
 
 function SlotPanel({
   segment,
+  visibleSlots,
   activeSlot,
+  customQuantities,
+  maxHeight,
   onActiveSlot,
   onToggle,
+  onRemoveFromCurrentSegment,
+  onRemoveFromAllSegments,
 }: {
   segment: SegmentValue;
-  activeSlot: CanonicalFieldName;
-  onActiveSlot: (name: CanonicalFieldName) => void;
-  onToggle: (name: CanonicalFieldName, enabled: boolean) => void;
+  visibleSlots: FieldSlotName[];
+  activeSlot: FieldSlotName;
+  customQuantities: QuantityValue[];
+  maxHeight: number | null;
+  onActiveSlot: (name: FieldSlotName) => void;
+  onToggle: (name: FieldSlotName, enabled: boolean) => void;
+  onRemoveFromCurrentSegment: (name: FieldSlotName) => void;
+  onRemoveFromAllSegments: (name: FieldSlotName) => void;
 }) {
+  const [menu, setMenu] = useState<{ fieldName: FieldSlotName; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menu]);
+
+  const openMenu = (fieldName: FieldSlotName, x: number, y: number) => {
+    const width = 240;
+    const height = 112;
+    setMenu({
+      fieldName,
+      x: Math.min(x, Math.max(8, window.innerWidth - width - 8)),
+      y: Math.min(y, Math.max(8, window.innerHeight - height - 8)),
+    });
+  };
+
+  const style: CSSProperties | undefined = maxHeight
+    ? { maxHeight: `${Math.round(maxHeight)}px` }
+    : undefined;
+
   return (
-    <div className="space-y-2">
+    <div className="relative space-y-2 overflow-y-auto pr-1" style={style}>
       <div className="flex items-center gap-2 text-sm font-semibold">
         <Crosshair className="h-4 w-4 text-primary" /> Field slots
       </div>
-      {CANONICAL_FIELD_ORDER.map((name) => {
+      {visibleSlots.map((name) => {
         const field = segment.fields[name];
+        const label = labelForField(name, customQuantities);
         return (
-          <button
-            type="button"
+          <div
             key={name}
+            role="button"
+            tabIndex={0}
             className={cn(
-              "w-full rounded-md border bg-muted/20 p-3 text-left transition-colors",
-              activeSlot === name ? "border-primary/60 bg-primary/10" : "border-border/60",
+              "relative min-h-24 w-full cursor-pointer rounded-md border bg-muted/20 p-3 text-left transition-[background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              activeSlot === name
+                ? "border-primary/70 bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.18)] hover:bg-primary/[0.13]"
+                : "border-border/60 hover:border-primary/35 hover:bg-primary/[0.045]",
             )}
             onClick={() => onActiveSlot(name)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              openMenu(name, event.clientX, event.clientY);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onActiveSlot(name);
+            }}
           >
             <div className="flex items-center gap-2">
               <span
                 className="h-3 w-3 rounded-sm"
-                style={{ background: FIELD_COLORS[name] }}
+                style={{ background: colorForField(name) }}
               />
-              <span className="flex-1 font-mono text-xs">{name}</span>
+              <span className="flex-1 truncate font-mono text-xs" title={label}>{label}</span>
               <Switch
                 checked={Boolean(field)}
+                className="shrink-0"
                 onClick={(event) => event.stopPropagation()}
                 onCheckedChange={(checked) => onToggle(name, checked)}
+                aria-label={`Enable ${label}`}
               />
             </div>
-            <div className="mt-2 font-mono text-[10px] text-muted-foreground">
+            <button
+              type="button"
+              className="absolute bottom-3 right-3 inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/15 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Open actions for ${label}`}
+              aria-haspopup="menu"
+              aria-expanded={menu?.fieldName === name}
+              onClick={(event) => {
+                event.stopPropagation();
+                const rect = event.currentTarget.getBoundingClientRect();
+                openMenu(name, rect.right, rect.bottom + 4);
+              }}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+            <div className="mt-2 pr-8 font-mono text-[10px] text-muted-foreground">
               {field?.bbox_x1y1x2y2
                 ? `[${field.bbox_x1y1x2y2.map((value) => value.toFixed(3)).join(", ")}]`
                 : "bbox not set"}
             </div>
-          </button>
+          </div>
         );
       })}
+      {menu && (
+        <div
+          role="menu"
+          className="fixed z-50 w-56 overflow-hidden rounded-lg border border-border/70 bg-popover p-1 text-sm shadow-lg"
+          style={{ left: menu.x, top: menu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center rounded-md px-3 py-2 text-left text-foreground hover:bg-accent/15"
+            onClick={() => {
+              onRemoveFromCurrentSegment(menu.fieldName);
+              setMenu(null);
+            }}
+          >
+            Remove from current segment
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center rounded-md px-3 py-2 text-left text-destructive hover:bg-destructive/15"
+            onClick={() => {
+              onRemoveFromAllSegments(menu.fieldName);
+              setMenu(null);
+            }}
+          >
+            Remove from all segments
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -996,6 +1507,7 @@ function activeSegmentForFrame(segments: SegmentValue[], frameIndex: number): nu
 function cloneSegment(segment: SegmentValue): SegmentValue {
   return {
     ...segment,
+    visible_fields: [...segment.visible_fields],
     fields: Object.fromEntries(
       Object.entries(segment.fields).map(([name, field]) => [
         name,
@@ -1043,11 +1555,13 @@ function normalizeBox(box: Box): Box {
 
 function nextEnabledSlot(
   fields: SegmentValue["fields"],
-  activeSlot: CanonicalFieldName,
-): CanonicalFieldName {
-  const start = CANONICAL_FIELD_ORDER.indexOf(activeSlot);
-  for (let offset = 1; offset <= CANONICAL_FIELD_ORDER.length; offset += 1) {
-    const candidate = CANONICAL_FIELD_ORDER[(start + offset) % CANONICAL_FIELD_ORDER.length];
+  activeSlot: FieldSlotName,
+): FieldSlotName {
+  const names = Object.keys(fields);
+  if (names.length === 0) return activeSlot;
+  const start = Math.max(0, names.indexOf(activeSlot));
+  for (let offset = 1; offset <= names.length; offset += 1) {
+    const candidate = names[(start + offset) % names.length];
     if (fields[candidate]) return candidate;
   }
   return activeSlot;
@@ -1055,4 +1569,165 @@ function nextEnabledSlot(
 
 function timeForFrame(frameIndex: number, fps: number): number {
   return fps > 0 ? frameIndex / fps : 0;
+}
+
+function defaultFieldsForProfile(profile: Profile): Record<string, FieldValue> {
+  return {
+    ...defaultSegmentFields(),
+    ...Object.fromEntries(
+      profile.custom_telemetry_quantities.map((quantity) => [
+        `custom_${quantity.slug}`,
+        customFieldValue(quantity),
+      ]),
+    ),
+  };
+}
+
+function mergeQuantityOptions(
+  library: QuantityDTO[],
+  profileQuantities: QuantityValue[],
+): QuantityOption[] {
+  const byId = new Map<string, QuantityOption>();
+  [...library.map(normalizeQuantityOption), ...profileQuantities.map(normalizeQuantityOption)].forEach((quantity) => {
+    byId.set(quantity.id, quantity);
+  });
+  return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function filterQuantities(quantities: QuantityOption[], search: string): QuantityOption[] {
+  const normalized = search.trim().toLowerCase();
+  if (!normalized) return quantities;
+  return quantities.filter((quantity) => {
+    const fieldName = fieldNameForQuantity(quantity);
+    return [quantity.name, quantity.dimensionality, quantity.display_unit, fieldName].some((value) =>
+      value.toLowerCase().includes(normalized),
+    );
+  });
+}
+
+function normalizeQuantityOption(quantity: QuantityDTO | QuantityValue): QuantityOption {
+  return {
+    ...quantity,
+    description: quantity.description ?? "",
+    unit_aliases: quantity.unit_aliases ?? {},
+    field_name: "field_name" in quantity ? quantity.field_name : undefined,
+    is_default: "is_default" in quantity ? quantity.is_default : undefined,
+  };
+}
+
+function toProfileQuantity(quantity: QuantityOption): QuantityValue {
+  return {
+    id: quantity.id,
+    name: quantity.name,
+    slug: quantity.slug,
+    dimensionality: quantity.dimensionality,
+    display_unit: quantity.display_unit,
+    description: quantity.description,
+    unit_aliases: quantity.unit_aliases,
+  };
+}
+
+function fieldNameForQuantity(quantity: Pick<QuantityOption, "field_name" | "slug">): FieldSlotName {
+  return quantity.field_name ?? `custom_${quantity.slug}`;
+}
+
+function isCanonicalFieldName(name: FieldSlotName): name is CanonicalFieldName {
+  return CANONICAL_FIELD_ORDER.includes(name as CanonicalFieldName);
+}
+
+function displayFieldName(name: FieldSlotName): string {
+  return isCanonicalFieldName(name) ? CANONICAL_FIELD_LABELS[name] : name;
+}
+
+function labelForField(name: FieldSlotName, customQuantities: QuantityValue[]): string {
+  const quantity = customQuantities.find((item) => `custom_${item.slug}` === name);
+  if (quantity) return quantity.name;
+  return displayFieldName(name);
+}
+
+function deriveVisibleFieldSlots(profile: Profile): VisibleFieldSlotsBySegment {
+  return profile.segments.map((segment) =>
+    normalizeVisibleSlotsForSegment(undefined, segment, profile),
+  );
+}
+
+function normalizeVisibleSlotsForSegment(
+  slots: FieldSlotName[] | undefined,
+  segment: SegmentValue,
+  profile: Profile,
+): FieldSlotName[] {
+  const known = new Set([...fieldSlotsForProfile(profile), ...Object.keys(segment.fields)]);
+  const source = slots ?? (segment.visible_fields.length > 0 ? segment.visible_fields : fieldSlotsForProfile(profile));
+  return orderFieldSlots(
+    [
+      ...source.filter((name) => known.has(name)),
+      ...Object.keys(segment.fields).filter((name) => known.has(name)),
+    ],
+    profile.custom_telemetry_quantities,
+  );
+}
+
+function fieldSlotsForProfile(profile: Profile): FieldSlotName[] {
+  return [
+    ...CANONICAL_FIELD_ORDER,
+    ...profile.custom_telemetry_quantities.map((quantity) => `custom_${quantity.slug}`),
+  ];
+}
+
+function addVisibleSlot(
+  slots: FieldSlotName[],
+  fieldName: FieldSlotName,
+  customQuantities: QuantityValue[],
+): FieldSlotName[] {
+  return orderFieldSlots([...slots, fieldName], customQuantities);
+}
+
+function mergeVisibleSlots(
+  left: FieldSlotName[],
+  right: FieldSlotName[],
+  customQuantities: QuantityValue[],
+): FieldSlotName[] {
+  return orderFieldSlots([...left, ...right], customQuantities);
+}
+
+function nextVisibleSlot(slots: FieldSlotName[], activeSlot: FieldSlotName): FieldSlotName {
+  if (slots.length === 0) return activeSlot;
+  const start = Math.max(0, slots.indexOf(activeSlot));
+  return slots[(start + 1) % slots.length];
+}
+
+function orderFieldSlots(
+  names: FieldSlotName[],
+  customQuantities: QuantityValue[],
+): FieldSlotName[] {
+  const unique = new Set(names);
+  const ordered = [
+    ...CANONICAL_FIELD_ORDER.filter((name) => unique.has(name)),
+    ...customQuantities
+      .map((quantity) => `custom_${quantity.slug}`)
+      .filter((name) => unique.has(name)),
+  ];
+  const included = new Set(ordered);
+  return [...ordered, ...names.filter((name) => !included.has(name))].filter(
+    (name, index, array) => array.indexOf(name) === index,
+  );
+}
+
+function colorForField(name: FieldSlotName): string {
+  if (name in FIELD_COLORS) return FIELD_COLORS[name as CanonicalFieldName];
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const hue = hash % 360;
+  return `hsl(${hue} 85% 62%)`;
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  if (color.startsWith("#")) {
+    const channel = Math.round(alpha * 255).toString(16).padStart(2, "0");
+    return `${color}${channel}`;
+  }
+  if (color.startsWith("hsl(")) {
+    return color.replace(/\)$/, ` / ${alpha})`);
+  }
+  return color;
 }

@@ -24,8 +24,11 @@ from webcalyzer.ocr_factory import OCRBackendOptions, make_backend, resolve_back
 from webcalyzer.raw_points import apply_hardcoded_raw_data_points
 from webcalyzer.sanitize import (
     MeasurementOption,
+    MeasurementSeriesResult,
+    parse_custom_measurement_options,
     parse_measurement_options,
     parse_met_candidates,
+    resolve_custom_measurement_series,
     resolve_measurement_series,
 )
 from webcalyzer.video import build_sample_indices, crop_box, get_video_metadata, iterate_frames
@@ -111,7 +114,7 @@ def extract_telemetry(
     if profile.hardcoded_raw_data_points:
         from webcalyzer.postprocess import rebuild_clean_from_raw
 
-        raw_df = apply_hardcoded_raw_data_points(raw_df, profile.hardcoded_raw_data_points)
+        raw_df = apply_hardcoded_raw_data_points(raw_df, profile.hardcoded_raw_data_points, profile=profile)
         clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
     else:
         clean_df = pd.DataFrame(clean_rows)
@@ -135,6 +138,10 @@ def extract_telemetry(
                         "end_time_s": segment.end_time_s,
                     }
                     for segment in profile.segments
+                ],
+                "custom_telemetry_quantities": [
+                    quantity.to_dict()
+                    for quantity in profile.custom_telemetry_quantities
                 ],
                 "ocr": {
                     "backend": resolved_backend,
@@ -312,18 +319,31 @@ def _ocr_with_detection(
             if parse_met_candidates(candidates, parsing=parsing) is not None:
                 continue
         else:
-            options = [
-                option
-                for raw_text, variant in candidates
-                for option in parse_measurement_options(
-                    raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+            if field_cfg.kind == "custom":
+                quantity = profile.custom_quantity_by_id(field_cfg.quantity_id)
+                options = (
+                    [
+                        option
+                        for raw_text, variant in candidates
+                        for option in parse_custom_measurement_options(raw_text, quantity, variant)
+                    ]
+                    if quantity is not None
+                    else []
                 )
-                if _field_specific_option_is_valid(field_name, option)
-            ]
+            else:
+                options = [
+                    option
+                    for raw_text, variant in candidates
+                    for option in parse_measurement_options(
+                        raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+                    )
+                    if _field_specific_option_is_valid(field_name, option)
+                ]
             if options:
                 continue
         crop = crop_box(frame, field_cfg.box)
-        fallback = backend.extract_text(crop, field_kind=field_cfg.kind)
+        fallback_kind = field_cfg.kind if field_cfg.kind in {"met", "velocity", "altitude"} else "custom"
+        fallback = backend.extract_text(crop, field_kind=fallback_kind)
         if fallback:
             ocr_candidates_by_field[field_name] = [
                 (candidate.text, candidate.variant) for candidate in fallback
@@ -430,13 +450,14 @@ def _run_phase_b(
             }
         )
 
-    for field_name in CANONICAL_FIELD_ORDER:
+    for field_name in _measurement_field_names(profile):
         if field_name == "met":
             continue
         raw_candidates_by_sample: list[list[tuple[str, str]]] = []
         met_values: list[float | None] = []
         configured_by_sample: list[bool] = []
         kind: str | None = None
+        quantity_id: str | None = None
         for context in frame_contexts:
             configured_fields = context["configured_fields"]
             field_cfg = configured_fields.get(field_name) if isinstance(configured_fields, dict) else None
@@ -445,6 +466,7 @@ def _run_phase_b(
             met_values.append(context["mission_elapsed_time_s"])
             if configured:
                 kind = field_cfg.kind
+                quantity_id = field_cfg.quantity_id
                 candidates_by_field = context["ocr_candidates_by_field"]
                 candidates = candidates_by_field.get(field_name, []) if isinstance(candidates_by_field, dict) else []
                 raw_candidates_by_sample.append(list(candidates))
@@ -458,17 +480,35 @@ def _run_phase_b(
                     per_field_obs[field_name] = _not_configured_observation(field_name)
             continue
 
-        resolved = resolve_measurement_series(
-            raw_candidates_by_sample,
-            kind=kind,
-            parsing=parsing,
-            met_values=met_values,
-            option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
-                field_name,
-                option,
-                met_s,
-            ),
-        )
+        if kind == "custom":
+            quantity = profile.custom_quantity_by_id(quantity_id)
+            if quantity is None:
+                resolved = [
+                    MeasurementSeriesResult(
+                        chosen=None,
+                        candidate_count=0,
+                        reject_reason="unknown_custom_quantity",
+                    )
+                    for _ in raw_candidates_by_sample
+                ]
+            else:
+                resolved = resolve_custom_measurement_series(
+                    raw_candidates_by_sample,
+                    quantity=quantity,
+                    met_values=met_values,
+                )
+        else:
+            resolved = resolve_measurement_series(
+                raw_candidates_by_sample,
+                kind=kind,
+                parsing=parsing,
+                met_values=met_values,
+                option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
+                    field_name,
+                    option,
+                    met_s,
+                ),
+            )
 
         for context, is_configured, candidates, result in zip(
             frame_contexts,
@@ -521,10 +561,10 @@ def _run_phase_b(
         if not isinstance(per_field_obs, dict) or not isinstance(frame_data, FrameRawOCR):
             continue
 
-        stage1_velocity = per_field_obs["stage1_velocity"].normalized_si_value
-        stage1_altitude = per_field_obs["stage1_altitude"].normalized_si_value
-        stage2_velocity = per_field_obs["stage2_velocity"].normalized_si_value
-        stage2_altitude = per_field_obs["stage2_altitude"].normalized_si_value
+        stage1_velocity = per_field_obs.get("stage1_velocity", _not_configured_observation("stage1_velocity")).normalized_si_value
+        stage1_altitude = per_field_obs.get("stage1_altitude", _not_configured_observation("stage1_altitude")).normalized_si_value
+        stage2_velocity = per_field_obs.get("stage2_velocity", _not_configured_observation("stage2_velocity")).normalized_si_value
+        stage2_altitude = per_field_obs.get("stage2_altitude", _not_configured_observation("stage2_altitude")).normalized_si_value
 
         if stage2_velocity is not None or stage2_altitude is not None:
             if _stage2_measurement_is_active(stage2_velocity, stage2_altitude):
@@ -554,18 +594,21 @@ def _run_phase_b(
             raw_row[f"{name}_reject_reason"] = obs.reject_reason
         raw_rows.append(raw_row)
 
-        clean_rows.append(
-            ExtractionRow(
-                frame_index=frame_data.frame_index,
-                sample_time_s=sample_time_s,
-                segment_id=frame_data.segment_id,
-                mission_elapsed_time_s=mission_elapsed_time_s,
-                stage1_velocity_mps=stage1_velocity,
-                stage1_altitude_m=stage1_altitude,
-                stage2_velocity_mps=stage2_velocity,
-                stage2_altitude_m=stage2_altitude,
-            ).to_dict()
-        )
+        clean_row = {
+            "frame_index": frame_data.frame_index,
+            "sample_time_s": sample_time_s,
+            "segment_id": frame_data.segment_id,
+            "mission_elapsed_time_s": mission_elapsed_time_s,
+            "stage1_velocity_mps": stage1_velocity,
+            "stage1_altitude_m": stage1_altitude,
+            "stage2_velocity_mps": stage2_velocity,
+            "stage2_altitude_m": stage2_altitude,
+        }
+        for quantity in profile.custom_telemetry_quantities:
+            field_name = quantity.field_name()
+            obs = per_field_obs.get(field_name)
+            clean_row[field_name] = obs.normalized_si_value if obs is not None else None
+        clean_rows.append(clean_row)
     return raw_rows, clean_rows
 
 
@@ -649,6 +692,19 @@ def _stage2_measurement_is_active(velocity_mps: float | None, altitude_m: float 
         (altitude_m is not None and altitude_m > 160.9344),
     )
     return any(thresholds)
+
+
+def _measurement_field_names(profile: ProfileConfig) -> list[str]:
+    names = list(CANONICAL_FIELD_ORDER)
+    for quantity in profile.custom_telemetry_quantities:
+        field_name = quantity.field_name()
+        if field_name not in names:
+            names.append(field_name)
+    for segment in profile.segments:
+        for field_name in segment.fields:
+            if field_name not in names:
+                names.append(field_name)
+    return names
 
 
 def _field_specific_option_is_valid(

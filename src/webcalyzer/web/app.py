@@ -22,7 +22,29 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 
 from webcalyzer.config import load_profile, save_profile
+from webcalyzer.models import TelemetryQuantityDefinition
+from webcalyzer.dimensions import (
+    DIMENSION_BASES,
+    DIMENSION_LABELS,
+    DIMENSION_PRESET_DISPLAY_UNITS,
+    DIMENSION_PRESETS,
+    normalize_dimension_expression,
+)
+from webcalyzer.quantities import (
+    QUANTITY_LIBRARY_FILENAME,
+    delete_quantity,
+    is_default_quantity_id,
+    load_quantity_library,
+    normalize_quantity_mapping,
+    quantity_field_name,
+    remove_quantity_from_templates,
+    save_quantity_library,
+    scan_quantity_usage,
+    update_quantity_snapshots,
+    upsert_quantity,
+)
 from webcalyzer.run_paths import timestamped_run_output_dir
+from webcalyzer.units import known_unit_identifiers, typical_unit_for_dimension, unit_suggestions
 from webcalyzer.video import evenly_spaced_indices, get_video_metadata, read_frame
 
 from webcalyzer.web.files import (
@@ -63,6 +85,13 @@ def _read_rejected_df(output_dir: Path):
     return rejected_df if not rejected_df.empty else None
 
 
+def _quantity_response(quantity: TelemetryQuantityDefinition) -> dict[str, Any]:
+    data = quantity.to_dict()
+    data["is_default"] = is_default_quantity_id(quantity.id)
+    data["field_name"] = quantity_field_name(quantity)
+    return data
+
+
 def create_app(config: ServeConfig) -> FastAPI:
     app = FastAPI(title="webcalyzer", version="0.1.0")
     app.state.config = config
@@ -86,7 +115,112 @@ def create_app(config: ServeConfig) -> FastAPI:
             "templates_dir": str(config.templates_dir),
             "trajectory": trajectory_choices(),
             "default_parsing": default_parsing_model().model_dump(),
+            "dimensions": {
+                "bases": [{"symbol": symbol, "label": DIMENSION_LABELS[symbol]} for symbol in DIMENSION_BASES],
+                "presets": DIMENSION_PRESETS,
+                "preset_units": DIMENSION_PRESET_DISPLAY_UNITS,
+            },
+            "units": list(known_unit_identifiers()),
         }
+
+    # ----- quantity library ---------------------------------------------
+    @app.get("/api/quantities")
+    def list_quantities() -> dict[str, Any]:
+        try:
+            quantities = load_quantity_library(config.templates_dir)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "path": str((config.templates_dir / QUANTITY_LIBRARY_FILENAME).resolve()),
+            "quantities": [_quantity_response(quantity) for quantity in quantities],
+        }
+
+    @app.post("/api/quantities")
+    def create_quantity(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            quantities = load_quantity_library(config.templates_dir)
+            quantity = normalize_quantity_mapping(payload)
+            quantities = upsert_quantity(quantities, quantity)
+            save_quantity_library(config.templates_dir, quantities)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "quantity": _quantity_response(quantity),
+            "quantities": [_quantity_response(item) for item in quantities],
+        }
+
+    @app.put("/api/quantities/{quantity_id}")
+    def update_quantity(quantity_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            quantities = load_quantity_library(config.templates_dir)
+            existing = next((item for item in quantities if item.id == quantity_id), None)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Quantity not found")
+            quantity = normalize_quantity_mapping({**payload, "id": quantity_id}, existing_id=quantity_id)
+            quantities = upsert_quantity(quantities, quantity)
+            save_quantity_library(config.templates_dir, quantities)
+            update_quantity_snapshots(config.templates_dir, quantity)
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "quantity": _quantity_response(quantity),
+            "quantities": [_quantity_response(item) for item in quantities],
+        }
+
+    @app.delete("/api/quantities/{quantity_id}")
+    def remove_quantity(quantity_id: str) -> dict[str, Any]:
+        try:
+            quantities = load_quantity_library(config.templates_dir)
+            quantities = delete_quantity(quantities, quantity_id)
+            save_quantity_library(config.templates_dir, quantities)
+            remove_quantity_from_templates(config.templates_dir, quantity_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "id": quantity_id,
+            "deleted": True,
+            "quantities": [_quantity_response(item) for item in quantities],
+        }
+
+    @app.post("/api/quantities/{quantity_id}/usage")
+    def quantity_usage(quantity_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+        profile_payload = payload.get("profile") if isinstance(payload, dict) else None
+        current_profile = None
+        if profile_payload is not None:
+            try:
+                current_profile = model_to_profile_dataclass(ProfileModel.model_validate(profile_payload))
+            except Exception:
+                current_profile = None
+        return {
+            "id": quantity_id,
+            "usage": scan_quantity_usage(
+                templates_dir=config.templates_dir,
+                quantity_id=quantity_id,
+                current_profile=current_profile,
+            ),
+        }
+
+    @app.post("/api/dimensions/normalize")
+    def normalize_dimension(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        expression = str(payload.get("expression", ""))
+        try:
+            return {"normalized": normalize_dimension_expression(expression)}
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/units/suggestions")
+    def unit_suggestion_api(prefix: str = Query(default="")) -> dict[str, Any]:
+        return {"suggestions": unit_suggestions(prefix)}
+
+    @app.get("/api/units/si")
+    def si_unit_api(dimensionality: str = Query(...)) -> dict[str, Any]:
+        try:
+            normalized = normalize_dimension_expression(dimensionality)
+            return {"unit": typical_unit_for_dimension(normalized), "dimensionality": normalized}
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # ----- file browser ---------------------------------------------------
     @app.get("/api/files")
@@ -178,6 +312,8 @@ def create_app(config: ServeConfig) -> FastAPI:
         directory.mkdir(parents=True, exist_ok=True)
         results: list[dict[str, Any]] = []
         for path in sorted(directory.rglob("*.yaml")):
+            if path.name == QUANTITY_LIBRARY_FILENAME:
+                continue
             stat = path.stat()
             try:
                 profile = load_profile(path)

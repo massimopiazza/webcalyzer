@@ -46,6 +46,9 @@ src/webcalyzer/
   rescue.py             # multi-variant re-OCR
   acceleration.py       # Savitzky-Golay derivatives
   raw_points.py         # injection of hardcoded anchor points
+  dimensions.py         # custom telemetry dimensionality parser
+  quantities.py         # custom telemetry library + template propagation
+  units.py              # Pint-backed unit validation and conversion
   video.py              # OpenCV/AVFoundation wrappers
   web/                  # web UI backend (FastAPI). Optional surface.
     app.py              # FastAPI factory + endpoints
@@ -56,7 +59,7 @@ src/webcalyzer/
 web/                    # web UI frontend (Vite + React + TS + Tailwind + shadcn)
   src/
     App.tsx, main.tsx, index.css
-    pages/{RunPage,CalibratePage,TemplatesPage,DocumentationPage}.tsx
+    pages/{RunPage,CalibratePage,QuantityLibraryPage,TemplatesPage,DocumentationPage}.tsx
     components/profile/*           # one component per ProfileConfig section
     components/{AppShell,RunPanel,FileBrowserDialog,PathPicker,
                 TemplatePicker,Field,Toaster}.tsx
@@ -148,26 +151,45 @@ These must hold for any change to pass:
 - `parsing: ParsingProfile | None` - when `None`, the bundled defaults
   from `default_parsing_profile()` are used:
   - `velocity / altitude: FieldKindParsing` - `units: { NAME: { aliases:
-    [...], si_factor } }`, `default_unit`, `ambiguous_default_unit`,
-    `inferred_units_with_separator`, `inferred_units_without_separator`.
-    The default and inferred unit names must reference declared units.
+    [...], unit } }`, `default_unit`, `ambiguous_default_unit`,
+    `inferred_units_with_separator`, `inferred_units_without_separator`,
+    `output_unit`. The default and inferred unit names must reference
+    declared units. `unit` and `output_unit` are Pint expressions.
   - `met: { timestamp_patterns: [regex,...] }` - every pattern must
     compile.
   - `custom_words: [str,...]` - auto-derived from aliases when omitted.
+- `custom_telemetry_quantities: list[TelemetryQuantityDefinition]` -
+  profile-embedded snapshots copied from the global library in
+  `<templates-dir>/custom_quantities.yaml`. Each has `id`, `name`, `slug`,
+  `dimensionality`, mandatory `display_unit`, optional `description`, and
+  optional `unit_aliases: { OCR_TEXT: Pint unit expression }`.
+  Dimensionality expressions support base dimensions such as `L`, `M`,
+  `T`, `TEMP`, `ANG`, `BIT`, and `COUNT`, including fraction powers.
+  `display_unit` must be compatible with the normalized dimensionality.
 - `hardcoded_raw_data_points: list[HardcodedRawDataPoint]` - each has a
   `mission_elapsed_time_s` plus optional `stage1` / `stage2` velocity/
-  altitude. At least one telemetry value must be set.
+  altitude plus optional `custom_values` keyed by custom field name. At
+  least one telemetry value must be set. Custom anchor points are valid
+  only for quantities enabled in at least one segment.
 - `segments: list[CalibrationSegmentConfig]` - canonical calibration
   ranges. Each has `id`, `start_frame_index`, `start_time_s`,
-  `end_frame_index`, `end_time_s`, and `fields`. `end_frame_index` is
-  exclusive, so a split at frame `N` makes `N` the first frame of the
-  next segment. Runnable profiles must have sorted, contiguous,
-  non-overlapping segments. Draft profiles can be saved while incomplete.
+  `end_frame_index`, `end_time_s`, `visible_fields`, and `fields`.
+  `end_frame_index` is exclusive, so a split at frame `N` makes `N` the
+  first frame of the next segment. Runnable profiles must have sorted,
+  contiguous, non-overlapping segments. Draft profiles can be saved while
+  incomplete.
+- `segments[*].visible_fields: list[str]` - right-side calibration slot
+  list for that segment. It is ordered, contains canonical and custom
+  field names, and can include disabled slots. Splitting a segment copies
+  this list into the new segment.
 - `segments[*].fields: dict[name, FieldConfig]` - canonical slot names
-  only: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`,
-  `stage2_altitude`. Disabled slots are omitted. Runnable profiles must
-  define `met` in every segment and every enabled slot must have a valid
-  `bbox_x1y1x2y2` (4-tuple in [0,1] with `x1>x0 && y1>y0`).
+  `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`,
+  `stage2_altitude`, plus custom slot names in the form `custom_<slug>`.
+  Custom fields use `kind: custom`, `stage: null`, and `quantity_id`.
+  Enabled slots are present in `fields`; disabled visible slots are omitted
+  from `fields`. Runnable profiles must define `met` in every segment and
+  every enabled slot must have a valid `bbox_x1y1x2y2` (4-tuple in [0,1]
+  with `x1>x0 && y1>y0`).
 
 The actual constraint values live in the schema files; treat the list
 above as a navigation aid and read the code for authoritative bounds.
@@ -178,7 +200,8 @@ above as a navigation aid and read the code for authoritative bounds.
 
 - `sample-frames`, `calibrate`, `extract`, `run`, `plot`,
   `rebuild-clean`, `rescue`, `reject-outliers`,
-  `reconstruct-trajectory`, `render-overlay`, **`serve`** (web UI).
+  `reconstruct-trajectory`, `render-overlay`, **`quantities`**,
+  **`serve`** (web UI).
 
 **Invariant: the existing CLI must keep working unchanged.** `serve` is
 purely additive. If you must alter an existing subcommand's behavior,
@@ -194,6 +217,11 @@ section under "Argument reference" + "Subcommands" in `README.md`.
 - `--templates-dir <path>` (default `<cwd>/configs`)
 - `--dist-dir <path>` (default `<repo>/web/dist` if present)
 - `--reload` and `--cors-origin <origin>` (dev-only, for the Vite proxy)
+
+`quantities` manages `<templates-dir>/custom_quantities.yaml` through
+`list`, `add`, `edit`, and `delete`. `edit` and `delete` must immediately
+update affected template snapshots so the CLI and web UI keep the same
+library behavior.
 
 When you add a new flag to `extract`/`run`/`render-overlay`, decide
 whether it belongs in the persisted profile form or remains a one-run
@@ -237,6 +265,13 @@ When you add an endpoint:
 1. Define it in `app.py`.
 2. Add a typed wrapper in `web/src/lib/api.ts`.
 3. Wire it into the page that needs it.
+
+Custom telemetry endpoints are part of the supported API surface:
+`/api/quantities`, `/api/quantities/{id}`, `/api/quantities/{id}/usage`,
+`/api/dimensions/normalize`, `/api/units/suggestions`, and
+`/api/units/si`. Keep these in sync with
+`web/src/pages/QuantityLibraryPage.tsx` and the calibration page custom-slot
+flow.
 
 ## 6. Web frontend contract
 

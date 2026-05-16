@@ -278,6 +278,7 @@ class JobManager:
             output_path,
             trajectory_df=trajectory_df,
             trajectory_config=options.profile.trajectory,
+            profile=options.profile,
         )
         self._refresh_output_paths(job, output_path)
         self._check_cancel(job)

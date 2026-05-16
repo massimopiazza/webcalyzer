@@ -17,10 +17,14 @@ from webcalyzer.models import (
     MetParsing,
     ParsingProfile,
     ProfileConfig,
+    TelemetryQuantityDefinition,
     TrajectoryConfig,
     UnitAlias,
     VideoOverlayConfig,
 )
+from webcalyzer.dimensions import normalize_dimension_expression
+from webcalyzer.quantities import make_quantity_slug
+from webcalyzer.units import validate_unit_compatible_with_dimension
 
 
 class _FlowList(list):
@@ -60,6 +64,7 @@ def load_profile(path: str | Path) -> ProfileConfig:
         video_overlay=_load_video_overlay(data.get("video_overlay", {})),
         trajectory=_load_trajectory(data.get("trajectory", {})),
         parsing=_load_parsing(data.get("parsing")),
+        custom_telemetry_quantities=_load_custom_quantities(data.get("custom_telemetry_quantities")),
         hardcoded_raw_data_points=_load_hardcoded_raw_data_points(data),
         segments=_load_segments(data),
     )
@@ -91,6 +96,7 @@ def _load_field(name: str, field_data: dict[str, Any]) -> FieldConfig:
         kind=field_data["kind"],
         stage=field_data.get("stage"),
         box=_load_box(field_data),
+        quantity_id=field_data.get("quantity_id"),
     )
 
 
@@ -127,6 +133,7 @@ def _load_segments(data: dict[str, Any]) -> list[CalibrationSegmentConfig]:
         calibration_video = _load_calibration_video(data.get("calibration_video"))
         end_frame = int(calibration_video.frame_count or 0)
         end_time = _derive_time_s(end_frame, calibration_video.fps)
+        fields = _load_fields(legacy_fields)
         return [
             CalibrationSegmentConfig(
                 id="segment_1",
@@ -134,7 +141,8 @@ def _load_segments(data: dict[str, Any]) -> list[CalibrationSegmentConfig]:
                 start_time_s=0.0,
                 end_frame_index=end_frame,
                 end_time_s=end_time,
-                fields=_load_fields(legacy_fields),
+                visible_fields=list(fields.keys()),
+                fields=fields,
             )
         ]
     if not isinstance(segments_data, list):
@@ -160,13 +168,21 @@ def _load_segment(
     fields_data = data.get("fields") or {}
     if not isinstance(fields_data, dict):
         raise ValueError("segment.fields must be a mapping")
+    fields = _load_fields(fields_data)
+    visible_data = data.get("visible_fields")
+    visible_fields = (
+        [str(name) for name in visible_data]
+        if isinstance(visible_data, list)
+        else list(fields.keys())
+    )
     return CalibrationSegmentConfig(
         id=str(data.get("id") or f"segment_{index}"),
         start_frame_index=start_frame,
         start_time_s=start_time,
         end_frame_index=end_frame,
         end_time_s=end_time,
-        fields=_load_fields(fields_data),
+        visible_fields=visible_fields,
+        fields=fields,
     )
 
 
@@ -234,8 +250,16 @@ def _load_hardcoded_raw_data_point(point_data: dict[str, Any]) -> HardcodedRawDa
         values[f"{stage}_altitude_m"] = _optional_float(
             point_data.get(f"{stage}_altitude_m", stage_data.get("altitude_m", stage_data.get("altitude")))
         )
+    custom_values_raw = point_data.get("custom_values", {}) or {}
+    if not isinstance(custom_values_raw, dict):
+        raise ValueError("hardcoded raw custom_values must be a mapping")
+    custom_values = {
+        str(name): float(value)
+        for name, value in custom_values_raw.items()
+        if value is not None and value != ""
+    }
 
-    if all(value is None for value in values.values()):
+    if all(value is None for value in values.values()) and not custom_values:
         raise ValueError("Each hardcoded raw data point must define at least one telemetry value")
 
     return HardcodedRawDataPoint(
@@ -244,6 +268,7 @@ def _load_hardcoded_raw_data_point(point_data: dict[str, Any]) -> HardcodedRawDa
         stage1_altitude_m=values["stage1_altitude_m"],
         stage2_velocity_mps=values["stage2_velocity_mps"],
         stage2_altitude_m=values["stage2_altitude_m"],
+        custom_values=custom_values,
     )
 
 
@@ -296,15 +321,16 @@ def _load_trajectory(data: dict[str, Any] | None) -> TrajectoryConfig:
 
 
 _DEFAULT_VELOCITY_UNITS: tuple[UnitAlias, ...] = (
-    UnitAlias(name="MPH", aliases=("MPH", "MPN", "MРН", "MPI", "M/H"), si_factor=0.44704),
-    UnitAlias(name="KPH", aliases=("KPH", "KMH", "KM/H", "KMPH"), si_factor=0.27777777777777778),
-    UnitAlias(name="MPS", aliases=("M/S", "MPS", "MS"), si_factor=1.0),
+    UnitAlias(name="MPH", aliases=("MPH", "MPN", "MРН", "MPI", "M/H"), unit_expression="mile/hour"),
+    UnitAlias(name="KPH", aliases=("KPH", "KMH", "KM/H", "KMPH"), unit_expression="kilometer/hour"),
+    UnitAlias(name="MPS", aliases=("M/S", "MPS", "MS"), unit_expression="meter/second"),
+    UnitAlias(name="KPS", aliases=("KM/S", "KPS"), unit_expression="kilometer/second"),
 )
 _DEFAULT_ALTITUDE_UNITS: tuple[UnitAlias, ...] = (
-    UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), si_factor=0.3048),
-    UnitAlias(name="MI", aliases=("MI", "ML", "M1"), si_factor=1609.344),
-    UnitAlias(name="KM", aliases=("KM",), si_factor=1000.0),
-    UnitAlias(name="M", aliases=("M",), si_factor=1.0),
+    UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), unit_expression="foot"),
+    UnitAlias(name="MI", aliases=("MI", "ML", "M1"), unit_expression="mile"),
+    UnitAlias(name="KM", aliases=("KM",), unit_expression="kilometer"),
+    UnitAlias(name="M", aliases=("M",), unit_expression="meter"),
 )
 _DEFAULT_MET_PATTERNS: tuple[str, ...] = (
     r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",
@@ -321,6 +347,7 @@ def default_parsing_profile() -> ParsingProfile:
         default_unit="MPH",
         inferred_units_with_separator=("MPH",),
         inferred_units_without_separator=("MPH",),
+        output_unit="meter/second",
     )
     altitude = FieldKindParsing(
         units=_DEFAULT_ALTITUDE_UNITS,
@@ -328,6 +355,7 @@ def default_parsing_profile() -> ParsingProfile:
         ambiguous_default_unit="FT",
         inferred_units_with_separator=("FT", "MI"),
         inferred_units_without_separator=("FT",),
+        output_unit="meter",
     )
     met = MetParsing(timestamp_patterns=_DEFAULT_MET_PATTERNS)
     return ParsingProfile(
@@ -362,6 +390,7 @@ def _load_parsing(data: dict[str, Any] | None) -> ParsingProfile:
         default_unit="MPH",
         inferred_units_with_separator=("MPH",),
         inferred_units_without_separator=("MPH",),
+        output_unit="meter/second",
     )
     altitude = _load_field_kind_parsing(
         data.get("altitude"),
@@ -370,6 +399,7 @@ def _load_parsing(data: dict[str, Any] | None) -> ParsingProfile:
         ambiguous_default_unit="FT",
         inferred_units_with_separator=("FT", "MI"),
         inferred_units_without_separator=("FT",),
+        output_unit="meter",
     )
     met_data = data.get("met") or {}
     patterns_raw = met_data.get("timestamp_patterns") or list(_DEFAULT_MET_PATTERNS)
@@ -400,6 +430,7 @@ def _load_field_kind_parsing(
     ambiguous_default_unit: str | None = None,
     inferred_units_with_separator: tuple[str, ...] = (),
     inferred_units_without_separator: tuple[str, ...] = (),
+    output_unit: str | None = None,
 ) -> FieldKindParsing:
     if not data:
         return FieldKindParsing(
@@ -408,6 +439,7 @@ def _load_field_kind_parsing(
             ambiguous_default_unit=ambiguous_default_unit,
             inferred_units_with_separator=inferred_units_with_separator,
             inferred_units_without_separator=inferred_units_without_separator,
+            output_unit=output_unit or _output_unit_for_default(default_unit),
         )
     units_raw = data.get("units")
     if units_raw is None:
@@ -440,6 +472,7 @@ def _load_field_kind_parsing(
         inferred_units_without_separator=_string_tuple(
             data.get("inferred_units_without_separator"), inferred_units_without_separator
         ),
+        output_unit=str(data.get("output_unit", output_unit or _output_unit_for_default(default_unit))),
     )
 
 
@@ -451,14 +484,93 @@ def _load_unit_alias(name: str, body: dict[str, Any]) -> UnitAlias:
         aliases_raw = [aliases_raw]
     if not isinstance(aliases_raw, (list, tuple)) or not aliases_raw:
         raise ValueError(f"parsing unit {name!r} aliases must be a non-empty list")
-    si_factor_raw = body.get("si_factor")
-    if si_factor_raw is None:
-        raise ValueError(f"parsing unit {name!r} must define si_factor")
+    unit_expression = body.get("unit")
+    if unit_expression is None:
+        si_factor_raw = body.get("si_factor")
+        if si_factor_raw is None:
+            raise ValueError(f"parsing unit {name!r} must define unit")
+        unit_expression = _legacy_unit_expression(str(name).upper(), float(si_factor_raw))
     return UnitAlias(
         name=str(name).upper(),
         aliases=tuple(str(alias).upper() for alias in aliases_raw),
-        si_factor=float(si_factor_raw),
+        unit_expression=str(unit_expression),
     )
+
+
+def _load_custom_quantities(data: Any) -> list[TelemetryQuantityDefinition]:
+    if not data:
+        return []
+    if not isinstance(data, list):
+        raise ValueError("custom_telemetry_quantities must be a list")
+    quantities = [_load_custom_quantity(item) for item in data]
+    names: set[str] = set()
+    slugs: set[str] = set()
+    ids: set[str] = set()
+    for quantity in quantities:
+        lowered = quantity.name.casefold()
+        if lowered in names:
+            raise ValueError(f"Duplicate custom quantity name {quantity.name!r}")
+        if quantity.slug in slugs:
+            raise ValueError(f"Duplicate custom quantity slug {quantity.slug!r}")
+        if quantity.id in ids:
+            raise ValueError(f"Duplicate custom quantity id {quantity.id!r}")
+        names.add(lowered)
+        slugs.add(quantity.slug)
+        ids.add(quantity.id)
+    return quantities
+
+
+def _load_custom_quantity(data: Any) -> TelemetryQuantityDefinition:
+    if not isinstance(data, dict):
+        raise ValueError("Each custom telemetry quantity must be a mapping")
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("custom telemetry quantity name is required")
+    dimensionality = normalize_dimension_expression(str(data.get("dimensionality", "")).strip())
+    display_unit = str(data.get("display_unit", "")).strip()
+    if not display_unit:
+        raise ValueError(f"custom telemetry quantity {name!r} must define display_unit")
+    validate_unit_compatible_with_dimension(display_unit, dimensionality)
+    aliases = data.get("unit_aliases", {}) or {}
+    if not isinstance(aliases, dict):
+        raise ValueError(f"custom telemetry quantity {name!r} unit_aliases must be a mapping")
+    slug = make_quantity_slug(str(data.get("slug", "") or name))
+    quantity_id = str(data.get("id", "")).strip()
+    if not quantity_id:
+        quantity_id = f"q_{slug}"
+    return TelemetryQuantityDefinition(
+        id=quantity_id,
+        name=name,
+        slug=slug,
+        dimensionality=dimensionality,
+        display_unit=display_unit,
+        description=str(data.get("description", "") or ""),
+        unit_aliases={str(alias): str(unit) for alias, unit in aliases.items()},
+    )
+
+
+def _output_unit_for_default(default_unit: str) -> str:
+    if default_unit.upper() in {"MPH", "KPH", "MPS", "KPS"}:
+        return "meter/second"
+    if default_unit.upper() in {"FT", "MI", "KM", "M"}:
+        return "meter"
+    return "dimensionless"
+
+
+def _legacy_unit_expression(name: str, si_factor: float) -> str:
+    known = {
+        "MPH": "mile/hour",
+        "KPH": "kilometer/hour",
+        "MPS": "meter/second",
+        "KPS": "kilometer/second",
+        "FT": "foot",
+        "MI": "mile",
+        "KM": "kilometer",
+        "M": "meter",
+    }
+    if name in known:
+        return known[name]
+    return f"{si_factor:.17g} * dimensionless"
 
 
 def _optional_float(value: Any) -> float | None:

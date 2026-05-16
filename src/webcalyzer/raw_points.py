@@ -5,7 +5,7 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
-from webcalyzer.models import HardcodedRawDataPoint
+from webcalyzer.models import HardcodedRawDataPoint, ProfileConfig
 
 
 BASE_COLUMNS = ["frame_index", "sample_time_s", "segment_id", "mission_elapsed_time_s"]
@@ -22,6 +22,7 @@ TEXT_SUFFIXES = {"raw_text", "parse_status", "raw_unit", "variant"}
 def apply_hardcoded_raw_data_points(
     raw_df: pd.DataFrame,
     points: Iterable[HardcodedRawDataPoint] | None,
+    profile: ProfileConfig | None = None,
 ) -> pd.DataFrame:
     hardcoded_points = sorted(points or [], key=lambda point: point.mission_elapsed_time_s)
     df = raw_df.copy()
@@ -40,7 +41,7 @@ def apply_hardcoded_raw_data_points(
 
         _write_met_observation(df, row_index, point.mission_elapsed_time_s)
         for field_name, value in point.field_values().items():
-            _write_telemetry_observation(df, row_index, field_name, value)
+            _write_telemetry_observation(df, row_index, field_name, value, profile=profile)
 
     return _sort_raw_dataframe(df)
 
@@ -120,8 +121,19 @@ def _write_met_observation(df: pd.DataFrame, row_index: int, mission_elapsed_tim
     df.at[row_index, "met_variant"] = "hardcoded"
 
 
-def _write_telemetry_observation(df: pd.DataFrame, row_index: int, field_name: str, value: float) -> None:
-    _kind, unit = TELEMETRY_FIELDS[field_name]
+def _write_telemetry_observation(
+    df: pd.DataFrame,
+    row_index: int,
+    field_name: str,
+    value: float,
+    *,
+    profile: ProfileConfig | None,
+) -> None:
+    if field_name in TELEMETRY_FIELDS:
+        _kind, unit = TELEMETRY_FIELDS[field_name]
+    else:
+        quantity = profile.custom_quantity_by_field_name(field_name) if profile is not None else None
+        unit = quantity.display_unit if quantity is not None else ""
     df.at[row_index, f"{field_name}_raw_text"] = f"{value:g} {unit}"
     df.at[row_index, f"{field_name}_parse_status"] = "hardcoded"
     df.at[row_index, f"{field_name}_raw_unit"] = unit

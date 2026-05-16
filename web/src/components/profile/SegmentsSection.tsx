@@ -7,6 +7,7 @@ import {
   CANONICAL_FIELD_ORDER,
   CanonicalFieldName,
   FieldValue,
+  customFieldValue,
 } from "@/lib/schema";
 import { getError } from "@/lib/errors";
 import { NumberInput } from "./NumberInput";
@@ -22,6 +23,11 @@ function fieldFor(name: CanonicalFieldName): FieldValue {
 
 export function SegmentsSection({ state }: { state: ProfileFormState }) {
   const { profile, patch, setProfile, errors } = state;
+  const customFields = profile.custom_telemetry_quantities.map((quantity) => ({
+    name: `custom_${quantity.slug}`,
+    label: quantity.name,
+    quantity,
+  }));
 
   return (
     <Section description="Calibration segments define the active field boxes for frame ranges. End frame is exclusive.">
@@ -66,12 +72,13 @@ export function SegmentsSection({ state }: { state: ProfileFormState }) {
               </Field>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-5">
-              {CANONICAL_FIELD_ORDER.map((name) => {
+              {[...CANONICAL_FIELD_ORDER.map((name) => ({ name, label: name, quantity: null })), ...customFields].map((item) => {
+                const name = item.name;
                 const field = segment.fields[name];
                 return (
                   <div key={name} className="rounded-md border border-border/60 p-2">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[11px]">{name}</span>
+                      <span className="truncate font-mono text-[11px]" title={name}>{item.label}</span>
                       <Switch
                         checked={Boolean(field)}
                         onCheckedChange={(checked) => {
@@ -81,7 +88,11 @@ export function SegmentsSection({ state }: { state: ProfileFormState }) {
                               ...segments[segmentIndex],
                               fields: { ...segments[segmentIndex].fields },
                             };
-                            if (checked) nextSegment.fields[name] = fieldFor(name);
+                            if (checked) {
+                              nextSegment.fields[name] = item.quantity
+                                ? customFieldValue(item.quantity)
+                                : fieldFor(name as CanonicalFieldName);
+                            }
                             else delete nextSegment.fields[name];
                             segments[segmentIndex] = nextSegment;
                             return { ...prev, segments };

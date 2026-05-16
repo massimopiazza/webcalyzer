@@ -18,6 +18,7 @@ export function HardcodedPointsSection({ state }: { state: ProfileFormState }) {
           mission_elapsed_time_s: 0,
           stage1: { velocity_mps: null, altitude_m: null },
           stage2: { velocity_mps: null, altitude_m: null },
+          custom_values: {},
         },
       ],
     }));
@@ -113,6 +114,24 @@ export function HardcodedPointsSection({ state }: { state: ProfileFormState }) {
                 />
               </Field>
             </div>
+            {enabledCustomQuantities(profile).length > 0 && (
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                {enabledCustomQuantities(profile).map((quantity) => (
+                  <Field key={quantity.id} label={`${quantity.name} (${quantity.display_unit})`}>
+                    <NumberInput
+                      value={point.custom_values[quantity.field_name] ?? null}
+                      allowNull
+                      onChange={(v) => {
+                        const next = { ...point.custom_values };
+                        if (v === null) delete next[quantity.field_name];
+                        else next[quantity.field_name] = v;
+                        patch(["hardcoded_raw_data_points", index, "custom_values"], next);
+                      }}
+                    />
+                  </Field>
+                ))}
+              </div>
+            )}
           </div>
         ))}
         <Button variant="outline" onClick={addPoint}>
@@ -121,4 +140,16 @@ export function HardcodedPointsSection({ state }: { state: ProfileFormState }) {
       </div>
     </Section>
   );
+}
+
+function enabledCustomQuantities(profile: ProfileFormState["profile"]) {
+  const enabled = new Set<string>();
+  profile.segments.forEach((segment) => {
+    Object.entries(segment.fields).forEach(([fieldName, field]) => {
+      if (field.kind === "custom") enabled.add(fieldName);
+    });
+  });
+  return profile.custom_telemetry_quantities
+    .map((quantity) => ({ ...quantity, field_name: `custom_${quantity.slug}` }))
+    .filter((quantity) => enabled.has(quantity.field_name));
 }

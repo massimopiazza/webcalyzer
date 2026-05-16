@@ -106,7 +106,7 @@ webcalyzer serve [--host 127.0.0.1] [--port 8765] \
                  [--dist-dir <path>]
 ```
 
-Then open <http://localhost:8765>. The UI exposes four pages:
+Then open <http://localhost:8765>. The UI exposes five pages:
 
 - **Run**: load any YAML profile from `--templates-dir`, edit every field
   the YAML supports (with inline validation), pick a video and an output
@@ -119,9 +119,17 @@ Then open <http://localhost:8765>. The UI exposes four pages:
   links.
 - **Calibrate**: scrub through video frames, split the video into
   calibration segments, enable the canonical telemetry slots for each
-  segment, and draw bounding boxes directly on the frame. Save calibration
-  as a template to write the current calibration plus the profile settings
+  segment, add custom telemetry quantities from the library when needed,
+  and draw bounding boxes directly on the frame. Save calibration as a
+  template to write the current calibration plus the profile settings
   currently loaded in the form.
+- **Quantities**: define reusable OCR telemetry quantities.
+  Each quantity has a name, dimensionality, mandatory display unit, optional
+  description, and optional unit aliases. The five built-in calibration
+  quantities are seeded by default and can be edited but not deleted from
+  the web UI. The form can fill the typical SI display unit for the current
+  dimensionality. Deleting a custom quantity asks for confirmation after
+  showing affected templates.
 - **Templates**: list, import (paste YAML), download, and delete templates
   in `--templates-dir`.
 - **Documentation**: read the bundled user guide and internal reference
@@ -174,6 +182,15 @@ section lists independently from page-title navigation.
 | `calibrate` | `--video` | path | yes | - | - | |
 |             | `--config` | path | yes | - | - | Loaded as the starting point; saved into `--output`. |
 |             | `--output` | path | yes | - | - | Destination YAML for the edited profile. |
+|             | `--templates-dir` | path | no | `configs` | - | Source for `custom_quantities.yaml` when adding custom slots in the OpenCV editor. |
+| `quantities list` | `--templates-dir` | path | no | `configs` | - | Lists reusable telemetry quantities. |
+| `quantities add` | `--name` | string | yes | - | - | Human label for the new quantity. |
+|                  | `--dimensionality` | string | yes | - | e.g. `L/T^2`, `M/L^3`, `1` | Parsed with base dimensions and normalized before saving. |
+|                  | `--display-unit` | string | yes | - | any compatible Pint unit | Unit used for persisted custom values and plots. |
+|                  | `--alias` | string | no | - | `ALIAS=UNIT_EXPR` | Optional, repeatable. |
+| `quantities edit` | `id` | string | yes | - | - | Updates the library and all affected templates immediately. |
+|                   | `--name`, `--dimensionality`, `--display-unit`, `--description`, `--alias` | mixed | no | current value | - | `--alias` entries replace the old alias map when provided. |
+| `quantities delete` | `id` | string | yes | - | - | Deletes a custom library item and removes it from all affected templates. |
 | `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (4.0 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
 |           | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Used when extraction writes trajectory outputs. |
 |           | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Used when extraction writes trajectory outputs. |
@@ -329,10 +346,13 @@ webcalyzer sample-frames \
 ### `calibrate`: interactive segmented bounding-box editor
 
 Opens an OpenCV window on the source video. Mouse-drag to draw a box for
-the active canonical slot. The profile can be split into multiple
+the active telemetry slot. The profile can be split into multiple
 non-overlapping frame ranges, each with its own enabled slots and boxes.
-Frame indices are authoritative; shown timestamps are derived from the
-calibration video FPS.
+Custom quantities can be added from the library at any time. They are added
+to all existing segments by default. Each segment keeps a separate visible
+slot list and enabled slot set; splitting a segment copies both into the
+new segment. Frame indices are authoritative; shown timestamps are derived
+from the calibration video FPS.
 
 ```bash
 webcalyzer calibrate \
@@ -343,8 +363,11 @@ webcalyzer calibrate \
 
 | Key | Action |
 |-----|--------|
-| `1`-`5` | Select canonical slot (`met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, `stage2_altitude`) |
+| `1`-`9` | Select one of the visible telemetry slots |
+| Left / right arrows | Cycle the active telemetry slot |
 | `e` | Enable or disable the selected slot in the active segment |
+| `g` | Add an existing custom quantity from `custom_quantities.yaml` |
+| `G` | Create a custom quantity, save it to the library, then add it to the profile |
 | `[` / `]` | Previous / next source frame |
 | `n` / `p` | Jump forward / backward by roughly one second |
 | `a` | Split at the current frame. The split frame becomes the first frame of the next segment. |
@@ -356,6 +379,28 @@ webcalyzer calibrate \
 | `s` | Save the YAML profile draft |
 | `q` | Quit |
 | Mouse drag | Draw a new bounding box for the selected enabled slot |
+
+### `quantities`: manage telemetry quantity definitions
+
+Maintains the global quantity library in `custom_quantities.yaml`
+inside `--templates-dir`. A quantity stores dimensionality and a
+mandatory display unit. The display unit is the normalization target for
+OCR output, so a stream that changes from `m/s` to `km/s` can still be
+stored and plotted in one consistent unit. A missing library file is seeded
+with editable built-in definitions for time, stage velocity, and stage
+altitude. Built-in definitions cannot be deleted.
+
+```bash
+webcalyzer quantities add \
+  --name Acceleration \
+  --dimensionality 'L/T^2' \
+  --display-unit 'm/s^2' \
+  --alias gee=standard_gravity
+```
+
+`edit` updates embedded snapshots in affected templates immediately.
+`delete` removes a custom quantity, its custom fields, and matching custom
+anchor values from affected templates.
 
 ### `extract`:  OCR + sanitize, no plots/overlay
 
@@ -472,13 +517,14 @@ child directory created under the specified output parent:
 
 | File | Purpose |
 |------|---------|
-| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical field raw OCR text, parse status, raw value, raw unit, SI value, OCR variant, parse confidence, unit source, unit match score, candidate count, and reject reason. Append-only source of truth. |
-| `telemetry_clean.csv` | Same rows in SI units (m/s, m, s) with plausibility filtering, stage activation, and appended trajectory columns applied. |
+| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical and custom field raw OCR text, parse status, raw value, raw unit, normalized value, OCR variant, parse confidence, unit source, unit match score, candidate count, and reject reason. Append-only source of truth. |
+| `telemetry_clean.csv` | Clean telemetry with canonical units (m/s, m, s) and custom fields in each quantity's `display_unit`, with plausibility filtering, stage activation, and appended trajectory columns applied. |
 | `trajectory.csv` | Dense fixed-step trajectory reconstruction. Interpolated velocity/altitude live here only; the original telemetry columns keep their gaps. |
 | `telemetry_rejected.csv` | Outliers removed by `reject-outliers`. Initially empty; populated by the outlier rejection step. |
 | `run_metadata.json` | Video metadata + sample count + OCR settings used for the run (backend, workers, skip_detection, recognition level, Phase A wall time). |
 | `config_resolved.yaml` | The profile actually used by the run, written verbatim so the result directory is self-describing even if the source YAML changes later. |
 | `plots/filtered/{summary,coverage,stage1,stage2,downrange}.pdf` | Plots driven by `telemetry_clean.csv` and `trajectory.csv`. |
+| `plots/filtered/custom_telemetry.pdf` | One page per custom telemetry quantity enabled in the profile, labeled with its display unit. |
 | `plots/with_rejected/...` | Mirrored plot set with hollow circles for rejected samples. |
 | `telemetry_overlay.mp4` | Source video copy with a translucent telemetry plot composited into the top-left corner (margins are symmetric). |
 | `telemetry_overlay.gif` | 15-second looping preview of the overlay video, sampled across the full clip at 4 fps and scaled down to 720p. |
@@ -538,37 +584,51 @@ trajectory:
 # Add this block to retarget the OCR pipeline to a feed that uses different
 # units, language, or timestamp formatting without code changes. Unit
 # aliases are exact-matched first, then fuzzy-matched with RapidFuzz.
-# Pint applies the configured si_factor conversion. customWords
-# (Apple Vision) are auto-derived from the alias list below.
+# Pint parses the configured unit expressions and converts every value to
+# output_unit. customWords (Apple Vision) are auto-derived from aliases.
 parsing:
   velocity:
+    output_unit: meter/second
     default_unit: MPH
     inferred_units_with_separator: [MPH]      # used when no explicit unit label
     inferred_units_without_separator: [MPH]
     units:
-      MPH: { aliases: [MPH, MPN, MРН, MPI, M/H], si_factor: 0.44704 }
-      KPH: { aliases: [KPH, KMH, KM/H, KMPH], si_factor: 0.27777777777777778 }
-      MPS: { aliases: [M/S, MPS], si_factor: 1.0 }
+      MPH: { aliases: [MPH, MPN, MРН, MPI, M/H], unit: mile/hour }
+      KPH: { aliases: [KPH, KMH, KM/H, KMPH], unit: kilometer/hour }
+      MPS: { aliases: [M/S, MPS], unit: meter/second }
   altitude:
+    output_unit: meter
     default_unit: FT
     ambiguous_default_unit: FT                # ties prefer the smaller value
     inferred_units_with_separator: [FT, MI]   # 6-digit FT vs 3-digit MI
     inferred_units_without_separator: [FT]
     units:
-      FT: { aliases: [FT, F7, FI, ET, E7, EI], si_factor: 0.3048 }
-      MI: { aliases: [MI, ML, M1], si_factor: 1609.344 }
-      KM: { aliases: [KM], si_factor: 1000.0 }
-      M:  { aliases: [M], si_factor: 1.0 }
+      FT: { aliases: [FT, F7, FI, ET, E7, EI], unit: foot }
+      MI: { aliases: [MI, ML, M1], unit: mile }
+      KM: { aliases: [KM], unit: kilometer }
+      M:  { aliases: [M], unit: meter }
   met:
     timestamp_patterns:
       - 'T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?'
       - '([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?'
+
+custom_telemetry_quantities:
+  - id: q_acceleration
+    name: Acceleration
+    slug: acceleration
+    dimensionality: L/T^2
+    display_unit: m/s^2
+    description: Optional vertical or vehicle acceleration read from OCR.
+    unit_aliases:
+      gee: standard_gravity
 
 hardcoded_raw_data_points:       # optional synthetic raw points keyed by MET
   - mission_elapsed_time_s: 560.0
     stage1:
       velocity_mps: 0.0
       altitude_m: 0.0
+    custom_values:
+      custom_acceleration: 0.0
 
 segments:
   - id: segment_1
@@ -576,6 +636,13 @@ segments:
     start_time_s: 0.0           # derived from frame index and calibration FPS
     end_frame_index: 50349      # exclusive
     end_time_s: 840.0
+    visible_fields:             # ordered right-side calibration slot list
+      - met
+      - stage1_velocity
+      - stage1_altitude
+      - stage2_velocity
+      - stage2_altitude
+      - custom_acceleration
     fields:
       met:
         kind: met
@@ -588,6 +655,11 @@ segments:
       stage1_altitude: { ... }
       stage2_velocity: { ... }
       stage2_altitude: { ... }
+      custom_acceleration:
+        kind: custom
+        stage: null
+        quantity_id: q_acceleration
+        bbox_x1y1x2y2: [0.700, 0.903, 0.820, 0.957]
 ```
 
 `segments` is the canonical calibration surface. Segment ranges must be
@@ -595,16 +667,32 @@ ordered and non-overlapping, and runnable profiles must make them
 contiguous. `end_frame_index` is exclusive, so a split at frame `N`
 means the previous segment processes frames `< N` and the next segment
 starts at `N`. Each segment uses the five canonical slot names shown
-above. Disabled slots are omitted from YAML; during extraction their raw
-parse status is `not_configured`. Every runnable segment must define
-`met` with a valid normalized bbox. Draft templates may be saved before
-that is true.
+above plus any custom field names in the form `custom_<slug>`.
+`visible_fields` controls the right-side calibration slot list and can
+include disabled slots. `fields` controls enabled extraction slots; disabled
+slots are omitted from `fields`, and during extraction their raw parse
+status is `not_configured`. Every runnable segment must define `met` with
+a valid normalized bbox, and every enabled custom field must reference a
+quantity embedded in `custom_telemetry_quantities`. Draft templates may be
+saved before that is true.
 
 `hardcoded_raw_data_points` are merged into `telemetry_raw.csv` before clean
 telemetry is built. A point with a new `mission_elapsed_time_s` inserts a
 synthetic row; a point whose timestamp already exists replaces the configured
 field values in that row. Supported stage keys are `stage1` and `stage2`, each
-with optional `velocity_mps` and `altitude_m`.
+with optional `velocity_mps` and `altitude_m`. Custom anchor values live in
+`custom_values` and use the custom field name as the key. A custom anchor is
+valid only when that custom quantity is enabled in at least one segment.
+
+Custom quantities are profile snapshots copied from the global
+`custom_quantities.yaml` library. `dimensionality` uses base symbols such as
+`L`, `M`, `T`, `TEMP`, `ANG`, `BIT`, and `COUNT`; `display_unit` must be a
+compatible Pint unit and is mandatory. Unit aliases are optional mappings
+from OCR text to Pint unit expressions. When extraction sees explicit units,
+it converts to `display_unit`; when the feed omits a unit, it uses the recent
+explicit unit or the display unit so the output stream remains continuous.
+Custom quantities are written to CSV and to `custom_telemetry.pdf`; they are
+not rendered into the overlay video.
 
 The video overlay panel sits in the top-left corner with a symmetric pixel
 margin (`max(8, height * 0.012)`) on both the top and left, so the plot is

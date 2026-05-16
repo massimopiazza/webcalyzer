@@ -19,11 +19,15 @@ from webcalyzer.models import (
     MetParsing,
     ParsingProfile,
     ProfileConfig,
+    TelemetryQuantityDefinition,
     TrajectoryConfig,
     UnitAlias,
     VideoOverlayConfig,
 )
+from webcalyzer.dimensions import normalize_dimension_expression
+from webcalyzer.quantities import make_quantity_slug
 from webcalyzer.trajectory import INTEGRATION_METHODS, INTERPOLATION_METHODS
+from webcalyzer.units import validate_unit_compatible_with_dimension
 
 InterpolationMethod = Literal["linear", "pchip", "akima", "cubic"]
 IntegrationMethod = Literal["euler", "midpoint", "trapezoid", "rk4", "simpson"]
@@ -44,7 +48,7 @@ OverlayEncoder = Literal[
     "libx264",
 ]
 DerivativeSmoothingMode = Literal["interp", "nearest", "mirror", "constant", "wrap"]
-FieldKind = Literal["velocity", "altitude", "met"]
+FieldKind = Literal["velocity", "altitude", "met", "custom"]
 FieldStage = Literal["stage1", "stage2"]
 
 
@@ -97,6 +101,7 @@ class FieldModel(StrictModel):
     kind: FieldKind
     stage: FieldStage | None = None
     bbox_x1y1x2y2: tuple[float, float, float, float] | None = None
+    quantity_id: str | None = None
 
     @field_validator("bbox_x1y1x2y2")
     @classmethod
@@ -118,9 +123,39 @@ class FieldModel(StrictModel):
         if self.kind == "met":
             if self.stage is not None:
                 raise ValueError("MET fields must not have a stage")
+            if self.quantity_id is not None:
+                raise ValueError("MET fields must not declare quantity_id")
+        elif self.kind == "custom":
+            if self.stage is not None:
+                raise ValueError("custom fields must not have a stage")
+            if not self.quantity_id:
+                raise ValueError("custom fields must declare quantity_id")
         else:
             if self.stage is None:
                 raise ValueError(f"{self.kind} fields must declare a stage")
+            if self.quantity_id is not None:
+                raise ValueError(f"{self.kind} fields must not declare quantity_id")
+        return self
+
+
+class TelemetryQuantityModel(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    slug: str | None = None
+    dimensionality: str = Field(min_length=1)
+    display_unit: str = Field(min_length=1)
+    description: str = ""
+    unit_aliases: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalize_and_validate(self) -> "TelemetryQuantityModel":
+        self.slug = make_quantity_slug(self.slug or self.name)
+        self.dimensionality = normalize_dimension_expression(self.dimensionality)
+        validate_unit_compatible_with_dimension(self.display_unit, self.dimensionality)
+        for alias, unit_expression in self.unit_aliases.items():
+            if not alias.strip() or not unit_expression.strip():
+                raise ValueError("unit aliases must have non-empty alias and unit expression")
+            validate_unit_compatible_with_dimension(unit_expression, self.dimensionality)
         return self
 
 
@@ -138,6 +173,7 @@ class SegmentModel(StrictModel):
     start_time_s: float = Field(ge=0.0)
     end_frame_index: int = Field(ge=0)
     end_time_s: float = Field(ge=0.0)
+    visible_fields: list[str] = Field(default_factory=list)
     fields: dict[str, FieldModel] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -145,6 +181,10 @@ class SegmentModel(StrictModel):
         if self.end_frame_index < self.start_frame_index:
             raise ValueError("end_frame_index must be greater than or equal to start_frame_index")
         for name, field_model in self.fields.items():
+            if field_model.kind == "custom":
+                if not name.startswith("custom_"):
+                    raise ValueError(f"custom field {name!r} must use a custom_<slug> name")
+                continue
             if name not in CANONICAL_FIELD_DEFINITIONS:
                 raise ValueError(f"Unsupported canonical field {name!r}")
             expected_kind, expected_stage = CANONICAL_FIELD_DEFINITIONS[name]
@@ -152,6 +192,10 @@ class SegmentModel(StrictModel):
                 raise ValueError(
                     f"{name} must use kind={expected_kind!r} and stage={expected_stage!r}"
                 )
+        visible = set(self.visible_fields)
+        missing_visible = [name for name in self.fields if name not in visible]
+        if missing_visible:
+            raise ValueError(f"enabled fields must be visible: {', '.join(missing_visible)}")
         return self
 
 
@@ -164,6 +208,7 @@ class HardcodedRawPointModel(StrictModel):
     mission_elapsed_time_s: float
     stage1: HardcodedStageModel = Field(default_factory=HardcodedStageModel)
     stage2: HardcodedStageModel = Field(default_factory=HardcodedStageModel)
+    custom_values: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _at_least_one_value(self) -> "HardcodedRawPointModel":
@@ -172,6 +217,7 @@ class HardcodedRawPointModel(StrictModel):
             self.stage1.altitude_m,
             self.stage2.velocity_mps,
             self.stage2.altitude_m,
+            *self.custom_values.values(),
         ]
         if all(value is None for value in values):
             raise ValueError(
@@ -182,7 +228,7 @@ class HardcodedRawPointModel(StrictModel):
 
 class UnitAliasModel(StrictModel):
     aliases: list[str] = Field(min_length=1)
-    si_factor: float = Field(gt=0.0)
+    unit: str = Field(min_length=1)
 
     @field_validator("aliases")
     @classmethod
@@ -199,6 +245,7 @@ class FieldKindParsingModel(StrictModel):
     ambiguous_default_unit: str | None = None
     inferred_units_with_separator: list[str] = Field(default_factory=list)
     inferred_units_without_separator: list[str] = Field(default_factory=list)
+    output_unit: str | None = None
 
     @field_validator("default_unit", "ambiguous_default_unit")
     @classmethod
@@ -281,6 +328,7 @@ class ProfileModel(StrictModel):
     video_overlay: VideoOverlayModel = Field(default_factory=VideoOverlayModel)
     trajectory: TrajectoryModel = Field(default_factory=TrajectoryModel)
     parsing: ParsingModel | None = None
+    custom_telemetry_quantities: list[TelemetryQuantityModel] = Field(default_factory=list)
     hardcoded_raw_data_points: list[HardcodedRawPointModel] = Field(default_factory=list)
     segments: list[SegmentModel] = Field(min_length=1)
 
@@ -309,11 +357,56 @@ class ProfileModel(StrictModel):
 
     @model_validator(mode="after")
     def _segments_are_ordered(self) -> "ProfileModel":
+        ids: set[str] = set()
+        names: set[str] = set()
+        slugs: set[str] = set()
+        quantity_by_id: dict[str, TelemetryQuantityModel] = {}
+        for quantity in self.custom_telemetry_quantities:
+            if quantity.id in ids:
+                raise ValueError(f"Duplicate custom quantity id {quantity.id!r}")
+            lowered = quantity.name.casefold()
+            if lowered in names:
+                raise ValueError(f"Duplicate custom quantity name {quantity.name!r}")
+            if quantity.slug in slugs:
+                raise ValueError(f"Duplicate custom quantity slug {quantity.slug!r}")
+            ids.add(quantity.id)
+            names.add(lowered)
+            slugs.add(quantity.slug or "")
+            quantity_by_id[quantity.id] = quantity
         previous_end: int | None = None
         for segment in self.segments:
             if previous_end is not None and segment.start_frame_index < previous_end:
                 raise ValueError("segments must be sorted and non-overlapping")
             previous_end = segment.end_frame_index
+            for field_name, field_model in segment.fields.items():
+                if field_model.kind != "custom":
+                    continue
+                if field_model.quantity_id not in quantity_by_id:
+                    raise ValueError(f"{field_name}: custom quantity is not embedded in profile")
+                expected = f"custom_{quantity_by_id[field_model.quantity_id].slug}"
+                if field_name != expected:
+                    raise ValueError(f"{field_name}: expected field name {expected!r}")
+            custom_visible_names = {
+                f"custom_{quantity.slug}" for quantity in self.custom_telemetry_quantities
+            }
+            for field_name in segment.visible_fields:
+                if field_name in CANONICAL_FIELD_DEFINITIONS:
+                    continue
+                if field_name.startswith("custom_") and field_name in custom_visible_names:
+                    continue
+                raise ValueError(f"{field_name}: visible field is not defined")
+        enabled_custom_names = {
+            field_name
+            for segment in self.segments
+            for field_name, field_model in segment.fields.items()
+            if field_model.kind == "custom"
+        }
+        for point in self.hardcoded_raw_data_points:
+            for field_name in point.custom_values:
+                if field_name not in enabled_custom_names:
+                    raise ValueError(
+                        f"anchor point custom value {field_name!r} is not enabled in any segment"
+                    )
         return self
 
 
@@ -328,12 +421,13 @@ def _field_dataclass_to_model(name: str, field: FieldConfig) -> FieldModel:
         kind=field.kind,  # type: ignore[arg-type]
         stage=field.stage,  # type: ignore[arg-type]
         bbox_x1y1x2y2=(box.x0, box.y0, box.x1, box.y1) if box is not None else None,
+        quantity_id=field.quantity_id,
     )
 
 
 def _field_kind_dataclass_to_model(parsing: FieldKindParsing) -> FieldKindParsingModel:
     units = {
-        unit.name: UnitAliasModel(aliases=list(unit.aliases), si_factor=unit.si_factor)
+        unit.name: UnitAliasModel(aliases=list(unit.aliases), unit=unit.unit_expression)
         for unit in parsing.units
     }
     return FieldKindParsingModel(
@@ -342,6 +436,19 @@ def _field_kind_dataclass_to_model(parsing: FieldKindParsing) -> FieldKindParsin
         ambiguous_default_unit=parsing.ambiguous_default_unit,
         inferred_units_with_separator=list(parsing.inferred_units_with_separator),
         inferred_units_without_separator=list(parsing.inferred_units_without_separator),
+        output_unit=parsing.output_unit,
+    )
+
+
+def _quantity_dataclass_to_model(quantity: TelemetryQuantityDefinition) -> TelemetryQuantityModel:
+    return TelemetryQuantityModel(
+        id=quantity.id,
+        name=quantity.name,
+        slug=quantity.slug,
+        dimensionality=quantity.dimensionality,
+        display_unit=quantity.display_unit,
+        description=quantity.description,
+        unit_aliases=dict(quantity.unit_aliases),
     )
 
 
@@ -361,6 +468,7 @@ def profile_dataclass_to_model(profile: ProfileConfig) -> ProfileModel:
             start_time_s=segment.start_time_s,
             end_frame_index=segment.end_frame_index,
             end_time_s=segment.end_time_s,
+            visible_fields=segment.ordered_visible_field_names(),
             fields={
                 name: _field_dataclass_to_model(name, segment.fields[name])
                 for name in segment.ordered_field_names()
@@ -391,6 +499,10 @@ def profile_dataclass_to_model(profile: ProfileConfig) -> ProfileModel:
             }
         ),
         parsing=parsing_model,
+        custom_telemetry_quantities=[
+            _quantity_dataclass_to_model(quantity)
+            for quantity in profile.custom_telemetry_quantities
+        ],
         hardcoded_raw_data_points=[
             HardcodedRawPointModel(
                 mission_elapsed_time_s=point.mission_elapsed_time_s,
@@ -402,6 +514,7 @@ def profile_dataclass_to_model(profile: ProfileConfig) -> ProfileModel:
                     velocity_mps=point.stage2_velocity_mps,
                     altitude_m=point.stage2_altitude_m,
                 ),
+                custom_values=dict(point.custom_values),
             )
             for point in profile.hardcoded_raw_data_points
         ],
@@ -415,6 +528,7 @@ def _model_field_to_dataclass(name: str, model: FieldModel) -> FieldConfig:
         kind=model.kind,
         stage=model.stage,
         box=Box.from_sequence(list(model.bbox_x1y1x2y2)) if model.bbox_x1y1x2y2 is not None else None,
+        quantity_id=model.quantity_id,
     )
 
 
@@ -423,7 +537,7 @@ def _model_field_kind_to_dataclass(model: FieldKindParsingModel) -> FieldKindPar
         UnitAlias(
             name=name.upper(),
             aliases=tuple(item.upper() for item in body.aliases),
-            si_factor=float(body.si_factor),
+            unit_expression=body.unit,
         )
         for name, body in model.units.items()
     )
@@ -435,6 +549,19 @@ def _model_field_kind_to_dataclass(model: FieldKindParsingModel) -> FieldKindPar
         else None,
         inferred_units_with_separator=tuple(model.inferred_units_with_separator),
         inferred_units_without_separator=tuple(model.inferred_units_without_separator),
+        output_unit=model.output_unit,
+    )
+
+
+def _model_quantity_to_dataclass(model: TelemetryQuantityModel) -> TelemetryQuantityDefinition:
+    return TelemetryQuantityDefinition(
+        id=model.id,
+        name=model.name,
+        slug=model.slug or make_quantity_slug(model.name),
+        dimensionality=model.dimensionality,
+        display_unit=model.display_unit,
+        description=model.description,
+        unit_aliases=dict(model.unit_aliases),
     )
 
 
@@ -480,6 +607,10 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
             launch_site=LaunchSiteConfig(**model.trajectory.launch_site.model_dump()),
         ),
         parsing=parsing,
+        custom_telemetry_quantities=[
+            _model_quantity_to_dataclass(quantity)
+            for quantity in model.custom_telemetry_quantities
+        ],
         hardcoded_raw_data_points=[
             HardcodedRawDataPoint(
                 mission_elapsed_time_s=point.mission_elapsed_time_s,
@@ -487,6 +618,7 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
                 stage1_altitude_m=point.stage1.altitude_m,
                 stage2_velocity_mps=point.stage2.velocity_mps,
                 stage2_altitude_m=point.stage2.altitude_m,
+                custom_values=dict(point.custom_values),
             )
             for point in model.hardcoded_raw_data_points
         ],
@@ -497,10 +629,13 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
                 start_time_s=segment.start_time_s,
                 end_frame_index=segment.end_frame_index,
                 end_time_s=segment.end_time_s,
+                visible_fields=list(segment.visible_fields),
                 fields={
                     name: _model_field_to_dataclass(name, segment.fields[name])
-                    for name in CANONICAL_FIELD_ORDER
-                    if name in segment.fields
+                    for name in [
+                        *[canonical for canonical in CANONICAL_FIELD_ORDER if canonical in segment.fields],
+                        *[name for name in segment.fields if name not in CANONICAL_FIELD_ORDER],
+                    ]
                 },
             )
             for segment in model.segments
@@ -526,6 +661,8 @@ def validate_runnable_profile_model(model: ProfileModel) -> ProfileModel:
         for name, field_model in segment.fields.items():
             if field_model.bbox_x1y1x2y2 is None:
                 raise ValueError(f"{label}: {name} must define bbox_x1y1x2y2")
+            if field_model.kind == "custom" and not field_model.quantity_id:
+                raise ValueError(f"{label}: {name} must reference a custom quantity")
 
     video = model.calibration_video
     if video.frame_count is not None:
@@ -557,6 +694,7 @@ def default_parsing_model() -> ParsingModel:
                     start_time_s=0.0,
                     end_frame_index=1,
                     end_time_s=1.0,
+                    visible_fields=["stage1_velocity"],
                     fields={
                         "stage1_velocity": FieldConfig(
                             name="stage1_velocity",

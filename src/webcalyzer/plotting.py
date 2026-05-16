@@ -14,7 +14,8 @@ from webcalyzer.acceleration import (
     acceleration_profile,
     smoothed_velocity_profile,
 )
-from webcalyzer.models import TrajectoryConfig
+from webcalyzer.config import load_profile
+from webcalyzer.models import ProfileConfig, TrajectoryConfig
 
 ALTITUDE_SCALE = 0.001
 
@@ -43,8 +44,16 @@ def create_plots(
     trajectory_df: pd.DataFrame | None = None,
     derivative_window_s: float | None = None,
     trajectory_config: TrajectoryConfig | None = None,
+    profile: ProfileConfig | None = None,
 ) -> None:
     output_path = Path(output_dir)
+    if profile is None:
+        profile_path = output_path / "config_resolved.yaml"
+        if profile_path.exists():
+            try:
+                profile = load_profile(profile_path)
+            except Exception:  # noqa: BLE001
+                profile = None
     if rejected_df is None:
         rejected_path = output_path / "telemetry_rejected.csv"
         if rejected_path.exists():
@@ -66,6 +75,7 @@ def create_plots(
         trajectory_df=trajectory_df,
         derivative_window_s=derivative_window_s,
         trajectory_config=trajectory_config,
+        profile=profile,
     )
     _create_plot_set(
         clean_df,
@@ -74,6 +84,7 @@ def create_plots(
         trajectory_df=trajectory_df,
         derivative_window_s=derivative_window_s,
         trajectory_config=trajectory_config,
+        profile=profile,
     )
 
 
@@ -84,6 +95,7 @@ def _create_plot_set(
     trajectory_df: pd.DataFrame | None,
     derivative_window_s: float | None = None,
     trajectory_config: TrajectoryConfig | None = None,
+    profile: ProfileConfig | None = None,
 ) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
     stale_trajectory_path = plots_dir / "trajectory.pdf"
@@ -100,6 +112,7 @@ def _create_plot_set(
     _create_coverage_pdf(clean_df, plots_dir / "coverage.pdf")
     _create_stage_pdf(clean_df, stage="stage1", path=plots_dir / "stage1.pdf", rejected_df=rejected_df)
     _create_stage_pdf(clean_df, stage="stage2", path=plots_dir / "stage2.pdf", rejected_df=rejected_df)
+    _create_custom_pdf(clean_df, plots_dir / "custom_telemetry.pdf", rejected_df=rejected_df, profile=profile)
     if trajectory_df is not None and not trajectory_df.empty:
         _create_downrange_pdf(trajectory_df, plots_dir / "downrange.pdf")
 
@@ -213,6 +226,49 @@ def _create_downrange_pdf(trajectory_df: pd.DataFrame, path: Path) -> None:
         fig.tight_layout()
         pdf.savefig(fig)
         plt.close(fig)
+
+
+def _create_custom_pdf(
+    df: pd.DataFrame,
+    path: Path,
+    *,
+    rejected_df: pd.DataFrame | None,
+    profile: ProfileConfig | None,
+) -> None:
+    quantities = profile.custom_telemetry_quantities if profile is not None else []
+    columns = [
+        quantity.field_name()
+        for quantity in quantities
+        if quantity.field_name() in df.columns
+    ]
+    if not columns:
+        columns = [column for column in df.columns if column.startswith("custom_")]
+    if not columns:
+        if path.exists():
+            path.unlink()
+        return
+    with PdfPages(path) as pdf:
+        for column in columns:
+            quantity = profile.custom_quantity_by_field_name(column) if profile is not None else None
+            label = quantity.name if quantity is not None else column.removeprefix("custom_").replace("_", " ").title()
+            unit = quantity.display_unit if quantity is not None else ""
+            fig, axis = plt.subplots(1, 1, figsize=(11, 5.5))
+            _plot_line_with_rejected(
+                axis=axis,
+                df=df,
+                column=column,
+                color="#5cc4ff",
+                label=label,
+                rejected_df=rejected_df,
+            )
+            axis.set_ylabel(f"{label} [{unit}]" if unit else label)
+            axis.set_xlabel("Mission Elapsed Time [s]")
+            axis.set_title(f"{label} [{unit}]" if unit else label)
+            axis.grid(alpha=0.25)
+            axis.legend()
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
 
 
 def _plot_metric(

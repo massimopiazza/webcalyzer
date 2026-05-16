@@ -15,6 +15,13 @@ from webcalyzer.models import (
     FieldConfig,
     ProfileConfig,
 )
+from webcalyzer.quantities import (
+    is_default_quantity_id,
+    load_quantity_library,
+    normalize_quantity_mapping,
+    save_quantity_library,
+    upsert_quantity,
+)
 from webcalyzer.video import draw_box, read_frame
 
 
@@ -64,6 +71,7 @@ def launch_calibration_ui(
     video_fps: float,
     video_width: int | None = None,
     video_height: int | None = None,
+    templates_dir: str | Path = "configs",
 ) -> Path:
     _ensure_calibration_video(profile, video_path, video_frame_count, video_fps, video_width, video_height)
     _ensure_segments(profile, video_frame_count, video_fps)
@@ -76,7 +84,9 @@ def launch_calibration_ui(
     def on_mouse(event: int, x: int, y: int, _flags: int, _userdata: object) -> None:
         nonlocal selected_index
         segment = _active_segment(profile, current_frame_index)
-        field_name = CANONICAL_FIELD_ORDER[selected_index]
+        field_names = _field_names(profile)
+        selected_index = max(0, min(len(field_names) - 1, selected_index))
+        field_name = field_names[selected_index]
         field_cfg = segment.fields.get(field_name)
         if field_cfg is None:
             return
@@ -96,7 +106,7 @@ def launch_calibration_ui(
             x1 = max(mouse_state.start[0], mouse_state.current[0]) / width
             y1 = max(mouse_state.start[1], mouse_state.current[1]) / height
             field_cfg.box = Box(x0, y0, x1, y1).clamp()
-            selected_index = _next_enabled_field_index(segment, selected_index)
+            selected_index = _next_enabled_field_index(profile, segment, selected_index)
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(window_name, on_mouse)
@@ -105,7 +115,8 @@ def launch_calibration_ui(
         current_frame_index = max(0, min(video_frame_count - 1, current_frame_index))
         frame = read_frame(video_path, current_frame_index)
         segment = _active_segment(profile, current_frame_index)
-        field_names = CANONICAL_FIELD_ORDER
+        field_names = _field_names(profile)
+        selected_index = max(0, min(len(field_names) - 1, selected_index))
         selected_field = field_names[selected_index]
         canvas = frame.copy()
         for idx, field_name in enumerate(segment.ordered_field_names()):
@@ -120,7 +131,7 @@ def launch_calibration_ui(
             )
 
         if mouse_state.active and mouse_state.start and mouse_state.current:
-            cv2.rectangle(canvas, mouse_state.start, mouse_state.current, FIELD_COLORS[selected_index], 2)
+            cv2.rectangle(canvas, mouse_state.start, mouse_state.current, FIELD_COLORS[selected_index % len(FIELD_COLORS)], 2)
 
         slot_enabled = selected_field in segment.fields
         time_s = current_frame_index / video_fps if video_fps else 0.0
@@ -128,8 +139,8 @@ def launch_calibration_ui(
             f"frame {current_frame_index}/{video_frame_count - 1} | time {time_s:.3f}s | {segment.id}",
             f"segment frames [{segment.start_frame_index}, {segment.end_frame_index})",
             f"selected slot: {selected_index + 1} {selected_field} | {'enabled' if slot_enabled else 'disabled'}",
-            "keys: 1-5 slot | e toggle | [/]-1/+1 frame | n/p +/-1s | a split | b crop start | v crop end",
-            "keys: t jump timestamp | c clear bbox | tab next segment | s save draft | q quit",
+            "keys: 1-9 slot | arrows cycle | e toggle | [/]-1/+1 frame | n/p +/-1s | a split",
+            "keys: g add custom | G create custom | b/v crop start/end | t jump | c clear | tab segment | s save | q quit",
         ]
         for row_index, line in enumerate(overlay_lines):
             y = 30 + row_index * 28
@@ -150,6 +161,10 @@ def launch_calibration_ui(
             current_frame_index = max(0, current_frame_index - 1)
         elif key == ord("a"):
             _split_segment(profile, current_frame_index, video_fps)
+        elif key == ord("g"):
+            _add_existing_custom_quantity(profile, templates_dir)
+        elif key == ord("G"):
+            _create_custom_quantity(profile, templates_dir)
         elif key == ord("b"):
             _set_crop_start(profile, current_frame_index, video_fps)
         elif key == ord("v"):
@@ -167,9 +182,12 @@ def launch_calibration_ui(
             if field_cfg is not None:
                 field_cfg.box = None
         elif key == ord("e"):
-            _toggle_field(segment, selected_field)
+            _toggle_field(profile, segment, selected_field)
         elif key == ord("s"):
             save_profile(profile, save_target)
+        elif key in {81, 83}:
+            direction = -1 if key == 81 else 1
+            selected_index = (selected_index + direction) % max(1, len(field_names))
         elif ord("1") <= key <= ord(str(min(9, len(field_names)))):
             selected_index = key - ord("1")
 
@@ -198,7 +216,7 @@ def _ensure_segments(profile: ProfileConfig, video_frame_count: int, video_fps: 
     if profile.segments and any(segment.end_frame_index > segment.start_frame_index for segment in profile.segments):
         return
     existing_fields = profile.segments[0].fields if profile.segments else {}
-    fields = existing_fields if existing_fields else _default_fields()
+    fields = existing_fields if existing_fields else _default_fields(profile)
     profile.segments = [
         CalibrationSegmentConfig(
             id="segment_1",
@@ -206,6 +224,7 @@ def _ensure_segments(profile: ProfileConfig, video_frame_count: int, video_fps: 
             start_time_s=0.0,
             end_frame_index=video_frame_count,
             end_time_s=_time_s(video_frame_count, video_fps),
+            visible_fields=list(fields),
             fields=fields,
         )
     ]
@@ -222,21 +241,37 @@ def _active_segment(profile: ProfileConfig, frame_index: int) -> CalibrationSegm
     return profile.segments[-1]
 
 
-def _toggle_field(segment: CalibrationSegmentConfig, field_name: str) -> None:
+def _toggle_field(profile: ProfileConfig, segment: CalibrationSegmentConfig, field_name: str) -> None:
     if field_name in segment.fields:
         del segment.fields[field_name]
+    elif field_name.startswith("custom_"):
+        quantity = profile.custom_quantity_by_field_name(field_name)
+        if quantity is None:
+            raise RuntimeError("Custom fields must be added from the quantity library before toggling")
+        if field_name not in segment.visible_fields:
+            segment.visible_fields.append(field_name)
+        segment.fields[field_name] = FieldConfig.custom(field_name, quantity.id, box=None)
     else:
+        if field_name not in segment.visible_fields:
+            segment.visible_fields.append(field_name)
         segment.fields[field_name] = FieldConfig.canonical(field_name, box=None)
 
 
-def _default_fields() -> dict[str, FieldConfig]:
-    return {field_name: FieldConfig.canonical(field_name, box=None) for field_name in CANONICAL_FIELD_ORDER}
+def _default_fields(profile: ProfileConfig | None = None) -> dict[str, FieldConfig]:
+    fields = {field_name: FieldConfig.canonical(field_name, box=None) for field_name in CANONICAL_FIELD_ORDER}
+    if profile is not None:
+        for quantity in profile.custom_telemetry_quantities:
+            fields[quantity.field_name()] = FieldConfig.custom(quantity.field_name(), quantity.id, box=None)
+    return fields
 
 
-def _next_enabled_field_index(segment: CalibrationSegmentConfig, selected_index: int) -> int:
-    for offset in range(1, len(CANONICAL_FIELD_ORDER) + 1):
-        candidate_index = (selected_index + offset) % len(CANONICAL_FIELD_ORDER)
-        if CANONICAL_FIELD_ORDER[candidate_index] in segment.fields:
+def _next_enabled_field_index(profile: ProfileConfig, segment: CalibrationSegmentConfig, selected_index: int) -> int:
+    field_names = _field_names(profile)
+    if not field_names:
+        return selected_index
+    for offset in range(1, len(field_names) + 1):
+        candidate_index = (selected_index + offset) % len(field_names)
+        if field_names[candidate_index] in segment.fields:
             return candidate_index
     return selected_index
 
@@ -250,7 +285,17 @@ def _split_segment(profile: ProfileConfig, frame_index: int, fps: float) -> None
                 start_time_s=_time_s(frame_index, fps),
                 end_frame_index=segment.end_frame_index,
                 end_time_s=segment.end_time_s,
-                fields=_default_fields(),
+                visible_fields=list(segment.visible_fields),
+                fields={
+                    name: FieldConfig(
+                        name=field.name,
+                        kind=field.kind,
+                        stage=field.stage,
+                        box=Box(*field.box.normalized_tuple()) if field.box is not None else None,
+                        quantity_id=field.quantity_id,
+                    )
+                    for name, field in segment.fields.items()
+                },
             )
             segment.end_frame_index = frame_index
             segment.end_time_s = _time_s(frame_index, fps)
@@ -293,3 +338,81 @@ def _renumber_segments(profile: ProfileConfig) -> None:
 
 def _time_s(frame_index: int, fps: float) -> float:
     return float(frame_index) / float(fps) if fps else 0.0
+
+
+def _field_names(profile: ProfileConfig) -> list[str]:
+    names = list(CANONICAL_FIELD_ORDER)
+    for quantity in profile.custom_telemetry_quantities:
+        field_name = quantity.field_name()
+        if field_name not in names:
+            names.append(field_name)
+    return names
+
+
+def _add_existing_custom_quantity(profile: ProfileConfig, templates_dir: str | Path) -> None:
+    try:
+        quantities = [
+            quantity
+            for quantity in load_quantity_library(templates_dir)
+            if not is_default_quantity_id(quantity.id)
+        ]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not load quantity library: {exc}")
+        return
+    if not quantities:
+        print("No custom quantities in library. Press G to create one.")
+        return
+    for index, quantity in enumerate(quantities, start=1):
+        print(f"{index}: {quantity.name} [{quantity.display_unit}] {quantity.dimensionality}")
+    try:
+        selected = int(input("Add custom quantity number: ").strip())
+    except ValueError:
+        print("Invalid selection")
+        return
+    if not 1 <= selected <= len(quantities):
+        print("Selection out of range")
+        return
+    _add_custom_quantity_to_profile(profile, quantities[selected - 1])
+
+
+def _create_custom_quantity(profile: ProfileConfig, templates_dir: str | Path) -> None:
+    name = input("Quantity name: ").strip()
+    dimensionality = input("Dimensionality (e.g. L/T^2): ").strip()
+    display_unit = input("Display unit (e.g. m/s^2): ").strip()
+    description = input("Description (optional): ").strip()
+    aliases: dict[str, str] = {}
+    while True:
+        entry = input("Unit alias ALIAS=UNIT, blank to finish: ").strip()
+        if not entry:
+            break
+        if "=" not in entry:
+            print("Expected ALIAS=UNIT")
+            continue
+        alias, unit = entry.split("=", 1)
+        if alias.strip() and unit.strip():
+            aliases[alias.strip()] = unit.strip()
+    try:
+        quantity = normalize_quantity_mapping(
+            {
+                "name": name,
+                "dimensionality": dimensionality,
+                "display_unit": display_unit,
+                "description": description,
+                "unit_aliases": aliases,
+            }
+        )
+        quantities = upsert_quantity(load_quantity_library(templates_dir), quantity)
+        save_quantity_library(templates_dir, quantities)
+        _add_custom_quantity_to_profile(profile, quantity)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not create quantity: {exc}")
+
+
+def _add_custom_quantity_to_profile(profile: ProfileConfig, quantity) -> None:
+    if all(current.id != quantity.id for current in profile.custom_telemetry_quantities):
+        profile.custom_telemetry_quantities.append(quantity)
+    field_name = quantity.field_name()
+    for segment in profile.segments:
+        if field_name not in segment.fields:
+            segment.fields[field_name] = FieldConfig.custom(field_name, quantity.id, box=None)
+    print(f"Added {quantity.name} to all segments")

@@ -10,7 +10,7 @@ from webcalyzer.config import load_profile
 from webcalyzer.extract import _field_specific_option_is_valid, _stage2_measurement_is_active
 from webcalyzer.models import HardcodedRawDataPoint, ProfileConfig
 from webcalyzer.raw_points import apply_hardcoded_raw_data_points
-from webcalyzer.sanitize import resolve_measurement_series
+from webcalyzer.sanitize import resolve_custom_measurement_series, resolve_measurement_series
 
 
 def rebuild_clean_from_raw(
@@ -19,7 +19,9 @@ def rebuild_clean_from_raw(
     *,
     profile: ProfileConfig | None = None,
 ) -> pd.DataFrame:
-    raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_raw_data_points)
+    if hardcoded_raw_data_points is None and profile is not None:
+        hardcoded_raw_data_points = profile.hardcoded_raw_data_points
+    raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_raw_data_points, profile=profile)
     parsing = profile.parsing if profile is not None else None
     met_values = [
         _optional_float(row["mission_elapsed_time_s"])
@@ -28,7 +30,7 @@ def rebuild_clean_from_raw(
     parsed_by_field: dict[str, list[float | None]] = {}
     hardcoded_by_row: list[set[str]] = [set() for _ in range(len(raw_df))]
 
-    for field_name, kind in FIELD_NAME_KINDS:
+    for field_name, kind in _field_name_kinds(profile):
         raw_candidates_by_sample: list[list[tuple[str, str]]] = []
         hardcoded_values: list[float | None] = []
         for row_position, (_, row) in enumerate(raw_df.iterrows()):
@@ -41,17 +43,32 @@ def rebuild_clean_from_raw(
             raw_text = row.get(f"{field_name}_raw_text")
             raw_candidates_by_sample.append([] if pd.isna(raw_text) else [(str(raw_text), "raw")])
 
-        resolved = resolve_measurement_series(
-            raw_candidates_by_sample,
-            kind=kind,
-            parsing=parsing,
-            met_values=met_values,
-            option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
-                field_name,
-                option,
-                met_s,
-            ),
-        )
+        if kind == "custom":
+            quantity = profile.custom_quantity_by_field_name(field_name) if profile is not None else None
+            resolved = (
+                resolve_custom_measurement_series(
+                    raw_candidates_by_sample,
+                    quantity=quantity,
+                    met_values=met_values,
+                )
+                if quantity is not None
+                else []
+            )
+            if quantity is None:
+                parsed_by_field[field_name] = hardcoded_values
+                continue
+        else:
+            resolved = resolve_measurement_series(
+                raw_candidates_by_sample,
+                kind=kind,
+                parsing=parsing,
+                met_values=met_values,
+                option_filter=lambda option, met_s, field_name=field_name: _field_specific_option_is_valid(
+                    field_name,
+                    option,
+                    met_s,
+                ),
+            )
         values: list[float | None] = []
         for hardcoded_value, result in zip(hardcoded_values, resolved):
             values.append(
@@ -65,7 +82,7 @@ def rebuild_clean_from_raw(
     rows: list[dict[str, object]] = []
     for row_position, (_, row) in enumerate(raw_df.iterrows()):
         mission_elapsed_time_s = row["mission_elapsed_time_s"]
-        parsed = {field_name: parsed_by_field[field_name][row_position] for field_name, _kind in FIELD_NAME_KINDS}
+        parsed = {field_name: parsed_by_field[field_name][row_position] for field_name, _kind in _field_name_kinds(profile)}
         stage2_velocity = parsed["stage2_velocity"]
         stage2_altitude = parsed["stage2_altitude"]
         if stage2_velocity is not None or stage2_altitude is not None:
@@ -76,18 +93,20 @@ def rebuild_clean_from_raw(
                 stage2_velocity = None
                 stage2_altitude = None
 
-        rows.append(
-            {
-                "frame_index": row["frame_index"],
-                "sample_time_s": row["sample_time_s"],
-                "segment_id": row.get("segment_id"),
-                "mission_elapsed_time_s": mission_elapsed_time_s,
-                "stage1_velocity_mps": parsed["stage1_velocity"],
-                "stage1_altitude_m": parsed["stage1_altitude"],
-                "stage2_velocity_mps": stage2_velocity,
-                "stage2_altitude_m": stage2_altitude,
-            }
-        )
+        output_row = {
+            "frame_index": row["frame_index"],
+            "sample_time_s": row["sample_time_s"],
+            "segment_id": row.get("segment_id"),
+            "mission_elapsed_time_s": mission_elapsed_time_s,
+            "stage1_velocity_mps": parsed["stage1_velocity"],
+            "stage1_altitude_m": parsed["stage1_altitude"],
+            "stage2_velocity_mps": stage2_velocity,
+            "stage2_altitude_m": stage2_altitude,
+        }
+        if profile is not None:
+            for quantity in profile.custom_telemetry_quantities:
+                output_row[quantity.field_name()] = parsed.get(quantity.field_name())
+        rows.append(output_row)
     return pd.DataFrame(rows)
 
 
@@ -97,6 +116,13 @@ FIELD_NAME_KINDS = [
     ("stage2_velocity", "velocity"),
     ("stage2_altitude", "altitude"),
 ]
+
+
+def _field_name_kinds(profile: ProfileConfig | None) -> list[tuple[str, str]]:
+    fields = list(FIELD_NAME_KINDS)
+    if profile is not None:
+        fields.extend((quantity.field_name(), "custom") for quantity in profile.custom_telemetry_quantities)
+    return fields
 
 
 def _optional_float(value: object) -> float | None:
@@ -143,7 +169,7 @@ def apply_mahalanobis_outlier_rejection(
     window_s: float = 40.0,
     min_neighbors: int | None = None,
     min_side_neighbors: int | None = None,
-    min_variance: tuple[float, float] = (144.0, 22500.0),
+    min_variance: tuple[float, float] | None = None,
     passes: int = 5,
 ) -> pd.DataFrame:
     cleaned, _rejected = apply_mahalanobis_outlier_rejection_with_rejected(
@@ -164,8 +190,9 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
     window_s: float = 40.0,
     min_neighbors: int | None = None,
     min_side_neighbors: int | None = None,
-    min_variance: tuple[float, float] = (144.0, 22500.0),
+    min_variance: tuple[float, float] | None = None,
     passes: int = 5,
+    protected_by_column: dict[str, set[int]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reject outliers with a per-field Mahalanobis distance on local residuals.
 
@@ -198,13 +225,19 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
         min_side_neighbors=min_side_neighbors,
     )
 
-    min_variance_by_kind = {
-        "velocity": float(min_variance[0]),
-        "altitude": float(min_variance[1]),
-    }
-    for column, kind in FIELD_COLUMNS:
+    min_variance_by_kind = (
+        {
+            "velocity": float(min_variance[0]),
+            "altitude": float(min_variance[1]),
+        }
+        if min_variance is not None
+        else {}
+    )
+    for column, kind in _numeric_telemetry_columns(df):
         if column not in df.columns:
             continue
+        values = pd.to_numeric(df[column], errors="coerce").to_numpy(dtype=float)
+        adaptive_min_variance = _adaptive_min_variance(values)
         _reject_column_outliers(
             df=df,
             rejected_df=rejected_df,
@@ -214,8 +247,9 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
             window_s=window_s,
             min_neighbors=resolved_neighbors,
             min_side_neighbors=resolved_side_neighbors,
-            min_variance=min_variance_by_kind[kind],
+            min_variance=min_variance_by_kind.get(kind, adaptive_min_variance),
             passes=passes,
+            protected_indices=protected_by_column.get(column, set()) if protected_by_column else set(),
         )
     return df, rejected_df
 
@@ -279,11 +313,13 @@ def _reject_column_outliers(
     min_side_neighbors: int,
     min_variance: float,
     passes: int,
+    protected_indices: set[int],
 ) -> None:
     row_positions = np.arange(len(df))
     for _ in range(passes):
         values = df[column].to_numpy(dtype=float)
-        mask = np.isfinite(values) & np.isfinite(met)
+        protected_mask = np.array([idx in protected_indices for idx in row_positions], dtype=bool)
+        mask = np.isfinite(values) & np.isfinite(met) & ~protected_mask
         indices = np.where(mask)[0]
         if indices.size < min_neighbors + 1:
             return
@@ -354,6 +390,31 @@ def _robust_residual_variance(residuals: np.ndarray, min_variance: float) -> flo
     return max(float(variance), float(min_variance))
 
 
+def _adaptive_min_variance(values: np.ndarray) -> float:
+    finite = values[np.isfinite(values)]
+    if finite.size < 3:
+        return 1e-12
+    median = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - median)))
+    robust_sigma = 1.4826 * mad
+    if not np.isfinite(robust_sigma) or robust_sigma <= 0.0:
+        robust_sigma = float(np.std(finite, ddof=1)) if finite.size > 1 else 0.0
+    if not np.isfinite(robust_sigma) or robust_sigma <= 0.0:
+        robust_sigma = max(abs(float(median)) * 1e-6, 1e-6)
+    return max(robust_sigma * robust_sigma * 1e-4, 1e-12)
+
+
+def _numeric_telemetry_columns(df: pd.DataFrame) -> list[tuple[str, str]]:
+    fixed = [(column, kind) for column, kind in FIELD_COLUMNS if column in df.columns]
+    fixed_names = {column for column, _kind in fixed}
+    custom = [
+        (column, "custom")
+        for column in df.columns
+        if column.startswith("custom_") and column not in fixed_names
+    ]
+    return fixed + custom
+
+
 def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "frame_index",
@@ -365,6 +426,7 @@ def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
         "stage2_velocity_mps",
         "stage2_altitude_m",
     ]
+    columns.extend(column for column in clean_df.columns if column.startswith("custom_"))
     available_columns = [column for column in columns if column in clean_df.columns]
     return pd.DataFrame(index=clean_df.index, columns=available_columns, dtype="float64")
 
@@ -385,15 +447,49 @@ def apply_outlier_rejection_in_output_dir(
         )
     else:
         clean_df = pd.read_csv(output_path / "telemetry_clean.csv")
+    protected_by_column: dict[str, set[int]] = {}
+    if raw_path.exists():
+        raw_df = _read_raw_with_hardcoded_points(output_path, profile=profile, persist=True)
+        for column in clean_df.columns:
+            if column in {"frame_index", "sample_time_s", "segment_id", "mission_elapsed_time_s"}:
+                continue
+            raw_field = _field_name_for_clean_column(column)
+            if raw_field is None:
+                continue
+            status_column = f"{raw_field}_parse_status"
+            if status_column not in raw_df.columns:
+                continue
+            protected_by_column[column] = {
+                int(idx)
+                for idx, status in enumerate(raw_df[status_column].tolist())
+                if status == "hardcoded"
+            }
     cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
-        clean_df, chi2_threshold=chi2_threshold, window_s=window_s
+        clean_df,
+        chi2_threshold=chi2_threshold,
+        window_s=window_s,
+        protected_by_column=protected_by_column,
     )
     cleaned.to_csv(output_path / "telemetry_clean.csv", index=False)
-    rejected.dropna(how="all", subset=list(STAGE_COLUMNS["stage1"] + STAGE_COLUMNS["stage2"])).to_csv(
+    rejected.dropna(how="all", subset=[column for column, _kind in _numeric_telemetry_columns(cleaned)]).to_csv(
         output_path / "telemetry_rejected.csv",
         index=False,
     )
     return cleaned
+
+
+def _field_name_for_clean_column(column: str) -> str | None:
+    mapping = {
+        "stage1_velocity_mps": "stage1_velocity",
+        "stage1_altitude_m": "stage1_altitude",
+        "stage2_velocity_mps": "stage2_velocity",
+        "stage2_altitude_m": "stage2_altitude",
+    }
+    if column in mapping:
+        return mapping[column]
+    if column.startswith("custom_"):
+        return column
+    return None
 
 
 def _hardcoded_si_value(row: pd.Series, field_name: str) -> float | None:
@@ -416,7 +512,7 @@ def _read_raw_with_hardcoded_points(
     profile = profile or _profile_from_output(output_path)
     hardcoded_points = profile.hardcoded_raw_data_points if profile else []
     if hardcoded_points:
-        raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_points)
+        raw_df = apply_hardcoded_raw_data_points(raw_df, hardcoded_points, profile=profile)
         if persist:
             raw_df.to_csv(raw_path, index=False)
     return raw_df

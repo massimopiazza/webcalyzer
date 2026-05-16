@@ -6,7 +6,6 @@ import { Switch } from "@/components/ui/switch";
 import { ProfileFormState } from "@/lib/profileForm";
 import { useMeta } from "@/lib/meta";
 import { getError } from "@/lib/errors";
-import { NumberInput } from "./NumberInput";
 import { ParsingDTO } from "@/lib/api";
 import { ParsingValue } from "@/lib/schema";
 import { FIELD_HELP, SECTION_HELP } from "@/lib/explanations";
@@ -16,18 +15,20 @@ type ParsingType = "velocity" | "altitude";
 function defaultParsing(meta: ParsingDTO | null): ParsingValue {
   return (meta as ParsingValue) ?? {
     velocity: {
-      units: { MPS: { aliases: ["M/S", "MPS"], si_factor: 1.0 } },
+      units: { MPS: { aliases: ["M/S", "MPS"], unit: "meter/second" } },
       default_unit: "MPS",
       ambiguous_default_unit: null,
       inferred_units_with_separator: ["MPS"],
       inferred_units_without_separator: ["MPS"],
+      output_unit: "meter/second",
     },
     altitude: {
-      units: { M: { aliases: ["M"], si_factor: 1.0 } },
+      units: { M: { aliases: ["M"], unit: "meter" } },
       default_unit: "M",
       ambiguous_default_unit: null,
       inferred_units_with_separator: ["M"],
       inferred_units_without_separator: ["M"],
+      output_unit: "meter",
     },
     met: { timestamp_patterns: ["T\\s*([+-])?\\s*(\\d{2})(?::(\\d{2}))(?::(\\d{2}))?"] },
     custom_words: [],
@@ -124,7 +125,7 @@ function ParsingTypeEditor({ state, type }: { state: ProfileFormState; type: Par
             ...prev.parsing[type],
             units: {
               ...prev.parsing[type].units,
-              [`UNIT_${i}`]: { aliases: [`UNIT_${i}`], si_factor: 1.0 },
+              [`UNIT_${i}`]: { aliases: [`UNIT_${i}`], unit: "dimensionless" },
             },
           },
         },
@@ -210,7 +211,7 @@ function ParsingTypeEditor({ state, type }: { state: ProfileFormState; type: Par
         {Object.entries(block.units).map(([unitName, unit]) => (
           <div
             key={unitName}
-            className="grid gap-2 rounded-md border border-border/60 bg-background/40 p-2 md:grid-cols-[140px_1fr_140px_auto]"
+          className="grid gap-2 rounded-md border border-border/60 bg-background/40 p-2 md:grid-cols-[140px_1fr_180px_auto]"
           >
             <Input
               value={unitName}
@@ -232,9 +233,12 @@ function ParsingTypeEditor({ state, type }: { state: ProfileFormState; type: Par
               className="font-mono text-xs"
               placeholder="aliases (comma-separated)"
             />
-            <NumberInput
-              value={unit.si_factor}
-              onChange={(v) => patch(["parsing", type, "units", unitName, "si_factor"], v ?? 1)}
+            <Input
+              value={unit.unit}
+              onChange={(e) => patch(["parsing", type, "units", unitName, "unit"], e.target.value)}
+              spellCheck={false}
+              className="font-mono text-xs"
+              placeholder="Pint unit"
             />
             <Button variant="ghost" size="icon" onClick={() => removeUnit(unitName)}>
               <Trash2 className="h-4 w-4 text-destructive/80" />

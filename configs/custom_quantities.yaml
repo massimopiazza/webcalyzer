@@ -1,0 +1,87 @@
+quantities:
+- id: q_time
+  name: time
+  slug: time
+  dimensionality: T
+  display_unit: s
+  description: Mission elapsed time normalized to seconds.
+  unit_aliases:
+    H: hour
+    HR: hour
+    M: minute
+    MIN: minute
+    S: second
+    SEC: second
+- id: q_stage1_velocity
+  name: stage1_velocity
+  slug: stage1_velocity
+  dimensionality: L/T
+  display_unit: m/s
+  description: Stage 1 telemetry velocity normalized to meters per second.
+  unit_aliases:
+    FPS: foot/second
+    FT/S: foot/second
+    KM/H: kilometer/hour
+    KMH: kilometer/hour
+    KPH: kilometer/hour
+    M/S: meter/second
+    MPH: mile/hour
+    MPS: meter/second
+- id: q_stage1_altitude
+  name: stage1_altitude
+  slug: stage1_altitude
+  dimensionality: L
+  display_unit: m
+  description: Stage 1 telemetry altitude normalized to meters.
+  unit_aliases:
+    FT: foot
+    KM: kilometer
+    M: meter
+    MI: mile
+- id: q_stage2_velocity
+  name: stage2_velocity
+  slug: stage2_velocity
+  dimensionality: L/T
+  display_unit: m/s
+  description: Stage 2 telemetry velocity normalized to meters per second.
+  unit_aliases:
+    FPS: foot/second
+    FT/S: foot/second
+    KM/H: kilometer/hour
+    KMH: kilometer/hour
+    KPH: kilometer/hour
+    M/S: meter/second
+    MPH: mile/hour
+    MPS: meter/second
+- id: q_stage2_altitude
+  name: stage2_altitude
+  slug: stage2_altitude
+  dimensionality: L
+  display_unit: m
+  description: Stage 2 telemetry altitude normalized to meters.
+  unit_aliases:
+    FT: foot
+    KM: kilometer
+    M: meter
+    MI: mile
+- id: q_64806b6f1053
+  name: pressure
+  slug: pressure
+  dimensionality: M/(L*T^2)
+  display_unit: mmHg
+  description: ''
+  unit_aliases: {}
+- id: q_ad781949f4c7
+  name: random
+  slug: random
+  dimensionality: M*TEMP/(L^(1/2)*T*LUM^(1/2))
+  display_unit: kg*K/(m^(1/2)*s*cd^(1/2))
+  description: ''
+  unit_aliases: {}
+- id: q_83c4b5d476e2
+  name: acceleration_g
+  slug: acceleration
+  dimensionality: L/T^2
+  display_unit: standard_gravity
+  description: Acceleration in multiples of Earth's standard gravity
+  unit_aliases: {}

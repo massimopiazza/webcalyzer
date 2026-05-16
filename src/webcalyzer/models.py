@@ -61,18 +61,52 @@ class FieldConfig:
     kind: str
     stage: str | None
     box: Box | None
+    quantity_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "kind": self.kind,
             "stage": self.stage,
             "bbox_x1y1x2y2": list(self.box.normalized_tuple()) if self.box is not None else None,
         }
+        if self.quantity_id is not None:
+            data["quantity_id"] = self.quantity_id
+        return data
 
     @classmethod
     def canonical(cls, name: str, box: Box | None = None) -> "FieldConfig":
         kind, stage = CANONICAL_FIELD_DEFINITIONS[name]
         return cls(name=name, kind=kind, stage=stage, box=box)
+
+    @classmethod
+    def custom(cls, name: str, quantity_id: str, box: Box | None = None) -> "FieldConfig":
+        return cls(name=name, kind="custom", stage=None, box=box, quantity_id=quantity_id)
+
+
+@dataclass(slots=True)
+class TelemetryQuantityDefinition:
+    id: str
+    name: str
+    slug: str
+    dimensionality: str
+    display_unit: str
+    description: str = ""
+    unit_aliases: dict[str, str] = field(default_factory=dict)
+
+    def field_name(self) -> str:
+        return f"custom_{self.slug}"
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "slug": self.slug,
+            "dimensionality": self.dimensionality,
+            "display_unit": self.display_unit,
+            "description": self.description,
+            "unit_aliases": dict(sorted(self.unit_aliases.items())),
+        }
+        return data
 
 
 @dataclass(slots=True)
@@ -156,19 +190,50 @@ class TrajectoryConfig:
         }
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class UnitAlias:
     """A surface unit token plus its conversion to SI for one measurement kind."""
 
     name: str
     aliases: tuple[str, ...]
-    si_factor: float
+    unit_expression: str
+
+    def __init__(
+        self,
+        name: str,
+        aliases: tuple[str, ...],
+        unit_expression: str | None = None,
+        si_factor: float | None = None,
+    ) -> None:
+        self.name = name
+        self.aliases = aliases
+        if unit_expression is not None:
+            self.unit_expression = unit_expression
+        elif si_factor is not None:
+            self.unit_expression = _legacy_unit_expression_for_alias(name, si_factor)
+        else:
+            raise TypeError("UnitAlias requires unit_expression or si_factor")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "aliases": list(self.aliases),
-            "si_factor": self.si_factor,
+            "unit": self.unit_expression,
         }
+
+
+def _legacy_unit_expression_for_alias(name: str, si_factor: float) -> str:
+    known = {
+        "MPH": "mile/hour",
+        "KPH": "kilometer/hour",
+        "KMH": "kilometer/hour",
+        "MPS": "meter/second",
+        "KPS": "kilometer/second",
+        "FT": "foot",
+        "MI": "mile",
+        "KM": "kilometer",
+        "M": "meter",
+    }
+    return known.get(name.upper(), f"{si_factor:.17g} * dimensionless")
 
 
 @dataclass(slots=True)
@@ -189,6 +254,7 @@ class FieldKindParsing:
     ambiguous_default_unit: str | None = None
     inferred_units_with_separator: tuple[str, ...] = ()
     inferred_units_without_separator: tuple[str, ...] = ()
+    output_unit: str | None = None
 
     def __post_init__(self) -> None:
         if not self.inferred_units_with_separator:
@@ -203,6 +269,8 @@ class FieldKindParsing:
             "inferred_units_with_separator": list(self.inferred_units_with_separator),
             "inferred_units_without_separator": list(self.inferred_units_without_separator),
         }
+        if self.output_unit is not None:
+            data["output_unit"] = self.output_unit
         if self.ambiguous_default_unit is not None:
             data["ambiguous_default_unit"] = self.ambiguous_default_unit
         return data
@@ -258,9 +326,10 @@ class HardcodedRawDataPoint:
     stage1_altitude_m: float | None = None
     stage2_velocity_mps: float | None = None
     stage2_altitude_m: float | None = None
+    custom_values: dict[str, float] = field(default_factory=dict)
 
     def field_values(self) -> dict[str, float]:
-        return {
+        values = {
             field_name: value
             for field_name, value in {
                 "stage1_velocity": self.stage1_velocity_mps,
@@ -270,6 +339,8 @@ class HardcodedRawDataPoint:
             }.items()
             if value is not None
         }
+        values.update(self.custom_values)
+        return values
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"mission_elapsed_time_s": self.mission_elapsed_time_s}
@@ -283,6 +354,8 @@ class HardcodedRawDataPoint:
                 stage_data["altitude_m"] = altitude
             if stage_data:
                 data[stage] = stage_data
+        if self.custom_values:
+            data["custom_values"] = dict(sorted(self.custom_values.items()))
         return data
 
 
@@ -311,6 +384,7 @@ class CalibrationSegmentConfig:
     start_time_s: float
     end_frame_index: int
     end_time_s: float
+    visible_fields: list[str] = field(default_factory=list)
     fields: dict[str, FieldConfig] = field(default_factory=dict)
 
     def contains_frame(self, frame_index: int) -> bool:
@@ -321,6 +395,20 @@ class CalibrationSegmentConfig:
         ordered.extend(name for name in self.fields if name not in CANONICAL_FIELD_ORDER)
         return ordered
 
+    def ordered_visible_field_names(self) -> list[str]:
+        visible = self.visible_fields or self.ordered_field_names()
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for name in CANONICAL_FIELD_ORDER:
+            if name in visible and name not in seen:
+                ordered.append(name)
+                seen.add(name)
+        for name in visible:
+            if name not in seen:
+                ordered.append(name)
+                seen.add(name)
+        return ordered
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -328,6 +416,7 @@ class CalibrationSegmentConfig:
             "start_time_s": self.start_time_s,
             "end_frame_index": self.end_frame_index,
             "end_time_s": self.end_time_s,
+            "visible_fields": self.ordered_visible_field_names(),
             "fields": {
                 name: self.fields[name].to_dict()
                 for name in self.ordered_field_names()
@@ -350,6 +439,7 @@ class ProfileConfig:
     video_overlay: VideoOverlayConfig = field(default_factory=VideoOverlayConfig)
     trajectory: TrajectoryConfig = field(default_factory=TrajectoryConfig)
     parsing: "ParsingProfile | None" = None
+    custom_telemetry_quantities: list[TelemetryQuantityDefinition] = field(default_factory=list)
     hardcoded_raw_data_points: list[HardcodedRawDataPoint] = field(default_factory=list)
     segments: list[CalibrationSegmentConfig] = field(default_factory=list)
 
@@ -359,6 +449,28 @@ class ProfileConfig:
 
     def ordered_field_names(self) -> list[str]:
         return self.segments[0].ordered_field_names() if self.segments else []
+
+    def custom_quantity_by_id(self, quantity_id: str | None) -> TelemetryQuantityDefinition | None:
+        if quantity_id is None:
+            return None
+        for quantity in self.custom_telemetry_quantities:
+            if quantity.id == quantity_id:
+                return quantity
+        return None
+
+    def custom_quantity_by_field_name(self, field_name: str) -> TelemetryQuantityDefinition | None:
+        for quantity in self.custom_telemetry_quantities:
+            if quantity.field_name() == field_name:
+                return quantity
+        return None
+
+    def enabled_custom_field_names(self) -> set[str]:
+        return {
+            name
+            for segment in self.segments
+            for name, field_config in segment.fields.items()
+            if field_config.kind == "custom"
+        }
 
     def active_segment_for_frame(self, frame_index: int) -> CalibrationSegmentConfig | None:
         for segment in self.segments:
@@ -399,6 +511,10 @@ class ProfileConfig:
         }
         if self.parsing is not None:
             data["parsing"] = self.parsing.to_dict()
+        if self.custom_telemetry_quantities:
+            data["custom_telemetry_quantities"] = [
+                quantity.to_dict() for quantity in self.custom_telemetry_quantities
+            ]
         if self.hardcoded_raw_data_points:
             data["hardcoded_raw_data_points"] = [
                 point.to_dict() for point in self.hardcoded_raw_data_points

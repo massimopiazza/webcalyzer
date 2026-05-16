@@ -7,6 +7,7 @@ import {
   createDefaultCalibratePageState,
 } from "./pages/CalibratePage";
 import { DocumentationPage } from "./pages/DocumentationPage";
+import { QuantityLibraryPage } from "./pages/QuantityLibraryPage";
 import { createDefaultRunPageState, RunPage } from "./pages/RunPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
 
@@ -39,6 +40,7 @@ export default function App() {
             }
           />
           <Route path="templates" element={<TemplatesPage />} />
+          <Route path="quantities" element={<QuantityLibraryPage />} />
           <Route path="documentation" element={<DocumentationPage />} />
         </Route>
       </Routes>

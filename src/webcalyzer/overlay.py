@@ -755,7 +755,7 @@ def _quantize_reveal_times(times: np.ndarray, *, step_s: float) -> np.ndarray:
     overlay panel per integration step.
 
     Trajectory series produce a sample every ``integration_step_s`` (often
-    50–100 ms), which would otherwise give us thousands of unique panels
+    50-100 ms), which would otherwise give us thousands of unique panels
     even though the visual change between adjacent panels is imperceptible
     at typical playback fps. Quantizing to ``step_s`` caps the panel count
     at ``ceil(span_s / step_s) + 1`` while keeping reveals frame-accurate

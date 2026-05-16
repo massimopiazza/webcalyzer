@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BookOpen, Cog, Crosshair, FolderOpen, PanelLeft, Play } from "lucide-react";
+import { BookOpen, Cog, Crosshair, FolderOpen, Library, PanelLeft, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMeta } from "@/lib/meta";
 import { useSidebar } from "@/lib/sidebar";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 const NAV_ITEMS = [
   { to: "/", label: "Run", icon: Play, end: true },
   { to: "/calibrate", label: "Calibrate", icon: Crosshair },
+  { to: "/quantities", label: "Quantities", icon: Library },
   { to: "/templates", label: "Templates", icon: FolderOpen },
   { to: "/documentation", label: "Documentation", icon: BookOpen },
 ];

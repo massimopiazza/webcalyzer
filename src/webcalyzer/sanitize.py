@@ -7,8 +7,8 @@ from typing import Callable
 
 from rapidfuzz import fuzz, process
 
-from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, UnitAlias
-from webcalyzer.units import converter_for
+from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, TelemetryQuantityDefinition, UnitAlias
+from webcalyzer.units import converter_for, converter_for_quantity, resolve_unit_alias
 
 
 # Legacy hard-coded conversions; kept for backward compatibility with call
@@ -73,7 +73,7 @@ OptionFilter = Callable[[MeasurementOption, float | None], bool]
 
 
 def normalize_text(text: str) -> str:
-    return " ".join(text.upper().replace("§", "S").replace("\u2014", "-").replace("–", "-").split())
+    return " ".join(text.upper().replace("§", "S").replace("\u2014", "-").replace("\u2013", "-").split())
 
 
 def normalize_numeric_token(token: str) -> str:
@@ -83,20 +83,20 @@ def normalize_numeric_token(token: str) -> str:
 
 def _default_velocity_units() -> tuple[UnitAlias, ...]:
     return (
-        UnitAlias(name="MPH", aliases=("MPH", "MPN", "MРН", "MPI", "M/H"), si_factor=MPH_TO_MPS),
+        UnitAlias(name="MPH", aliases=("MPH", "MPN", "MРН", "MPI", "M/H"), unit_expression="mile/hour"),
     )
 
 
 def _default_altitude_units() -> tuple[UnitAlias, ...]:
     return (
-        UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), si_factor=FT_TO_M),
-        UnitAlias(name="MI", aliases=("MI", "ML", "M1"), si_factor=MI_TO_M),
+        UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), unit_expression="foot"),
+        UnitAlias(name="MI", aliases=("MI", "ML", "M1"), unit_expression="mile"),
     )
 
 
 def _default_kind_parsing(kind: str) -> FieldKindParsing:
     if kind == "velocity":
-        return FieldKindParsing(units=_default_velocity_units(), default_unit="MPH")
+        return FieldKindParsing(units=_default_velocity_units(), default_unit="MPH", output_unit="meter/second")
     if kind == "altitude":
         return FieldKindParsing(
             units=_default_altitude_units(),
@@ -104,6 +104,7 @@ def _default_kind_parsing(kind: str) -> FieldKindParsing:
             ambiguous_default_unit="FT",
             inferred_units_with_separator=("FT", "MI"),
             inferred_units_without_separator=("FT",),
+            output_unit="meter",
         )
     raise ValueError(f"Unsupported measurement kind: {kind}")
 
@@ -290,14 +291,18 @@ def parse_met(text: str, parsing: ParsingProfile | None = None) -> float | None:
 
 def _extract_numeric_tokens(text: str) -> list[str]:
     upper = normalize_text(text)
-    raw_tokens = re.findall(r"[0-9OQDILSBG|]{1,3}(?:[,.:][0-9OQDILSBG|]{2,3})+|[0-9OQDILSBG|]{3,}", upper)
+    raw_tokens = re.findall(
+        r"[+-]?(?:[0-9OQDILSBG|]{1,3}(?:[,][0-9OQDILSBG|]{3})+(?:\.[0-9OQDILSBG|]+)?|[0-9OQDILSBG|]+(?:\.[0-9OQDILSBG|]+)?|\.[0-9OQDILSBG|]+)(?:[Ee][+-]?[0-9]+)?",
+        upper,
+    )
     tokens: list[str] = []
     for token in raw_tokens:
         digit_count = len(re.findall(r"[0-9]", token))
         has_separator = any(separator in token for separator in ",.:")
+        has_ocr_letters = bool(re.search(r"[OQDILSBG|]", token))
         if digit_count == 0:
             continue
-        if not has_separator and digit_count < 3:
+        if has_ocr_letters and not has_separator and digit_count < 3:
             continue
         tokens.append(normalize_numeric_token(token))
     return tokens
@@ -334,7 +339,7 @@ def parse_measurement_options(
             raw_value = _parse_token_to_number(token=token, unit=unit, kind=kind)
             if raw_value is None:
                 continue
-            value_si = converter.convert_to_si(float(raw_value), unit.name)
+            value_si = converter.convert_to_output(float(raw_value), unit.name)
             if value_si is None:
                 continue
             options.append(
@@ -396,6 +401,8 @@ def _unit_candidates_for_token(
 def _parse_confidence(unit_source: str, match_score: float | None) -> float:
     if unit_source == "exact":
         return 1.0
+    if unit_source == "alias":
+        return 1.0
     if unit_source == "fuzzy":
         return max(0.0, min(0.95, 0.55 + 0.40 * float(match_score or 0.0) / 100.0))
     if unit_source == "inferred_dominant":
@@ -447,13 +454,165 @@ def _infer_unit_names(
 
 
 def _parse_token_to_number(token: str, unit: UnitAlias, kind: str) -> float | None:
-    cleaned = normalize_numeric_token(token).replace(",", "").replace(".", "").replace(":", "")
+    cleaned = normalize_numeric_token(token).replace(",", "").replace(":", "")
     if not cleaned:
         return None
     try:
         return float(cleaned)
     except ValueError:
         return None
+
+
+def parse_custom_measurement_options(
+    text: str,
+    quantity: TelemetryQuantityDefinition,
+    variant: str,
+    *,
+    dominant_unit: str | None = None,
+) -> list[MeasurementOption]:
+    tokens = _extract_numeric_tokens(text)
+    if not tokens:
+        return []
+    converter = converter_for_quantity(quantity)
+    options: list[MeasurementOption] = []
+    for token in tokens:
+        raw_value = _parse_custom_token_to_number(token)
+        if raw_value is None:
+            continue
+        unit_candidates = _custom_unit_candidates(
+            text=text,
+            token=token,
+            quantity=quantity,
+            dominant_unit=dominant_unit,
+        )
+        for unit_expression, unit_source, match_text in unit_candidates:
+            normalized = converter.convert_expression_to_output(raw_value, unit_expression)
+            if normalized is None:
+                continue
+            options.append(
+                MeasurementOption(
+                    raw_text=text,
+                    raw_token=token,
+                    raw_value=raw_value,
+                    unit=unit_expression,
+                    value_si=normalized,
+                    explicit_unit=unit_source in {"exact", "alias"},
+                    variant=variant,
+                    unit_source=unit_source,
+                    unit_match_text=match_text,
+                    unit_match_score=100.0 if unit_source in {"exact", "alias"} else None,
+                    parse_confidence=_parse_confidence(unit_source, 100.0),
+                )
+            )
+        break
+    return _dedupe_options(options)
+
+
+def resolve_custom_measurement_series(
+    raw_candidates_by_sample: list[list[tuple[str, str]]],
+    *,
+    quantity: TelemetryQuantityDefinition,
+    met_values: list[float | None],
+) -> list[MeasurementSeriesResult]:
+    dominant_unit = _dominant_custom_explicit_unit(raw_candidates_by_sample, quantity=quantity)
+    parsed_options: list[list[MeasurementOption]] = []
+    candidate_counts: list[int] = []
+    for candidates in raw_candidates_by_sample:
+        options: list[MeasurementOption] = []
+        for text, variant in candidates:
+            options.extend(
+                parse_custom_measurement_options(
+                    text,
+                    quantity,
+                    variant,
+                    dominant_unit=dominant_unit,
+                )
+            )
+        parsed_options.append(_dedupe_options(options))
+        candidate_counts.append(len(options))
+    chosen = _viterbi_resolve(parsed_options, kind="custom", met_values=met_values, dominant_unit=dominant_unit)
+    return [
+        MeasurementSeriesResult(
+            chosen=option,
+            candidate_count=candidate_counts[index],
+            reject_reason=None if option is not None else ("no_candidates" if candidate_counts[index] == 0 else "low_confidence_or_jump"),
+        )
+        for index, option in enumerate(chosen)
+    ]
+
+
+def _parse_custom_token_to_number(token: str) -> float | None:
+    cleaned = normalize_numeric_token(token).replace(",", "").replace(":", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _custom_unit_candidates(
+    *,
+    text: str,
+    token: str,
+    quantity: TelemetryQuantityDefinition,
+    dominant_unit: str | None,
+) -> list[tuple[str, str, str | None]]:
+    explicit = _unit_suffix_after_token(text, token)
+    candidates: list[tuple[str, str, str | None]] = []
+    seen: set[str] = set()
+
+    def add(unit_expression: str | None, source: str, match_text: str | None) -> None:
+        if not unit_expression:
+            return
+        key = unit_expression.strip()
+        if not key or key.casefold() in seen:
+            return
+        candidates.append((key, source, match_text))
+        seen.add(key.casefold())
+
+    if explicit:
+        alias = resolve_unit_alias(explicit, aliases=quantity.unit_aliases)
+        add(alias or explicit, "alias" if alias else "exact", explicit)
+    add(dominant_unit, "inferred_dominant", None)
+    add(quantity.display_unit, "inferred_profile", None)
+    return candidates
+
+
+def _unit_suffix_after_token(text: str, token: str) -> str | None:
+    normalized_text = normalize_text(text)
+    normalized_token = normalize_numeric_token(token)
+    index = normalized_text.find(normalized_token)
+    if index < 0:
+        return None
+    suffix = normalized_text[index + len(normalized_token):].strip()
+    match = re.match(r"([A-Z%/_^0-9.\-]+(?:\s*[*/]\s*[A-Z%/_^0-9.\-]+)*)", suffix)
+    if match is None:
+        return None
+    unit_text = match.group(1).strip()
+    return unit_text or None
+
+
+def _dominant_custom_explicit_unit(
+    raw_candidates_by_sample: list[list[tuple[str, str]]],
+    *,
+    quantity: TelemetryQuantityDefinition,
+) -> str | None:
+    counts: dict[str, int] = {}
+    for candidates in raw_candidates_by_sample:
+        seen_this_sample: set[str] = set()
+        for text, _variant in candidates:
+            tokens = _extract_numeric_tokens(text)
+            if not tokens:
+                continue
+            suffix = _unit_suffix_after_token(text, tokens[0])
+            if not suffix:
+                continue
+            seen_this_sample.add(resolve_unit_alias(suffix, aliases=quantity.unit_aliases) or suffix)
+        for unit_expression in seen_this_sample:
+            counts[unit_expression] = counts.get(unit_expression, 0) + 1
+    if not counts:
+        return None
+    unit_expression, count = max(counts.items(), key=lambda item: item[1])
+    return unit_expression
 
 
 def choose_best_measurement(
@@ -598,7 +757,10 @@ def _dedupe_options(options: list[MeasurementOption]) -> list[MeasurementOption]
             dominant_unit=None,
         ):
             best_by_key[key] = option
-    return sorted(best_by_key.values(), key=lambda item: (item.raw_token, item.unit))
+    return sorted(
+        best_by_key.values(),
+        key=lambda item: (_local_option_cost(item, dominant_unit=None), item.raw_token, item.unit),
+    )
 
 
 def _viterbi_resolve(
@@ -670,6 +832,7 @@ def _state_local_cost(option: MeasurementOption | None, *, dominant_unit: str | 
 def _local_option_cost(option: MeasurementOption, *, dominant_unit: str | None) -> float:
     source_cost = {
         "exact": 0.15,
+        "alias": 0.15,
         "fuzzy": 0.75 + (100.0 - float(option.unit_match_score or 0.0)) / 25.0,
         "inferred_dominant": 0.95,
         "inferred_recent": 1.15,
@@ -698,10 +861,16 @@ def _transition_cost(
     max_rate = {
         "velocity": 250.0,
         "altitude": 6000.0,
-    }.get(kind, math.inf)
+    }.get(kind)
     dt = abs(float(current_met_s) - float(previous_met_s))
     if dt <= 0.0 or not math.isfinite(dt):
         return 0.0
+    if max_rate is None:
+        scale = max(abs(previous.value_si), abs(current.value_si), 1.0)
+        relative_delta = abs(current.value_si - previous.value_si) / scale
+        rate_cost = min(8.0, relative_delta * 2.0)
+        unit_cost = 0.0 if previous.unit == current.unit else 0.65
+        return rate_cost + unit_cost
     rate = abs(current.value_si - previous.value_si) / dt
     if rate > 3.0 * max_rate:
         return math.inf

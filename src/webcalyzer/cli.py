@@ -7,6 +7,17 @@ from pathlib import Path
 
 from webcalyzer.calibration import launch_calibration_ui
 from webcalyzer.config import load_profile
+from webcalyzer.quantities import (
+    delete_quantity,
+    is_default_quantity_id,
+    load_quantity_library,
+    normalize_quantity_mapping,
+    quantity_field_name,
+    remove_quantity_from_templates,
+    save_quantity_library,
+    update_quantity_snapshots,
+    upsert_quantity,
+)
 from webcalyzer.extract import extract_telemetry
 from webcalyzer.fixtures import generate_review_frames
 from webcalyzer.models import ProfileConfig, TrajectoryConfig, VideoOverlayConfig
@@ -40,6 +51,27 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_parser = subparsers.add_parser("calibrate", help="Launch interactive calibration.")
     _add_video_config_args(calibrate_parser)
     calibrate_parser.add_argument("--output", required=True, help="Path to write the calibrated YAML profile.")
+    calibrate_parser.add_argument("--templates-dir", default="configs", help="Directory containing custom_quantities.yaml.")
+
+    quantities_parser = subparsers.add_parser("quantities", help="Manage the custom telemetry quantity library.")
+    quantities_parser.add_argument("--templates-dir", default="configs", help="Directory containing custom_quantities.yaml.")
+    quantities_sub = quantities_parser.add_subparsers(dest="quantities_command", required=True)
+    quantities_sub.add_parser("list", help="List telemetry quantities.")
+    quantities_add = quantities_sub.add_parser("add", help="Add a custom telemetry quantity.")
+    quantities_add.add_argument("--name", required=True)
+    quantities_add.add_argument("--dimensionality", required=True)
+    quantities_add.add_argument("--display-unit", required=True)
+    quantities_add.add_argument("--description", default="")
+    quantities_add.add_argument("--alias", action="append", default=[], help="Unit alias as ALIAS=UNIT_EXPR (repeatable).")
+    quantities_edit = quantities_sub.add_parser("edit", help="Edit a custom telemetry quantity.")
+    quantities_edit.add_argument("id")
+    quantities_edit.add_argument("--name")
+    quantities_edit.add_argument("--dimensionality")
+    quantities_edit.add_argument("--display-unit")
+    quantities_edit.add_argument("--description")
+    quantities_edit.add_argument("--alias", action="append", default=[], help="Replace aliases with ALIAS=UNIT_EXPR entries.")
+    quantities_delete = quantities_sub.add_parser("delete", help="Delete a custom telemetry quantity.")
+    quantities_delete.add_argument("id")
 
     extract_parser = subparsers.add_parser("extract", help="Run OCR extraction.")
     _add_video_config_args(extract_parser)
@@ -280,16 +312,22 @@ def main(argv: list[str] | None = None) -> None:
         _run_serve(args)
         return
 
+    if args.command == "quantities":
+        _run_quantities(args)
+        return
+
     if args.command == "plot":
         import pandas as pd
 
         output_dir = Path(args.output)
+        profile = _profile_from_output(output_dir)
         clean_df = pd.read_csv(output_dir / "telemetry_clean.csv")
         create_plots(
             clean_df,
             output_dir,
             trajectory_df=_read_trajectory_df(output_dir),
-            trajectory_config=_trajectory_config_from_profile(output_dir),
+            trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile),
+            profile=profile,
         )
         return
 
@@ -301,6 +339,7 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             trajectory_df=trajectory_df,
             trajectory_config=_trajectory_config_from_profile(args.output),
+            profile=_profile_from_output(Path(args.output)),
         )
         return
 
@@ -319,6 +358,7 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             trajectory_df=trajectory_df,
             trajectory_config=_trajectory_config_from_profile(args.output, profile=profile),
+            profile=profile,
         )
         return
 
@@ -334,6 +374,7 @@ def main(argv: list[str] | None = None) -> None:
             args.output,
             trajectory_df=trajectory_df,
             trajectory_config=_trajectory_config_from_profile(args.output),
+            profile=_profile_from_output(Path(args.output)),
         )
         return
 
@@ -349,6 +390,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir,
             trajectory_df=trajectory_df,
             trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
+            profile=profile,
         )
         return
 
@@ -388,6 +430,7 @@ def main(argv: list[str] | None = None) -> None:
             video_fps=metadata.fps,
             video_width=metadata.width,
             video_height=metadata.height,
+            templates_dir=args.templates_dir,
         )
         return
 
@@ -433,6 +476,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir,
             trajectory_df=trajectory_df,
             trajectory_config=_trajectory_config_from_profile(output_dir, profile=profile, args=args),
+            profile=profile,
         )
         _render_overlay_if_enabled(args.video, clean_df, output_dir, profile, args, trajectory_df=trajectory_df)
         return
@@ -447,6 +491,81 @@ def _validate_runnable_profile(profile: ProfileConfig) -> None:
         validate_runnable_profile_model(profile_dataclass_to_model(profile))
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(f"Profile is not runnable: {exc}") from exc
+
+
+def _run_quantities(args: argparse.Namespace) -> None:
+    templates_dir = Path(args.templates_dir)
+    quantities = load_quantity_library(templates_dir)
+    command = args.quantities_command
+    if command == "list":
+        if not quantities:
+            print("No telemetry quantities defined.")
+            return
+        for quantity in quantities:
+            print(
+                f"{quantity.id}\t{quantity.name}\t{quantity.dimensionality}\t"
+                f"{quantity.display_unit}\t{quantity_field_name(quantity)}"
+            )
+        return
+    if command == "add":
+        quantity = normalize_quantity_mapping(
+            {
+                "name": args.name,
+                "dimensionality": args.dimensionality,
+                "display_unit": args.display_unit,
+                "description": args.description,
+                "unit_aliases": _parse_alias_args(args.alias),
+            }
+        )
+        quantities = upsert_quantity(quantities, quantity)
+        save_quantity_library(templates_dir, quantities)
+        print(f"Added {quantity.id}: {quantity.name}")
+        return
+    if command == "edit":
+        current = next((quantity for quantity in quantities if quantity.id == args.id), None)
+        if current is None:
+            raise SystemExit(f"Quantity not found: {args.id}")
+        alias_entries = _parse_alias_args(args.alias) if args.alias else dict(current.unit_aliases)
+        quantity = normalize_quantity_mapping(
+            {
+                "id": current.id,
+                "name": args.name if args.name is not None else current.name,
+                "slug": current.slug,
+                "dimensionality": args.dimensionality
+                if args.dimensionality is not None
+                else current.dimensionality,
+                "display_unit": args.display_unit if args.display_unit is not None else current.display_unit,
+                "description": args.description if args.description is not None else current.description,
+                "unit_aliases": alias_entries,
+            }
+        )
+        quantities = upsert_quantity(quantities, quantity)
+        save_quantity_library(templates_dir, quantities)
+        template_count = update_quantity_snapshots(templates_dir, quantity)
+        print(f"Updated {quantity.id}: {quantity.name} ({template_count} templates updated)")
+        return
+    if command == "delete":
+        if is_default_quantity_id(args.id):
+            raise SystemExit("Default quantities cannot be deleted.")
+        quantities = delete_quantity(quantities, args.id)
+        save_quantity_library(templates_dir, quantities)
+        template_count = remove_quantity_from_templates(templates_dir, args.id)
+        print(f"Deleted {args.id} ({template_count} templates updated)")
+        return
+    raise SystemExit(f"Unsupported quantities command: {command}")
+
+
+def _parse_alias_args(entries: list[str]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for entry in entries:
+        if "=" not in entry:
+            raise SystemExit(f"Invalid --alias {entry!r}; expected ALIAS=UNIT_EXPR")
+        alias, unit_expression = entry.split("=", 1)
+        alias = alias.strip()
+        unit_expression = unit_expression.strip()
+        if alias and unit_expression:
+            aliases[alias] = unit_expression
+    return aliases
 
 
 def _read_rejected_df(output_dir: str | Path):
