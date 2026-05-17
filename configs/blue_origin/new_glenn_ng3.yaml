@@ -1,7 +1,7 @@
 profile_name: blue_origin_new_glenn
 description: Default New Glenn telemetry profile derived from BlueOrigin_NG-3.mp4.
-default_sample_fps: 1.0
-default_ocr_workers: 4
+default_sample_fps: 4.0
+default_ocr_workers: 0
 ocr_backend: auto
 ocr_recognition_level: accurate
 skip_full_frame_ocr_fallback: false
@@ -164,19 +164,19 @@ segments:
     stage1_velocity:
       kind: velocity
       stage: stage1
-      bbox_x1y1x2y2: [0.0725850613317757, 0.8955737279335411, 0.23293753650700935, 0.965058735721703]
+      bbox_x1y1x2y2: [0.12296473422897196, 0.8991514148494288, 0.23489522488317757, 0.9639310747663551]
     stage1_altitude:
       kind: altitude
       stage: stage1
-      bbox_x1y1x2y2: [0.2436340902453271, 0.9001330477673936, 0.3987751898364486, 0.9560293354101765]
+      bbox_x1y1x2y2: [0.2925032856308411, 0.9007496105919003, 0.39842380987149534, 0.9565323208722741]
     stage2_velocity:
       kind: velocity
       stage: stage2
-      bbox_x1y1x2y2: [0.6032190055490654, 0.8973017263759087, 0.7559415157710281, 0.957311137071651]
+      bbox_x1y1x2y2: [0.6474107403621495, 0.8983644859813084, 0.756000839661215, 0.9579844885773624]
     stage2_altitude:
       kind: altitude
       stage: stage2
-      bbox_x1y1x2y2: [0.805705132885514, 0.9027128764278297, 0.9130129234813084, 0.9545609423676013]
+      bbox_x1y1x2y2: [0.8068459769275701, 0.9013905114226376, 0.9123786141939252, 0.9578141225337488]
 - id: segment_2
   start_frame_index: 27960
   start_time_s: 466.46928607156957
@@ -212,8 +212,8 @@ segments:
     stage2_velocity:
       kind: velocity
       stage: stage2
-      bbox_x1y1x2y2: [0.6046747225467289, 0.8982265706126688, 0.7535320531542056, 0.9583252206645898]
+      bbox_x1y1x2y2: [0.6471643180490654, 0.9009524273104881, 0.756571261682243, 0.9585118120456906]
     stage2_altitude:
       kind: altitude
       stage: stage2
-      bbox_x1y1x2y2: [0.7671993647780374, 0.899694963655244, 0.9065511828271028, 0.9599153037383178]
+      bbox_x1y1x2y2: [0.8068322867990654, 0.8995813862928349, 0.9065420560747663, 0.9578465732087228]
