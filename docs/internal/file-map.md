@@ -13,7 +13,6 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `pyproject.toml` | Python package metadata, dependencies, console script, and pytest configuration. |
 | `configs/` | Bundled YAML profile templates. |
 | `scripts/` | Launcher support scripts and dependency/build fingerprinting. |
-| `fixtures/` | Sample review frame assets for bundled profiles. |
 | `outputs/` | Conventional local run output directory, not required by code. |
 | `docs/` | User and internal documentation source. |
 | `web/` | Vite React frontend project. |
