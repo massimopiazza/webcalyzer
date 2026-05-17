@@ -10,7 +10,7 @@ Each full run writes a self-contained timestamped output directory under the sel
 |---|---|
 | `review/` | Sampled JPEG frames and `contact_sheet.jpg` for visual calibration review. The JPEGs include active segment labels and field bounding boxes. |
 | `telemetry_raw.csv` | Raw OCR observations after parsing, including `segment_id`, parse status, unit diagnostics, confidence, and per-field details. |
-| `telemetry_clean.csv` | Rebuilt telemetry table after filtering, stage logic, and anchor-point injection. This is the main retained dataset. |
+| `telemetry_clean.csv` | Rebuilt telemetry table after filtering, stage logic, and anchor-point injection. Custom quantity columns use each quantity's display unit. This is the main retained dataset. |
 | `telemetry_rejected.csv` | Points rejected by outlier processing, when available. |
 | `trajectory.csv` | Dense trajectory reconstruction and augmented values, when trajectory is enabled. |
 | `run_metadata.json` | Backend choice, sample settings, worker count, input video, output directory, and run context. |
@@ -58,7 +58,7 @@ Core columns are:
 | `stage2_velocity_mps` | Stage 2 velocity in meters per second, when available. |
 | `stage2_altitude_m` | Stage 2 altitude in meters, when available. |
 
-Additional columns may be added by trajectory reconstruction.
+Custom telemetry columns use `custom_<slug>` names and contain values in the quantity's display unit. Additional columns may be added by trajectory reconstruction.
 
 ### Review rejected points
 
@@ -90,7 +90,7 @@ If launch-site latitude $\phi$, longitude $\lambda$, and azimuth $\alpha_{\mathr
 
 ### Review plots
 
-Start with the summary PDFs under `plots/`. They show retained telemetry, rejected values when present, stage coverage, trajectory distance, and acceleration.
+Start with the summary PDFs under `plots/`. They show retained telemetry, rejected values when present, stage coverage, trajectory distance, acceleration, and custom telemetry when present.
 
 Rule of thumb: review plots before trusting the overlay video. The overlay is a presentation output, while the plots are better for inspecting noisy points and gaps.
 

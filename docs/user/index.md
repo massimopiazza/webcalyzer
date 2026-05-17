@@ -9,6 +9,7 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 | [Getting Started](getting-started.md) | Installation, web UI launch, local roots, and a first run |
 | [Run Extraction](run-extraction.md) | The **Run** page, paths, profile settings, live console, cancellation, and output links |
 | [Calibration](calibration.md) | Frame scrubbing, segment splits, bounding boxes, field slots, and calibration saves |
+| [Quantities](quantities.md) | Reusable telemetry quantities, dimensionality, display units, aliases, and custom slots |
 | [Templates](templates.md) | Loading, saving, importing, downloading, deleting, and repairing YAML templates |
 | [Profile Configuration](profile-configuration.md) | General settings, segments, parsing, trajectory, overlay, and anchor points |
 | [Trajectory Reconstruction](trajectory-reconstruction.md) | Unit conversion, mission-time grids, interpolation, integration, downrange, acceleration, and geodesic projection |
@@ -23,7 +24,9 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 
 **Segment.** A source-video frame range with its own enabled telemetry slots and bounding boxes. Segment end frames are exclusive.
 
-**Field slot.** One canonical telemetry region in a segment: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, or `stage2_altitude`. Enabled slots have a fixed type, stage, and normalized bounding box.
+**Field slot.** One telemetry region in a segment. Canonical slots are `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, and `stage2_altitude`. Custom slots use `custom_<slug>` names from the quantity library. Enabled slots have a fixed type, optional stage, and normalized bounding box.
+
+**Quantity.** A reusable telemetry definition with dimensionality, display unit, optional aliases, and an optional description. Quantities live in `custom_quantities.yaml`; enabled custom quantities are copied into profile templates.
 
 **Mission elapsed time.** The extracted time axis from the video overlay. Webcalyzer uses mission elapsed time to align readings across frames and to build trajectory outputs.
 

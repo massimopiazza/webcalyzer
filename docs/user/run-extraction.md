@@ -49,10 +49,11 @@ The job phases are:
 
 1. Generate review frames
 2. Run OCR extraction
-3. Reconstruct trajectory, when enabled
-4. Generate plots
-5. Render the overlay video, when enabled
-6. Save `config_resolved.yaml`
+3. Reject outliers, when enabled
+4. Reconstruct trajectory
+5. Generate plots
+6. Render the overlay video, when enabled
+7. Save `config_resolved.yaml`
 
 The app allows one active job at a time. If another job is running, wait for it to finish or cancel it.
 

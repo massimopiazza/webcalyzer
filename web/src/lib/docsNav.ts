@@ -2,6 +2,7 @@ import userIndexMd from "../../../docs/user/index.md?raw";
 import gettingStartedMd from "../../../docs/user/getting-started.md?raw";
 import runExtractionMd from "../../../docs/user/run-extraction.md?raw";
 import calibrationMd from "../../../docs/user/calibration.md?raw";
+import quantitiesMd from "../../../docs/user/quantities.md?raw";
 import templatesMd from "../../../docs/user/templates.md?raw";
 import profileConfigurationMd from "../../../docs/user/profile-configuration.md?raw";
 import trajectoryReconstructionMd from "../../../docs/user/trajectory-reconstruction.md?raw";
@@ -38,6 +39,7 @@ export const DOC_GROUPS: DocsGroup[] = [
       { id: "getting-started", title: "Getting Started", content: gettingStartedMd },
       { id: "run-extraction", title: "Run Extraction", content: runExtractionMd },
       { id: "calibration", title: "Calibration", content: calibrationMd },
+      { id: "quantities", title: "Quantities", content: quantitiesMd },
       { id: "templates", title: "Templates", content: templatesMd },
       { id: "profile-configuration", title: "Profile Configuration", content: profileConfigurationMd },
       { id: "trajectory-reconstruction", title: "Trajectory Reconstruction", content: trajectoryReconstructionMd },

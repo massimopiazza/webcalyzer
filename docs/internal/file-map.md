@@ -8,8 +8,11 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 |---|---|
 | `README.md` | Project overview, install instructions, CLI argument reference, and architecture notes. |
 | `AGENTS.md` | Repository-specific instructions for coding agents. |
+| `Launch Webcalyzer.command` | macOS double-click launcher for local setup and server start. |
+| `Launch Webcalyzer.bat` | Windows double-click launcher for local setup and server start. |
 | `pyproject.toml` | Python package metadata, dependencies, console script, and pytest configuration. |
 | `configs/` | Bundled YAML profile templates. |
+| `scripts/` | Launcher support scripts and dependency/build fingerprinting. |
 | `fixtures/` | Sample review frame assets for bundled profiles. |
 | `outputs/` | Conventional local run output directory, not required by code. |
 | `docs/` | User and internal documentation source. |
@@ -26,6 +29,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `calibration.py` | OpenCV desktop calibration UI for segmented frame ranges and field slots. |
 | `cli.py` | Argparse setup and subcommand orchestration. |
 | `config.py` | YAML load/save, parser defaults, profile compatibility aliases, and flow-style list serialization. |
+| `dimensions.py` | Dimensionality parser, base dimension metadata, presets, and normalized expression formatting. |
 | `extract.py` | Main OCR extraction pipeline, including Phase A workers and Phase B sequential parser logic. |
 | `fixtures.py` | Review frame annotation and contact sheet generation. |
 | `models.py` | Runtime dataclasses for profiles, segments, fields, observations, metadata, and extraction rows. |
@@ -35,8 +39,10 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `overlay_ffmpeg.py` | ffmpeg overlay renderer, progress parsing, encoder detection, and command construction. |
 | `plotting.py` | Matplotlib PDF generation for summaries, stage plots, coverage, downrange, and acceleration. |
 | `postprocess.py` | Raw-to-clean rebuild, Mahalanobis outlier rejection, rejected file writing, and profile loading from output dirs. |
+| `quantities.py` | Custom quantity library loading, validation, default seeding, and template snapshot updates. |
 | `raw_points.py` | Hardcoded raw data point injection and raw dataframe normalization. |
 | `rescue.py` | Multi-variant re-OCR for failed raw samples and output-directory rescue workflow. |
+| `run_paths.py` | Timestamped output directory naming shared by CLI and web jobs. |
 | `sanitize.py` | OCR text normalization, MET parsing, unit detection, numeric parsing, fuzzy unit matching, and measurement-series resolution. |
 | `units.py` | Pint-backed unit registry construction and SI conversion for profile-defined telemetry units. |
 | `trajectory.py` | Trajectory interpolation, integration, coarse-step smoothing, WGS84 direct geodesic, and CSV output. |
@@ -80,6 +86,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 |---|---|---|
 | `RunPage.tsx` | `/` | Profile editing, input/output selection, YAML preview, job submission, and validation summary. |
 | `CalibratePage.tsx` | `/calibrate` | Frame-scrubber segment editor, canonical slot boxes, and calibration save workflow. |
+| `QuantityLibraryPage.tsx` | `/quantities` | Quantity library CRUD, dimensionality editor, unit suggestions, and usage-aware deletion. |
 | `TemplatesPage.tsx` | `/templates` | Template inventory, import, download, delete, and parse-error reporting. |
 | `DocumentationPage.tsx` | `/documentation` | Markdown documentation reader with page groups, local table of contents, and math styling. |
 
@@ -93,7 +100,9 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `PathPicker.tsx` | Path input plus file browser dialog integration. |
 | `FileBrowserDialog.tsx` | Root-scoped file browser UI. |
 | `Field.tsx` | Shared field label, error, and tooltip behavior. |
+| `NumberInput.tsx` | Numeric profile input with nullable-value support. |
 | `PageHeader.tsx` | Page title, description, badges, and action area. |
+| `Toaster.tsx` | Sonner toast host. |
 | `profile/*Section.tsx` | Profile editor sections. |
 | `ui/*` | shadcn-style primitives used across the app. |
 
@@ -108,4 +117,5 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `explanations.ts` | Tooltip and select help copy. |
 | `errors.ts` | Error formatting helpers. |
 | `meta.ts` | Metadata loading helpers. |
+| `sidebar.tsx` | Sidebar collapsed-state persistence. |
 | `utils.ts` | Shared utility functions including `cn(...)`. |

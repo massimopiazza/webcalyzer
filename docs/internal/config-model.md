@@ -33,6 +33,7 @@ Every user-settable field must exist in all layers. Missing one layer creates a 
 | `video_overlay` | `VideoOverlayConfig` | Overlay rendering settings. |
 | `trajectory` | `TrajectoryConfig` | Dense reconstruction settings. |
 | `parsing` | `ParsingProfile` or `None` | `None` means use bundled defaults. |
+| `custom_telemetry_quantities` | `list[TelemetryQuantityDefinition]` | Embedded snapshots copied from `custom_quantities.yaml` for custom fields. |
 | `hardcoded_raw_data_points` | `list[HardcodedRawDataPoint]` | Trusted telemetry values injected into raw data. |
 | `segments` | `list[CalibrationSegmentConfig]` | Ordered calibration ranges with segment-specific canonical fields. |
 
@@ -40,14 +41,16 @@ Every user-settable field must exist in all layers. Missing one layer creates a 
 
 | Group | Required shape | Notes |
 |---|---|---|
-| `segments.*` | `id`, `start_frame_index`, `start_time_s`, `end_frame_index`, `end_time_s`, `fields` | `end_frame_index` is exclusive. Runnable profiles require contiguous ranges. |
-| `segments.*.fields.*` | canonical `kind`, `stage`, `bbox_x1y1x2y2` | Slot names are fixed: `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, `stage2_altitude`. |
+| `custom_telemetry_quantities.*` | `id`, `name`, `slug`, `dimensionality`, `display_unit`, `description`, `unit_aliases` | Dimensionality is normalized and `display_unit` plus alias targets must be compatible Pint units. |
+| `segments.*` | `id`, `start_frame_index`, `start_time_s`, `end_frame_index`, `end_time_s`, `visible_fields`, `fields` | `end_frame_index` is exclusive. Runnable profiles require contiguous ranges. |
+| `segments.*.visible_fields` | ordered field names | May contain canonical names and custom `custom_<slug>` names, including disabled visible slots. |
+| `segments.*.fields.*` | `kind`, `stage`, `bbox_x1y1x2y2`, optional `quantity_id` | Canonical slot names are fixed. Custom slots use `kind: custom`, `stage: null`, and `quantity_id`. |
 | `video_overlay` | `enabled`, `plot_mode`, `engine`, `encoder`, `width_fraction`, `height_fraction`, `output_filename`, `include_audio` | Fractions are constrained to the visible frame and filename cannot contain path separators. |
 | `trajectory` | interpolation, integration, smoothing, derivative, and `launch_site` settings | Launch-site values are optional but ranges are enforced when present. |
-| `parsing.velocity` | unit definitions and inference settings | Unit references must point to declared unit names. |
-| `parsing.altitude` | unit definitions and inference settings | SI conversion target is meters. |
+| `parsing.velocity` | unit definitions, inference settings, and `output_unit` | Unit references must point to declared unit names. Pint validates conversion. |
+| `parsing.altitude` | unit definitions, inference settings, and `output_unit` | Default output unit is meters. |
 | `parsing.met` | `timestamp_patterns` | Every regex must compile. |
-| `hardcoded_raw_data_points.*` | `mission_elapsed_time_s` plus optional telemetry values | At least one telemetry value is required per point. |
+| `hardcoded_raw_data_points.*` | `mission_elapsed_time_s` plus optional stage values and `custom_values` | At least one telemetry value is required per point. Custom values must reference enabled custom fields. |
 
 ## Conversion and Compatibility
 
@@ -101,6 +104,7 @@ Keep these defaults aligned:
 | `mission_elapsed_time_s` | `met_s` or `timestamp_s` inside a hardcoded point. |
 | `trajectory.launch_site.*` | Legacy top-level trajectory keys `launch_latitude_deg`, `launch_longitude_deg`, `launch_azimuth_deg`. |
 | `trajectory.integration_step_s` | Accepted and ignored for backward compatibility. |
+| `parsing.*.units.*.unit` | Legacy `si_factor` is accepted and converted to a unit expression where possible. |
 
 Compatibility belongs in L2. Do not make pipeline code branch on legacy YAML shapes.
 
@@ -115,6 +119,8 @@ Server validation is final. Client validation exists for inline UX and should mi
 - draft versus runnable validation: templates can save incomplete segments, jobs require contiguous segments and a valid `met` bbox in every segment
 - valid enum values for interpolation, integration, smoothing mode, overlay plot mode, and field type
 - unit references for default and inferred units
+- dimensionality expressions and Pint unit compatibility for custom quantities
+- custom field names, embedded quantity references, and custom anchor point references
 - at least one telemetry value in every hardcoded raw data point
 
 When a constraint changes, update both `src/webcalyzer/web/schema.py` and `web/src/lib/schema.ts`. Endpoint validation behavior is documented in [web-backend.md](web-backend.md#profile-validation).

@@ -10,6 +10,7 @@ The frontend is a Vite React app under `web/src/`. It is compiled into `web/dist
 |---|---|---|
 | `/` | `RunPage` | Full extraction configuration and job submission. |
 | `/calibrate` | `CalibratePage` | Frame-scrubber segment calibration with canonical field slots. |
+| `/quantities` | `QuantityLibraryPage` | Reusable telemetry quantity library with dimensions, units, aliases, and usage-aware deletion. |
 | `/templates` | `TemplatesPage` | Template list, import, download, and delete. |
 | `/documentation` | `DocumentationPage` | In-app reader for `docs/user` and `docs/internal`. |
 
@@ -17,7 +18,7 @@ The frontend is a Vite React app under `web/src/`. It is compiled into `web/dist
 
 ### API wrapper
 
-`web/src/lib/api.ts` defines DTO types that mirror `ProfileModel` and exposes the `api` wrapper object. Keep these types in sync with `src/webcalyzer/web/schema.py`.
+`web/src/lib/api.ts` defines DTO types that mirror `ProfileModel`, quantity library responses, job responses, and video metadata. Keep these types in sync with `src/webcalyzer/web/schema.py` and `src/webcalyzer/web/app.py`.
 
 The wrapper uses `fetch`, parses JSON error details when possible, and throws `ApiError` with status and details.
 
@@ -60,7 +61,7 @@ Section components receive the same `ProfileFormState`. They do not keep indepen
 | **Segments** | `SegmentsSection` | `segments.*`, `calibration_video.*` |
 | **Parsing** | `ParsingSection` | `parsing.*` |
 
-The first four sections are primary. **Segments** and **Parsing** live under **Advanced settings** because most users edit boxes through calibration and use default parsing.
+The first four sections are primary. **Segments** and **Parsing** live under **Advanced settings** because most users edit boxes through calibration and use default parsing. Custom quantities embedded in the profile are enabled through calibration and surfaced in the segments and anchor point sections.
 
 Note: In user-facing UI text, call field `kind` the field **Type**. Keep `kind` only where the raw schema key is unavoidable.
 
@@ -93,6 +94,14 @@ The controls use lucide icons from the existing app icon set. Review files under
 `TemplatePicker` receives a refresh key from pages that save templates. After **Save as template** succeeds, the parent increments the refresh key so the dropdown reloads and selects the newly saved template.
 
 The picker action button starts from a blank template. Pages provide the reset callback and dirty-state boolean. If there are unsaved profile or calibration edits, the picker opens a confirmation dialog before discarding them.
+
+### Quantity library
+
+`QuantityLibraryPage` owns the library view for `custom_quantities.yaml`. It loads `/api/quantities`, separates default and custom quantities, opens a dialog for create or edit, normalizes dimensionality through `/api/dimensions/normalize`, and requests typical display units through `/api/units/si`.
+
+The dimensionality and display-unit inputs provide local suggestions from `/api/meta`. Deleting a custom quantity first calls `/api/quantities/{id}/usage` and shows affected templates before the delete request is sent.
+
+`CalibratePage` uses the same quantity DTOs. **Add quantity** merges library quantities with already embedded profile quantities, enables the selected field across all segments, and embeds a profile snapshot when the selected quantity is not canonical.
 
 ## Documentation and UI Conventions
 

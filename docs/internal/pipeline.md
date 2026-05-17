@@ -13,6 +13,8 @@ flowchart TD
   extract["OCR extraction<br/>extract_telemetry(...)"]
   raw["telemetry_raw.csv"]
   clean["telemetry_clean.csv"]
+  reject{"Outlier rejection<br/>enabled?"}
+  rejected["telemetry_rejected.csv"]
   trajectory{"Trajectory enabled?"}
   reconstruct["Dense reconstruction<br/>write_trajectory_outputs(...)"]
   trajectoryCsv["trajectory.csv"]
@@ -26,7 +28,9 @@ flowchart TD
   review --> reviewFrames
   review --> extract
   extract --> raw
-  extract --> clean --> trajectory
+  extract --> clean --> reject
+  reject -->|yes| rejected --> trajectory
+  reject -->|no| trajectory
   trajectory -->|yes| reconstruct --> trajectoryCsv --> plots
   trajectory -->|no| plots
   plots --> plotFiles
@@ -98,13 +102,13 @@ Skip-detection mode can be faster, but it removes detection fallback behavior. U
 
 ### OCR Phase B
 
-Phase B is sequential because it uses temporal context. It reads Phase A results in time order, parses mission elapsed time, resolves each measurement series with unit context and continuity checks, applies stage activation, and writes raw rows.
+Phase B is sequential because it uses temporal context. It reads Phase A results in time order, parses mission elapsed time, resolves each canonical and custom measurement series with unit context and continuity checks, applies stage activation, and writes raw rows.
 
-Unit inference only happens inside the parsing layer. Unit conversion is Pint-backed, unit recovery uses exact aliases before RapidFuzz fallback matches, and the series resolver can use a dominant explicit unit to recover isolated OCR mistakes. Downstream stages should consume SI columns. The user-facing unit model is documented in [trajectory reconstruction](../user/trajectory-reconstruction.md#convert-ocr-readings-into-physical-units).
+Unit inference only happens inside the parsing layer. Unit conversion is Pint-backed, unit recovery uses exact aliases before RapidFuzz fallback matches, and the series resolver can use a dominant explicit unit to recover isolated OCR mistakes. Canonical velocity and altitude columns are normalized to the parsing output units, while custom quantity columns are normalized to each quantity's display unit. Downstream stages should consume normalized columns. The user-facing unit model is documented in [trajectory reconstruction](../user/trajectory-reconstruction.md#convert-ocr-readings-into-physical-units).
 
 ### Clean rebuild and outliers
 
-`rebuild_clean_from_raw(...)` builds `telemetry_clean.csv` from raw observations. It reuses the same series resolver, parsed mission elapsed time, stage/type consistency, measurement plausibility, and hardcoded raw data points.
+`rebuild_clean_from_raw(...)` builds `telemetry_clean.csv` from raw observations. It reuses the same series resolver, parsed mission elapsed time, stage/type consistency, measurement plausibility, custom quantity definitions, and hardcoded raw data points.
 
 `apply_mahalanobis_outlier_rejection(...)` rejects per-field local residual
 outliers over a rolling window. Rejected rows are preserved in

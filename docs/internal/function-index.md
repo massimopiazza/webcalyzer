@@ -12,10 +12,12 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `_write_trajectory_for_output(...)` | `src/webcalyzer/cli.py` | Resolves profile and sample fps, then writes trajectory outputs. |
 | `_overlay_config_from_args(...)` | `src/webcalyzer/cli.py` | Applies overlay CLI overrides to a config copy. |
 | `_resolve_workers(...)` | `src/webcalyzer/cli.py` | Resolves profile default OCR workers, `--ocr-workers`, and automatic worker selection. |
+| `_run_quantities(...)` | `src/webcalyzer/cli.py` | Implements `quantities list`, `add`, `edit`, and `delete`. |
 | `_run_serve(...)` | `src/webcalyzer/cli.py` | Creates and runs the FastAPI app for the local UI. |
 | `load_profile(path)` | `src/webcalyzer/config.py` | Converts YAML into `ProfileConfig`. |
 | `save_profile(profile, path)` | `src/webcalyzer/config.py` | Serializes `ProfileConfig` back to YAML. |
 | `default_parsing_profile()` | `src/webcalyzer/config.py` | Returns bundled parser defaults for profiles with no `parsing` block. |
+| `timestamped_run_output_dir(...)` | `src/webcalyzer/run_paths.py` | Allocates a collision-resistant timestamped output directory. |
 
 ## Data models and schema
 
@@ -23,9 +25,13 @@ This index lists the functions, classes, and frontend exports that most often ma
 |---|---|---|
 | `ProfileConfig` | `src/webcalyzer/models.py` | Canonical runtime configuration dataclass. |
 | `FieldConfig` | `src/webcalyzer/models.py` | Runtime field definition with `kind`, `stage`, and bbox. |
+| `TelemetryQuantityDefinition` | `src/webcalyzer/models.py` | Runtime definition for custom telemetry quantities. |
+| `CalibrationSegmentConfig` | `src/webcalyzer/models.py` | Segment frame range, visible slots, and enabled field map. |
 | `TrajectoryConfig` | `src/webcalyzer/models.py` | Runtime trajectory reconstruction settings. |
 | `ParsingProfile` | `src/webcalyzer/models.py` | Runtime parser rules for units, MET, and OCR vocabulary. |
 | `ProfileModel` | `src/webcalyzer/web/schema.py` | Pydantic validation model for API profile payloads. |
+| `TelemetryQuantityModel` | `src/webcalyzer/web/schema.py` | Pydantic validation for embedded quantity snapshots. |
+| `validate_runnable_profile_model(...)` | `src/webcalyzer/web/schema.py` | Applies run-readiness checks on a draft-valid profile. |
 | `profile_dataclass_to_model(...)` | `src/webcalyzer/web/schema.py` | Converts `ProfileConfig` to `ProfileModel`. |
 | `model_to_profile_dataclass(...)` | `src/webcalyzer/web/schema.py` | Converts validated web JSON into `ProfileConfig`. |
 | `default_parsing_model()` | `src/webcalyzer/web/schema.py` | Exposes parser defaults to the web UI. |
@@ -45,8 +51,18 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `detect_unit(text, kind, parsing)` | `src/webcalyzer/sanitize.py` | Finds a configured unit alias for a measurement type. |
 | `parse_met_candidates(text, parsing)` | `src/webcalyzer/sanitize.py` | Returns possible MET values from OCR text. |
 | `parse_measurement_options(...)` | `src/webcalyzer/sanitize.py` | Returns possible parsed telemetry values with unit candidates. |
+| `parse_custom_measurement_options(...)` | `src/webcalyzer/sanitize.py` | Parses custom quantity OCR text using quantity aliases and display units. |
 | `resolve_measurement_series(...)` | `src/webcalyzer/sanitize.py` | Resolves measurement candidates across a time series with dominant-unit recovery and gap fallback. |
+| `resolve_custom_measurement_series(...)` | `src/webcalyzer/sanitize.py` | Resolves custom quantity candidates across a time series. |
 | `converter_for(...)` | `src/webcalyzer/units.py` | Builds or reuses a Pint-backed converter for one telemetry kind. |
+| `converter_for_quantity(...)` | `src/webcalyzer/units.py` | Builds a Pint-backed converter for a custom quantity definition. |
+| `validate_unit_compatible_with_dimension(...)` | `src/webcalyzer/units.py` | Validates that a Pint unit has the expected dimensionality. |
+| `parse_dimension_expression(...)` | `src/webcalyzer/dimensions.py` | Parses a dimensionality expression into base exponents. |
+| `normalize_dimension_expression(...)` | `src/webcalyzer/dimensions.py` | Returns canonical text for a dimensionality expression. |
+| `load_quantity_library(...)` | `src/webcalyzer/quantities.py` | Loads and seeds `custom_quantities.yaml`. |
+| `normalize_quantity_mapping(...)` | `src/webcalyzer/quantities.py` | Validates and normalizes a quantity payload. |
+| `update_quantity_snapshots(...)` | `src/webcalyzer/quantities.py` | Updates embedded quantity snapshots across saved templates. |
+| `remove_quantity_from_templates(...)` | `src/webcalyzer/quantities.py` | Removes a deleted custom quantity from saved templates. |
 | `resolve_backend_name(name)` | `src/webcalyzer/ocr_factory.py` | Resolves `auto`, `rapidocr`, or `vision` backend requests. |
 | `make_backend(options)` | `src/webcalyzer/ocr_factory.py` | Constructs the selected OCR backend. |
 
@@ -86,6 +102,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 |---|---|---|
 | `ServeConfig` | `src/webcalyzer/web/app.py` | Runtime configuration for roots, templates, dist, and CORS. |
 | `create_app(config)` | `src/webcalyzer/web/app.py` | Builds the FastAPI app, routes, middleware, and static serving. |
+| `_quantity_response(...)` | `src/webcalyzer/web/app.py` | Adds frontend metadata to quantity API responses. |
 | `_format_validation_error(...)` | `src/webcalyzer/web/app.py` | Converts Pydantic errors into JSON-safe API details. |
 | `_resolve_template_path(...)` | `src/webcalyzer/web/app.py` | Resolves template names inside `templates_dir`. |
 | `_ensure_within(...)` | `src/webcalyzer/web/app.py` | Enforces read containment inside configured roots. |
@@ -103,6 +120,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `AppShell` | `web/src/components/AppShell.tsx` | Persistent layout, navigation, and environment badges. |
 | `RunPage` | `web/src/pages/RunPage.tsx` | Profile editing, template save, and job submission. |
 | `CalibratePage` | `web/src/pages/CalibratePage.tsx` | Frame sampling and visual bbox editing. |
+| `QuantityLibraryPage` | `web/src/pages/QuantityLibraryPage.tsx` | Quantity library CRUD, dimension editing, and unit suggestions. |
 | `TemplatesPage` | `web/src/pages/TemplatesPage.tsx` | Template list, import, download, and delete UI. |
 | `DocumentationPage` | `web/src/pages/DocumentationPage.tsx` | Markdown documentation reader and local table of contents. |
 | `RunPanel` | `web/src/components/RunPanel.tsx` | Run console, EventSource subscription, output links, and view toggle. |

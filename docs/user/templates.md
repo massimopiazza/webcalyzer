@@ -2,6 +2,8 @@
 
 Templates are YAML profiles stored under the server templates directory. The **Templates** page lets you inspect the available profiles, import new YAML, download existing YAML, and remove profiles that are no longer needed. Templates are the bridge between visual web editing and repeatable CLI runs.
 
+The quantity library file `custom_quantities.yaml` also lives in the templates directory, but it is managed from **Quantities** and is not listed as a profile template.
+
 ## Template Concepts
 
 ### Anatomy of a template
@@ -69,7 +71,9 @@ Common causes are:
 - overlapping or unsorted segments
 - invalid bounding boxes
 - a canonical slot with the wrong type or stage
+- a custom slot that does not reference an embedded quantity
 - a parsing unit reference that does not exist in `units`
+- an incompatible custom quantity display unit or alias target
 - a timestamp regex that does not compile
 
 The same constraints are visible inline on **Run** under [profile configuration](profile-configuration.md).

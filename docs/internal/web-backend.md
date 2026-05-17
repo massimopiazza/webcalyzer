@@ -1,6 +1,6 @@
 # Web Backend
 
-The web backend is a FastAPI app created by `create_app(...)`. It exposes local APIs for metadata, root-scoped file browsing, video probing, template CRUD, profile validation, calibration saves, job execution, SSE logs, and output-file downloads. The surrounding runtime structure is documented in [architecture.md](architecture.md), and the shared profile contract is documented in [config-model.md](config-model.md).
+The web backend is a FastAPI app created by `create_app(...)`. It exposes local APIs for metadata, root-scoped file browsing, video probing, template CRUD, quantity library management, profile validation, calibration saves, job execution, SSE logs, and output-file downloads. The surrounding runtime structure is documented in [architecture.md](architecture.md), and the shared profile contract is documented in [config-model.md](config-model.md).
 
 ## App Surface
 
@@ -21,7 +21,10 @@ The web backend is a FastAPI app created by `create_app(...)`. It exposes local 
 
 | Prefix | Methods | Responsibility |
 |---|---|---|
-| `/api/meta` | `GET` | Version, roots, templates directory, trajectory choices, default parsing model. |
+| `/api/meta` | `GET` | Version, roots, templates directory, trajectory choices, default parsing model, dimension presets, and known units. |
+| `/api/quantities*` | `GET`, `POST`, `PUT`, `DELETE` | List, create, update, delete, and scan usage for reusable telemetry quantities. |
+| `/api/dimensions/*` | `POST` | Normalize dimensionality expressions. |
+| `/api/units/*` | `GET` | Suggest Pint unit identifiers and return typical SI display units for dimensions. |
 | `/api/files` | `GET` | Root-scoped file browser. |
 | `/api/video/*` | `GET` | Metadata, frame JPEGs, and fixture frame lists. |
 | `/api/templates*` | `GET`, `PUT`, `POST`, `DELETE` | List, load, save, import, download, and delete YAML templates. |
@@ -50,6 +53,8 @@ Do not bypass these helpers in new endpoints.
 
 `GET /api/templates` recursively lists `*.yaml` under `templates_dir`. Each file is loaded with `load_profile(...)` when possible. Files with parse errors are still listed with an `error` string.
 
+`custom_quantities.yaml` is excluded from `GET /api/templates`; it belongs to the quantity library endpoints.
+
 `GET /api/templates/{name}` loads YAML into `ProfileConfig`, converts it to `ProfileModel`, and returns JSON.
 
 `PUT /api/templates/{name}` validates posted JSON as a draft profile with `ProfileModel.model_validate(...)`, converts to `ProfileConfig`, and saves YAML with `save_profile(...)`.
@@ -70,6 +75,18 @@ Note: The frontend refreshes template pickers after a save. Backend template end
 
 Validation errors are cleaned by `_format_validation_error(...)` so FastAPI responses contain JSON-serializable details instead of raw Pydantic exception context.
 
+### Quantity flow
+
+`GET /api/quantities` loads `custom_quantities.yaml`, seeding default quantities when the file is missing. Each response item includes `is_default` and `field_name` metadata for frontend display.
+
+`POST /api/quantities` normalizes dimensionality, validates display-unit compatibility, writes the library, and returns the updated list.
+
+`PUT /api/quantities/{id}` updates the library and calls `update_quantity_snapshots(...)` so embedded profile snapshots stay aligned. If a slug changes, affected custom field names and custom anchor values are renamed in templates.
+
+`DELETE /api/quantities/{id}` rejects default quantity IDs, removes custom quantities from the library, and calls `remove_quantity_from_templates(...)` to remove affected custom fields and anchor values from saved templates.
+
+`POST /api/quantities/{id}/usage` scans saved templates plus an optional current profile payload for quantity definitions, calibration fields, and anchor point references.
+
 ## Job Execution
 
 ### Job lifecycle
@@ -86,7 +103,7 @@ flowchart TD
   record["Create JobRecord<br/>queued state"]
   thread["Start background thread"]
   run["_run(...)"]
-  phases["Pipeline phases<br/>review, extract, trajectory, plots, overlay"]
+  phases["Pipeline phases<br/>review, extract, outliers, trajectory, plots, overlay"]
   cancel{"Cancel requested?"}
   cancelled["Final state<br/>cancelled"]
   done["Final state<br/>done"]
@@ -141,7 +158,7 @@ Pipeline modules may use `print(...)` or logging. Both should remain visible in 
 
 ### Static serving
 
-When `dist_dir` exists, FastAPI serves frontend assets and falls back to `index.html` for non-API paths. This allows React Router to own `/`, `/calibrate`, `/templates`, and `/documentation`.
+When `dist_dir` exists, FastAPI serves frontend assets and falls back to `index.html` for non-API paths. This allows React Router to own `/`, `/calibrate`, `/quantities`, `/templates`, and `/documentation`.
 
 When `dist_dir` is missing, API endpoints can still run, but the production web UI is unavailable.
 

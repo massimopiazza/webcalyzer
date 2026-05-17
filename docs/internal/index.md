@@ -24,11 +24,13 @@ Note: The YAML profile shape is the cross-surface contract. If a configuration f
 
 **Profile DTO.** TypeScript mirror of `ProfileModel` used by the web frontend. Zod performs inline validation before the server validates again.
 
+**Quantity library.** `custom_quantities.yaml` in the templates directory. It stores reusable telemetry definitions and seeds canonical defaults. Profiles embed snapshots for custom fields.
+
 **Run job.** In-memory background execution record created by `JobManager`. One job may be active at a time.
 
 **OCR Phase A.** Stateless frame work that can run in worker processes. It decodes frames and performs OCR candidate extraction.
 
-**OCR Phase B.** Sequential pass over frame results. It tracks mission elapsed time, stage state, plausibility, and best-measurement selection.
+**OCR Phase B.** Sequential pass over frame results. It tracks mission elapsed time, stage state, plausibility, custom quantity conversion, and best-measurement selection.
 
 **Resolved profile.** `config_resolved.yaml` written into an output directory so downstream subcommands can reproduce the profile used by the run.
 

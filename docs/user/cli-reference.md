@@ -11,6 +11,7 @@ The `webcalyzer` command exposes each major processing stage. Use `run` for the 
 | `serve` | Launch the local FastAPI and React UI. |
 | `sample-frames` | Generate representative review JPEGs and a contact sheet. |
 | `calibrate` | Launch the OpenCV desktop calibration tool for segmented frame ranges and field slots. |
+| `quantities` | Manage reusable telemetry quantity definitions. |
 | `extract` | Run OCR extraction and write raw and clean telemetry. |
 | `run` | Run review frame generation, extraction, trajectory reconstruction, plotting, and optional overlay rendering. |
 | `plot` | Generate plots from an existing output directory. |
@@ -95,6 +96,33 @@ webcalyzer extract \
 When OCR flags are omitted, the CLI uses `ocr_backend`, `ocr_recognition_level`, `default_ocr_workers`, and `skip_full_frame_ocr_fallback` from the profile. A worker value of `0` keeps automatic worker selection.
 
 Use `--ocr-skip-detection` when the full-frame OCR fallback is pulling in unrelated values from elsewhere in the image. It keeps recognition inside calibrated field crops only.
+
+### Manage telemetry quantities
+
+Use `quantities` to inspect or edit the shared custom quantity library:
+
+```bash
+webcalyzer quantities --templates-dir configs list
+```
+
+Add a quantity:
+
+```bash
+webcalyzer quantities --templates-dir configs add \
+  --name Acceleration \
+  --dimensionality 'L/T^2' \
+  --display-unit 'm/s^2' \
+  --alias G=standard_gravity
+```
+
+Edit and delete commands update affected templates immediately:
+
+```bash
+webcalyzer quantities --templates-dir configs edit q_acceleration --display-unit 'm/s^2'
+webcalyzer quantities --templates-dir configs delete q_acceleration
+```
+
+Default quantities are present in the library for canonical fields. They can be edited but cannot be deleted.
 
 ## Downstream Commands
 

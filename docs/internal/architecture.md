@@ -13,6 +13,7 @@ Webcalyzer is a single Python package with an optional bundled web UI. The runti
 | YAML I/O | PyYAML | `load_profile(...)` and `save_profile(...)` convert between YAML and dataclasses. |
 | OCR | Apple Vision or RapidOCR | Vision on macOS when available, RapidOCR for portable ONNXRuntime OCR. |
 | Numeric processing | NumPy, pandas, SciPy | Filtering, interpolation, smoothing, trajectory reconstruction, and plotting. |
+| Units and dimensions | Pint, RapidFuzz | Unit conversion, unit suggestions, dimensionality validation, and fuzzy OCR unit recovery. |
 | Plotting | Matplotlib | Writes PDF review artifacts through a non-interactive backend. |
 | Video processing | OpenCV, ffmpeg | OpenCV fallback renderer, ffmpeg accelerated overlay path when installed. |
 | Web backend | FastAPI, Uvicorn, Pydantic v2 | Local API, path-safe file browser, template CRUD, job execution, SSE logs. |
@@ -27,8 +28,10 @@ src/webcalyzer/
   models.py              Canonical dataclasses and runtime DTOs
   config.py              YAML load, save, defaults, and legacy aliases
   extract.py             OCR Phase A and Phase B extraction pipeline
+  dimensions.py          Dimensionality parser and presets
   sanitize.py            OCR text normalization, unit parsing, MET parsing
   units.py               Pint-backed unit conversion
+  quantities.py          Global quantity library and template snapshot updates
   postprocess.py         Clean rebuild and outlier rejection
   trajectory.py          Interpolation, integration, downrange reconstruction
   acceleration.py        Velocity smoothing and acceleration derivation
@@ -37,6 +40,7 @@ src/webcalyzer/
   overlay_ffmpeg.py      ffmpeg renderer and encoder selection
   rescue.py              Multi-variant re-OCR for failed raw samples
   raw_points.py          Hardcoded anchor point injection
+  run_paths.py           Timestamped run output directory allocation
   fixtures.py            Review frame and contact sheet generation
   calibration.py         OpenCV desktop calibration UI
   ocr.py                 OCR backend protocol, RapidOCR backend, image variants
@@ -51,7 +55,7 @@ src/webcalyzer/
 
 web/src/
   App.tsx                Route table
-  pages/                 Run, Calibrate, Templates, Documentation pages
+  pages/                 Run, Calibrate, Quantities, Templates, Documentation pages
   components/            Shell, forms, pickers, job panel, UI primitives
   components/profile/    One editor section per profile group
   lib/                   API wrapper, Zod schema, form state, docs registry

@@ -21,8 +21,9 @@ A profile describes how webcalyzer should read one family of webcast overlays. I
 | **Video overlay** (`video_overlay`) | Controls whether the output video is rendered and how large the embedded telemetry plot is. |
 | **Trajectory** (`trajectory`) | Controls interpolation, integration, smoothing, acceleration, and launch-site downrange behavior. See [trajectory reconstruction](trajectory-reconstruction.md). |
 | **Parsing** (`parsing`) | Optional custom OCR unit aliases, unit conversions, MET regex patterns, and OCR vocabulary. See [trajectory reconstruction](trajectory-reconstruction.md#convert-ocr-readings-into-physical-units). |
+| **Custom telemetry quantities** (`custom_telemetry_quantities`) | Profile-embedded snapshots copied from the global quantity library for enabled custom slots. |
 | **Anchor points** (`hardcoded_raw_data_points`) | Trusted values inserted at specific mission elapsed times before clean reconstruction. |
-| **Segments** (`segments`) | Ordered frame ranges. Each segment has its own enabled canonical field slots and normalized bounding boxes. |
+| **Segments** (`segments`) | Ordered frame ranges. Each segment has its own visible slot list, enabled fields, and normalized bounding boxes. |
 
 ### Edit general settings
 
@@ -54,17 +55,21 @@ Each segment has:
 - **Start frame:** inclusive source-video frame
 - **End frame:** exclusive source-video frame
 - **Start seconds** and **End seconds:** derived display values
+- **Visible fields:** ordered slot list, including disabled visible slots
 - **Canonical slots:** `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, `stage2_altitude`
+- **Custom slots:** `custom_<slug>` names copied from enabled custom quantities
 
 The split frame belongs to the next segment. For a split at frame `N`, the previous segment handles frames `< N` and the next segment starts at `N`.
 
-Enabled slots have:
+Enabled canonical slots have:
 
 - **Type:** `velocity`, `altitude`, or `met`
 - **Stage:** `stage1`, `stage2`, or `(none)`, fixed by the canonical slot
 - **x0, y0, x1, y1:** normalized box coordinates in `[0, 1]`
 
-A valid bounding box must satisfy `x1 > x0` and `y1 > y0`. Draft profiles can be saved with missing boxes, but runs require every segment to define a valid `met` box.
+Enabled custom slots have `kind: custom`, `stage: null`, `quantity_id`, and the same normalized box coordinates.
+
+A valid bounding box must satisfy `x1 > x0` and `y1 > y0`. Draft profiles can be saved with missing boxes, but runs require every segment to define a valid `met` box and every enabled field to have a valid box.
 
 Note: The web UI labels this value as **Type** throughout the advanced settings.
 
@@ -78,21 +83,38 @@ For velocity and altitude parsing, configure:
 - **Ambiguous default unit:** fallback unit for ambiguous OCR cases
 - **Inferred with separator:** units considered when a numeric token contains a separator
 - **Inferred without separator:** units considered when a numeric token has no separator
-- **Unit aliases:** accepted OCR tokens and SI conversion factors
+- **Output unit:** Pint expression used as the normalized output unit
+- **Unit aliases:** accepted OCR tokens and Pint unit expressions
 
-Each parsed numeric value is converted to SI units before filtering:
+Each parsed numeric value is converted to the parsing block's output unit before filtering:
 
 $$
-x_{\mathrm{SI}} = x_{\mathrm{raw}} \cdot c_{\mathrm{unit}}
+x_{\mathrm{out}} = \operatorname{convert}(x_{\mathrm{raw}}, u_{\mathrm{raw}}, u_{\mathrm{out}})
 $$
 
-The conversion factor $c_{\mathrm{unit}}$ comes from the selected unit definition. Pint performs the conversion using profile-defined unit names backed by these factors. For velocity, the SI target is meters per second. For altitude, the SI target is meters.
+Pint performs the conversion using profile-defined unit expressions. For the bundled defaults, velocity is normalized to meters per second and altitude is normalized to meters.
 
 The parser uses exact alias matching first, fuzzy matching for likely OCR unit mistakes, and then profile or time-series inference when no reliable explicit unit is available. Low-confidence readings are left as gaps when the surrounding series does not support a recovery.
 
 For mission elapsed time parsing, configure one or more regex patterns. Patterns must compile as regular expressions and should capture the time-like text printed by the overlay.
 
 Note: `default_unit`, `ambiguous_default_unit`, and inferred units must refer to unit names declared in the same parsing block.
+
+### Configure custom quantities
+
+Custom quantities are profile snapshots copied from the global quantity library. Create or edit the library from [quantities](quantities.md), then enable a quantity from **Calibrate** or **Advanced settings**.
+
+Each snapshot contains:
+
+- `id`
+- `name`
+- `slug`
+- `dimensionality`
+- `display_unit`
+- `description`
+- `unit_aliases`
+
+Custom fields must be named `custom_<slug>` and must reference a quantity embedded in `custom_telemetry_quantities`. During extraction, custom values are converted to the quantity's `display_unit`. The clean CSV column uses the custom field name.
 
 ### Add anchor points
 
@@ -101,8 +123,9 @@ Use **Anchor points** when a value is known independently of OCR. Click **Add an
 - **MET (s):** mission elapsed time for the anchor
 - **Stage 1 velocity (m/s)** or **Stage 1 altitude (m):** trusted stage 1 values
 - **Stage 2 velocity (m/s)** or **Stage 2 altitude (m):** trusted stage 2 values
+- enabled custom quantity values, in each quantity's display unit
 
-At least one telemetry value is required for each anchor point. Anchor points are written into the raw data and then participate in clean rebuild, outlier handling, plotting, and trajectory reconstruction.
+At least one telemetry value is required for each anchor point. Custom anchor values are valid only when the corresponding custom field is enabled in at least one segment. Anchor points are written into the raw data and then participate in clean rebuild, outlier handling, plotting, and trajectory reconstruction.
 
 ## Trajectory and Overlay
 

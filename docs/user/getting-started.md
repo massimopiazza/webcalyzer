@@ -64,7 +64,7 @@ Run the server from the repository root:
 webcalyzer serve --root "$PWD" --templates-dir "$PWD/configs"
 ```
 
-Open <http://127.0.0.1:8765>. The sidebar shows the configured templates directory, the allowed roots, and the app version.
+Open <http://127.0.0.1:8765>. The sidebar shows the configured templates directory, the allowed roots, and the app version. Primary pages are **Run**, **Calibrate**, **Quantities**, **Templates**, and **Documentation**.
 
 Fill in:
 

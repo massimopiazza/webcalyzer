@@ -26,7 +26,7 @@ $$
 x_{\mathrm{SI}} = x_{\mathrm{raw}} c_{\mathrm{unit}}
 $$
 
-Here $x_{\mathrm{raw}}$ is the parsed number and $c_{\mathrm{unit}}$ is the configured conversion factor. Velocity is stored in meters per second, and altitude is stored in meters. The conversion is applied through Pint using the profile's unit definitions, so the same parser path handles built-in units and profile-defined units.
+Here $x_{\mathrm{raw}}$ is the parsed number and $c_{\mathrm{unit}}$ is the configured conversion factor. Velocity is stored in meters per second, and altitude is stored in meters. The conversion is applied through Pint using the profile's unit definitions, so the same parser path handles built-in units and profile-defined units. Custom telemetry quantities are normalized to each quantity's `display_unit`.
 
 Unit identification is alias-driven. Webcalyzer first tries exact unit aliases, then fuzzy unit recovery for OCR mistakes, then configured inference rules. For each measurement series, it also looks for a dominant explicit unit and can use that context to recover an isolated missing or malformed unit label. If the evidence is weak or all options imply an implausible jump, it leaves a gap in the clean telemetry instead of forcing a value.
 
