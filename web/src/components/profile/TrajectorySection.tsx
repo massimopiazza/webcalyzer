@@ -238,30 +238,27 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
       </div>
 
       <div className="rounded-md border border-border/60 bg-muted/15 p-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Tooltip delayDuration={150}>
+            <TooltipTrigger asChild>
+              <div className="[@media(hover:hover)]:cursor-help">
+                <Switch
+                  checked={trajectory.outlier_rejection_enabled}
+                  onCheckedChange={(checked) =>
+                    patch(["trajectory", "outlier_rejection_enabled"], checked)
+                  }
+                  className="shrink-0"
+                  aria-label="Toggle Mahalanobis outlier rejection"
+                />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top">{FIELD_HELP.trajectory_outlier_rejection}</TooltipContent>
+          </Tooltip>
           <div>
             <h4 className="text-sm font-semibold">Mahalanobis outlier rejection</h4>
             <p className="text-xs text-muted-foreground/90">
               Removes isolated OCR samples before clean plots and trajectory outputs are built.
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">
-              {trajectory.outlier_rejection_enabled ? "On" : "Off"}
-            </span>
-            <Tooltip delayDuration={150}>
-              <TooltipTrigger asChild>
-                <div className="[@media(hover:hover)]:cursor-help">
-                  <Switch
-                    checked={trajectory.outlier_rejection_enabled}
-                    onCheckedChange={(checked) =>
-                      patch(["trajectory", "outlier_rejection_enabled"], checked)
-                    }
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="top">{FIELD_HELP.trajectory_outlier_rejection}</TooltipContent>
-            </Tooltip>
           </div>
         </div>
         <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -313,7 +310,13 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
 
       {/* Launch site */}
       <div className="rounded-md border border-border/60 bg-muted/15 p-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={launchEnabled}
+            onCheckedChange={toggleLaunchSite}
+            className="shrink-0"
+            aria-label="Toggle launch site"
+          />
           <div>
             <h4 className="text-sm font-semibold">Launch site</h4>
             <p className="text-xs text-muted-foreground/90">
@@ -321,12 +324,6 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
                 ? "Downrange distance is computed via WGS84 geodesic from the launch pad along the flight path azimuth."
                 : "Disabled. Downrange uses a flat-Earth approximation (great-circle effects ignored)."}
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">
-              {launchEnabled ? "On" : "Off"}
-            </span>
-            <Switch checked={launchEnabled} onCheckedChange={toggleLaunchSite} />
           </div>
         </div>
         <div className="mt-3 grid gap-4 md:grid-cols-3">

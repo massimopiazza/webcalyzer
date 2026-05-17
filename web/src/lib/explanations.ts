@@ -54,7 +54,7 @@ export const FIELD_HELP: Record<string, string> = {
   trajectory_outlier_rejection_chi2_threshold:
     "Squared local residual threshold. In 1-D, 9 means 3 sigma because Mahalanobis distance is squared.",
   trajectory_outlier_rejection_window_s:
-    "MET window used to fit the local trend around each sample.",
+    "Time window used to fit the local trend around each sample.",
   trajectory_outlier_preconditioning:
     "Run a first pass that removes egregious outliers before interpolation, so a single bad OCR sample doesn't distort the spline.",
   trajectory_coarse_step_smoothing:
@@ -88,23 +88,23 @@ export const FIELD_HELP: Record<string, string> = {
 
   // Anchor points
   anchor_met_s:
-    "Mission Elapsed Time (seconds, signed) at which this synthetic sample is injected into the raw OCR stream.",
+    "Time in seconds (signed) at which this synthetic sample is injected into the raw OCR stream.",
   anchor_stage1_velocity_mps:
-    "Hardcoded stage-1 velocity (m/s) injected at this MET. Useful for a known anchor (e.g. T+0 = 0 m/s).",
+    "Hardcoded stage-1 velocity (m/s) injected at this time. Useful for a known anchor (e.g. T+0 = 0 m/s).",
   anchor_stage1_altitude_m:
-    "Hardcoded stage-1 altitude (m) injected at this MET. Useful for a known anchor (e.g. T+0 = 0 m).",
+    "Hardcoded stage-1 altitude (m) injected at this time. Useful for a known anchor (e.g. T+0 = 0 m).",
   anchor_stage2_velocity_mps:
-    "Hardcoded stage-2 velocity (m/s) injected at this MET.",
+    "Hardcoded stage-2 velocity (m/s) injected at this time.",
   anchor_stage2_altitude_m:
-    "Hardcoded stage-2 altitude (m) injected at this MET.",
+    "Hardcoded stage-2 altitude (m) injected at this time.",
 
   // Fields
   field_name:
     "Field identifier, used as the column name in CSVs and as the legend label in plots.",
   field_type:
-    "What type of measurement this field reports. Velocity / altitude get unit parsing; MET is the on-screen clock.",
+    "What type of measurement this field reports. Velocity / altitude get unit parsing; time is the on-screen clock.",
   field_stage:
-    "Which stage owns this field. MET fields must have no stage; velocity/altitude fields must declare one.",
+    "Which stage owns this field. Time fields must have no stage; velocity/altitude fields must declare one.",
   field_bbox_x0:
     "Left edge of the bounding box, normalized to the video width (0 = left, 1 = right).",
   field_bbox_y0:
@@ -116,7 +116,7 @@ export const FIELD_HELP: Record<string, string> = {
 
   // Parsing (advanced)
   parsing_enabled:
-    "Override the bundled OCR vocabulary, unit aliases, and MET regex patterns. Leave off to use the project defaults.",
+    "Override the bundled OCR vocabulary, unit aliases, and time regex patterns. Leave off to use the project defaults.",
   parsing_default_unit:
     "Unit assumed when the OCR text contains a numeric value but no recognizable unit label.",
   parsing_ambiguous_default_unit:
@@ -132,7 +132,7 @@ export const FIELD_HELP: Record<string, string> = {
   parsing_unit_si_factor:
     "Multiply the parsed numeric value by this factor to convert it to SI (meters or meters/second).",
   parsing_met_patterns:
-    "Regex pattern matching the on-screen MET clock format. Capture groups (in order): sign, hours, minutes, seconds.",
+    "Regex pattern matching the on-screen time format. Capture groups (in order): sign, hours, minutes, seconds.",
   parsing_custom_words:
     "Comma-separated tokens fed to the OCR engine as vocabulary hints (Apple Vision custom words). Auto-derived from the alias list when omitted.",
 
@@ -167,12 +167,12 @@ export const SELECT_HELP: Record<string, Record<string, string>> = {
   field_type: {
     velocity: "A speed reading. Parsed via the velocity parsing rules.",
     altitude: "A height reading. Parsed via the altitude parsing rules.",
-    met: "Mission Elapsed Time, the on-screen launch clock. Drives the time axis.",
+    met: "Time, the on-screen launch clock. Drives the time axis.",
   },
   field_stage: {
     stage1: "First stage, typically the booster.",
     stage2: "Second stage / upper stage.",
-    __none__: "No stage assignment. Only valid for MET fields.",
+    __none__: "No stage assignment. Only valid for time fields.",
   },
   ocr_backend: {
     auto: "Apple Vision on macOS when available, RapidOCR everywhere else.",
@@ -214,5 +214,5 @@ export const SECTION_HELP: Record<string, string> = {
   fields:
     "Each field maps a normalized bbox on the video to a measurement type. Use the Calibrate page to draw bboxes visually.",
   parsing:
-    "OCR vocabulary, unit aliases, and MET regex patterns. Leave disabled to use the bundled defaults.",
+    "OCR vocabulary, unit aliases, and time regex patterns. Leave disabled to use the bundled defaults.",
 };

@@ -938,7 +938,7 @@ export function CalibratePage({
               ) : (
                 <span className="text-destructive">
                   Template saving is allowed for drafts. Run is blocked until every segment has a
-                  valid MET box.
+                  valid time box.
                 </span>
               )}
             </CardContent>

@@ -562,7 +562,7 @@ def _draw_base_overlay(
         bottom_axis = acceleration_axis
     _put_text(
         overlay,
-        "Mission Elapsed Time [s]",
+        "Time [s]",
         (bottom_axis.x + max(0, bottom_axis.width // 2 - 90), height - 12),
         font_scale,
     )

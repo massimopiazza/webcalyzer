@@ -20,7 +20,7 @@ A profile describes how webcalyzer should read one family of webcast overlays. I
 | **Calibration video** (`calibration_video`) | Optional reference video metadata saved by calibration. Frame indices are authoritative and seconds are derived for display. |
 | **Video overlay** (`video_overlay`) | Controls whether the output video is rendered and how large the embedded telemetry plot is. |
 | **Trajectory** (`trajectory`) | Controls interpolation, integration, smoothing, acceleration, and launch-site downrange behavior. See [trajectory reconstruction](trajectory-reconstruction.md). |
-| **Parsing** (`parsing`) | Optional custom OCR unit aliases, unit conversions, MET regex patterns, and OCR vocabulary. See [trajectory reconstruction](trajectory-reconstruction.md#convert-ocr-readings-into-physical-units). |
+| **Parsing** (`parsing`) | Optional custom OCR unit aliases, unit conversions, time regex patterns, and OCR vocabulary. See [trajectory reconstruction](trajectory-reconstruction.md#convert-ocr-readings-into-physical-units). |
 | **Custom telemetry quantities** (`custom_telemetry_quantities`) | Profile-embedded snapshots copied from the global quantity library for enabled custom slots. |
 | **Anchor points** (`hardcoded_raw_data_points`) | Trusted values inserted at specific mission elapsed times before clean reconstruction. |
 | **Segments** (`segments`) | Ordered frame ranges. Each segment has its own visible slot list, enabled fields, and normalized bounding boxes. |
@@ -120,7 +120,7 @@ Custom fields must be named `custom_<slug>` and must reference a quantity embedd
 
 Use **Anchor points** when a value is known independently of OCR. Click **Add anchor point** and fill in:
 
-- **MET (s):** mission elapsed time for the anchor
+- **Time (s):** time for the anchor
 - **Stage 1 velocity (m/s)** or **Stage 1 altitude (m):** trusted stage 1 values
 - **Stage 2 velocity (m/s)** or **Stage 2 altitude (m):** trusted stage 2 values
 - enabled custom quantity values, in each quantity's display unit

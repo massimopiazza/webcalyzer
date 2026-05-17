@@ -161,7 +161,7 @@ def _create_summary_pdf(
                 trajectory_config=trajectory_config,
             )
             bottom_axis = axes[3]
-        bottom_axis.set_xlabel("Mission Elapsed Time [s]")
+        bottom_axis.set_xlabel("Time [s]")
         fig.suptitle("Telemetry Summary")
         fig.tight_layout()
         pdf.savefig(fig)
@@ -173,7 +173,7 @@ def _create_coverage_pdf(df: pd.DataFrame, path: Path) -> None:
         fig, axes = plt.subplots(2, 1, figsize=(11, 8.5), sharex=True)
         _plot_coverage(axes[0], df, "stage1_velocity_mps", "stage1_altitude_m", "Stage 1 coverage")
         _plot_coverage(axes[1], df, "stage2_velocity_mps", "stage2_altitude_m", "Stage 2 coverage")
-        axes[1].set_xlabel("Mission Elapsed Time [s]")
+        axes[1].set_xlabel("Time [s]")
         fig.suptitle("Extraction Coverage")
         fig.tight_layout()
         pdf.savefig(fig)
@@ -207,7 +207,7 @@ def _create_stage_pdf(df: pd.DataFrame, stage: str, path: Path, rejected_df: pd.
             rejected_df=rejected_df,
         )
         axes[1].set_ylabel("Altitude [km]")
-        axes[1].set_xlabel("Mission Elapsed Time [s]")
+        axes[1].set_xlabel("Time [s]")
         axes[1].set_title(f"{stage.upper()} Altitude")
         axes[1].grid(alpha=0.25)
         axes[1].legend()
@@ -221,7 +221,7 @@ def _create_downrange_pdf(trajectory_df: pd.DataFrame, path: Path) -> None:
     with PdfPages(path) as pdf:
         fig, axis = plt.subplots(1, 1, figsize=(11, 5.5))
         _plot_downrange(axis, trajectory_df)
-        axis.set_xlabel("Mission Elapsed Time [s]")
+        axis.set_xlabel("Time [s]")
         fig.suptitle("Downrange Reconstruction")
         fig.tight_layout()
         pdf.savefig(fig)
@@ -262,7 +262,7 @@ def _create_custom_pdf(
                 rejected_df=rejected_df,
             )
             axis.set_ylabel(f"{label} [{unit}]" if unit else label)
-            axis.set_xlabel("Mission Elapsed Time [s]")
+            axis.set_xlabel("Time [s]")
             axis.set_title(f"{label} [{unit}]" if unit else label)
             axis.grid(alpha=0.25)
             axis.legend()

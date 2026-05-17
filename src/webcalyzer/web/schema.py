@@ -125,9 +125,9 @@ class FieldModel(StrictModel):
     def _stage_consistency(self) -> "FieldModel":
         if self.kind == "met":
             if self.stage is not None:
-                raise ValueError("MET fields must not have a stage")
+                raise ValueError("time fields must not have a stage")
             if self.quantity_id is not None:
-                raise ValueError("MET fields must not declare quantity_id")
+                raise ValueError("time fields must not declare quantity_id")
         elif self.kind == "custom":
             if self.stage is not None:
                 raise ValueError("custom fields must not have a stage")
@@ -663,7 +663,7 @@ def validate_runnable_profile_model(model: ProfileModel) -> ProfileModel:
         previous_end = segment.end_frame_index
 
         if "met" not in segment.fields:
-            raise ValueError(f"{label}: met field is required")
+            raise ValueError(f"{label}: time field is required")
         for name, field_model in segment.fields.items():
             if field_model.bbox_x1y1x2y2 is None:
                 raise ValueError(f"{label}: {name} must define bbox_x1y1x2y2")

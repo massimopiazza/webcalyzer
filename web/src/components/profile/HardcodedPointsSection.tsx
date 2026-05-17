@@ -41,7 +41,7 @@ export function HardcodedPointsSection({ state }: { state: ProfileFormState }) {
           <div key={index} className="rounded-md border border-border/70 bg-muted/20 p-3">
             <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
               <Field
-                label="MET (s)"
+                label="Time (s)"
                 tooltip={FIELD_HELP.anchor_met_s}
                 error={
                   getError(errors, ["hardcoded_raw_data_points", index, "mission_elapsed_time_s"]) ??

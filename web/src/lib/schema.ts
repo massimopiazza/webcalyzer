@@ -97,7 +97,7 @@ export const fieldSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["stage"],
-        message: "MET fields must not have a stage",
+        message: "Time fields must not have a stage",
       });
     }
     if (value.kind === "custom") {
@@ -456,7 +456,7 @@ export const runnableProfileSchema = profileSchema.superRefine((profile, ctx) =>
     if (!segment.fields.met) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "MET field is required",
+        message: "Time field is required",
         path: ["segments", index, "fields", "met"],
       });
     }

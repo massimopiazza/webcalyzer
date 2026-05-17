@@ -26,7 +26,7 @@ writing a new YAML profile.
                                        │
                                        ▼
    3. run / extract  ──▶ Phase A (parallel)        Phase B (sequential)
-                          ├─ frame decode          ├─ MET tracking
+                          ├─ frame decode          ├─ time tracking
                           ├─ strip OCR             ├─ stage activation
                           └─ field-fallback OCR    ├─ plausibility filter
                                                    └─ choose best measurement
@@ -275,7 +275,7 @@ present in the local ffmpeg build.
 The overlay only changes at sample reveal points (one new measurement
 per OCR sample, plus per-step trajectory reconstruction points), so we
 build a small panel cache once and replay it across all source frames.
-Reveal times are quantized to a 0.5 s MET grid (`REVEAL_QUANTIZE_STEP_S`
+Reveal times are quantized to a 0.5 s time grid (`REVEAL_QUANTIZE_STEP_S`
 in `overlay.py`) so the panel cache and concat list don't balloon when
 the trajectory module emits sub-second integration steps.
 
@@ -302,7 +302,7 @@ The OCR step itself is split into two phases:
   processes (each opens its own video capture) and Phase A runs in
   parallel.
 - **Phase B (sequential)** Walk the per-frame OCR results in frame
-  order and apply the order-dependent logic: MET tracking with rolling
+  order and apply the order-dependent logic: time tracking with rolling
   offset filter, time-series unit resolution, stage activation, and
   plausibility filtering.
 
@@ -473,7 +473,7 @@ webcalyzer rescue \
 
 Drops samples whose squared local residual exceeds the threshold and
 moves them to `telemetry_rejected.csv`. Operates per field, per stage,
-on a sliding MET window. `extract`, `run`, `rescue`, and the web job
+on a sliding time window. `extract`, `run`, `rescue`, and the web job
 apply this pass automatically before trajectory reconstruction. This
 automatic pass is controlled by `trajectory.outlier_rejection_enabled`,
 `trajectory.outlier_rejection_chi2_threshold`, and
@@ -588,7 +588,7 @@ ocr_backend: auto               # auto, rapidocr, or vision
 ocr_recognition_level: accurate # accurate or fast for Apple Vision
 skip_full_frame_ocr_fallback: false
 fixture_frame_count: 20         # representative frame count for sample-frames/calibrate
-fixture_time_range_s: [0, 840]  # MET window (in seconds) to draw fixtures from
+fixture_time_range_s: [0, 840]  # time window (in seconds) to draw fixtures from
 
 calibration_video:
   path: BlueOrigin_NG-3.mp4      # optional reference video used during calibration
@@ -671,7 +671,7 @@ custom_telemetry_quantities:
     unit_aliases:
       gee: standard_gravity
 
-hardcoded_raw_data_points:       # optional synthetic raw points keyed by MET
+hardcoded_raw_data_points:       # optional synthetic raw points keyed by time
   - mission_elapsed_time_s: 560.0
     stage1:
       velocity_mps: 0.0
@@ -958,6 +958,6 @@ What's bottlenecking each engine, from the profile run:
   Decode and encode become the bottleneck instead of compositing.
 
 The unique overlay panels are also reduced by quantizing reveal times
-to a 0.5 s MET grid (controlled by `REVEAL_QUANTIZE_STEP_S` in
+to a 0.5 s time grid (controlled by `REVEAL_QUANTIZE_STEP_S` in
 `overlay.py`), so the trajectory module's per-step samples don't
 balloon the panel cache and the concat playlist.

@@ -263,7 +263,7 @@ function MetEditor({ state }: { state: ProfileFormState }) {
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/15 p-3">
-      <h4 className="text-sm font-semibold">MET regex patterns</h4>
+      <h4 className="text-sm font-semibold">Time regex patterns</h4>
       <div className="mt-2 space-y-2">
         {patterns.map((pattern, index) => (
           <div key={index} className="flex items-start gap-2">

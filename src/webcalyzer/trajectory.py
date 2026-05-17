@@ -557,7 +557,7 @@ def _make_interpolator(times: np.ndarray, values: np.ndarray, method: str) -> Sc
     def evaluate(time_s: float) -> float:
         value = float(interpolator(time_s))
         if not np.isfinite(value):
-            raise ValueError(f"Interpolation produced a non-finite value at MET {time_s:.3f}s")
+            raise ValueError(f"Interpolation produced a non-finite value at time {time_s:.3f}s")
         return value
 
     return evaluate
