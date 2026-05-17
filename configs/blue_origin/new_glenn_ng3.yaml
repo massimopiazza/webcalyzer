@@ -1,14 +1,14 @@
 profile_name: blue_origin_new_glenn
 description: Default New Glenn telemetry profile derived from BlueOrigin_NG-3.mp4.
-default_sample_fps: 4.0
-default_ocr_workers: 0
+default_sample_fps: 1.0
+default_ocr_workers: 4
 ocr_backend: auto
 ocr_recognition_level: accurate
 skip_full_frame_ocr_fallback: false
 fixture_frame_count: 20
 fixture_time_range_s: [0.0, 840.0]
 calibration_video:
-  path: BlueOrigin_NG-3.mp4
+  path: /Users/massimopiazza/SW-projects/webcalyzer/input/BlueOrigin_NG-3.mp4
   fps: 59.93963768862189
   frame_count: 53179
   width: 1920
@@ -54,24 +54,25 @@ parsing:
         - "M\u0420\u041D"
         - MPI
         - M/H
-        si_factor: 0.44704
+        unit: mile/hour
       KPH:
         aliases:
         - KPH
         - KMH
         - KM/H
         - KMPH
-        si_factor: 0.2777777777777778
+        unit: kilometer/hour
       MPS:
         aliases:
         - M/S
         - MPS
         - MS
-        si_factor: 1.0
+        unit: meter/second
     inferred_units_with_separator:
     - MPH
     inferred_units_without_separator:
     - MPH
+    output_unit: meter/second
   altitude:
     default_unit: FT
     units:
@@ -83,26 +84,27 @@ parsing:
         - ET
         - E7
         - EI
-        si_factor: 0.3048
+        unit: foot
       MI:
         aliases:
         - MI
         - ML
         - M1
-        si_factor: 1609.344
+        unit: mile
       KM:
         aliases:
         - KM
-        si_factor: 1000.0
+        unit: kilometer
       M:
         aliases:
         - M
-        si_factor: 1.0
+        unit: meter
     inferred_units_with_separator:
     - FT
     - MI
     inferred_units_without_separator:
     - FT
+    output_unit: meter
     ambiguous_default_unit: FT
   met:
     timestamp_patterns:
@@ -144,28 +146,74 @@ hardcoded_raw_data_points:
     altitude_m: 0.0
 segments:
 - id: segment_1
-  start_frame_index: 0
-  start_time_s: 0.0
-  end_frame_index: 50349
-  end_time_s: 839.9950673969048
+  start_frame_index: 290
+  start_time_s: 4.8382007496693555
+  end_frame_index: 27960
+  end_time_s: 466.46928607156957
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
   fields:
     met:
       kind: met
       stage: null
-      bbox_x1y1x2y2: [0.41458333333333336, 0.8861111111111111, 0.5963541666666666, 0.975]
+      bbox_x1y1x2y2: [0.41895900262850466, 0.8962633047767393, 0.5845639237733645, 0.9652940031152648]
     stage1_velocity:
       kind: velocity
       stage: stage1
-      bbox_x1y1x2y2: [0.12291666666666666, 0.9027777777777778, 0.23333333333333334, 0.9574074074074074]
+      bbox_x1y1x2y2: [0.0725850613317757, 0.8955737279335411, 0.23293753650700935, 0.965058735721703]
     stage1_altitude:
       kind: altitude
       stage: stage1
-      bbox_x1y1x2y2: [0.28541666666666665, 0.9046296296296297, 0.40208333333333335, 0.9546296296296296]
+      bbox_x1y1x2y2: [0.2436340902453271, 0.9001330477673936, 0.3987751898364486, 0.9560293354101765]
     stage2_velocity:
       kind: velocity
       stage: stage2
-      bbox_x1y1x2y2: [0.6453125, 0.8981481481481481, 0.75625, 0.9648148148148148]
+      bbox_x1y1x2y2: [0.6032190055490654, 0.8973017263759087, 0.7559415157710281, 0.957311137071651]
     stage2_altitude:
       kind: altitude
       stage: stage2
-      bbox_x1y1x2y2: [0.8041666666666667, 0.8962962962962963, 0.909375, 0.9537037037037037]
+      bbox_x1y1x2y2: [0.805705132885514, 0.9027128764278297, 0.9130129234813084, 0.9545609423676013]
+- id: segment_2
+  start_frame_index: 27960
+  start_time_s: 466.46928607156957
+  end_frame_index: 41954
+  end_time_s: 699.9374974194074
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
+  fields:
+    met:
+      kind: met
+      stage: null
+      bbox_x1y1x2y2: [0.41895900262850466, 0.8962633047767393, 0.5845639237733645, 0.9652940031152648]
+- id: segment_3
+  start_frame_index: 41954
+  start_time_s: 699.9374974194074
+  end_frame_index: 52395
+  end_time_s: 874.1294078583651
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
+  fields:
+    met:
+      kind: met
+      stage: null
+      bbox_x1y1x2y2: [0.41895900262850466, 0.8962633047767393, 0.5845639237733645, 0.9652940031152648]
+    stage2_velocity:
+      kind: velocity
+      stage: stage2
+      bbox_x1y1x2y2: [0.6046747225467289, 0.8982265706126688, 0.7535320531542056, 0.9583252206645898]
+    stage2_altitude:
+      kind: altitude
+      stage: stage2
+      bbox_x1y1x2y2: [0.7671993647780374, 0.899694963655244, 0.9065511828271028, 0.9599153037383178]
