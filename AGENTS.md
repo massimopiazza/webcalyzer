@@ -137,6 +137,9 @@ These must hold for any change to pass:
 - `trajectory: TrajectoryConfig` - `enabled`, `interpolation_method`
   (`linear|pchip|akima|cubic`), `integration_method`
   (`euler|midpoint|trapezoid|rk4|simpson`),
+  `outlier_rejection_enabled`,
+  `outlier_rejection_chi2_threshold` (>0),
+  `outlier_rejection_window_s` (>0),
   `outlier_preconditioning_enabled`, `coarse_step_smoothing_enabled`,
   `coarse_step_max_gap_s` (>0), `coarse_altitude_threshold_m` (≥0),
   `coarse_velocity_threshold_mps` (≥0),

@@ -4,6 +4,7 @@ from datetime import datetime
 import threading
 import time
 
+import pandas as pd
 import pytest
 
 from webcalyzer.models import ProfileConfig, VideoOverlayConfig
@@ -125,3 +126,81 @@ def test_job_cancel_stops_running_extraction(tmp_path: Path, monkeypatch: pytest
         assert any(event.kind == "cancelled" for event in job.events)
     finally:
         loop.close()
+
+
+def test_job_applies_outlier_rejection_before_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    call_order: list[str] = []
+
+    def fake_review_frames(*_args, **_kwargs) -> None:
+        call_order.append("review")
+
+    def fake_extract_telemetry(*_args, **_kwargs):
+        call_order.append("extract")
+        clean_df = pd.DataFrame(
+            {
+                "frame_index": [0],
+                "sample_time_s": [0.0],
+                "mission_elapsed_time_s": [0.0],
+                "stage1_velocity_mps": [0.0],
+                "stage1_altitude_m": [0.0],
+            }
+        )
+        return clean_df.copy(), clean_df
+
+    def fake_reject_outliers(*_args, **_kwargs):
+        call_order.append("reject")
+        return pd.DataFrame(
+            {
+                "frame_index": [0],
+                "sample_time_s": [0.0],
+                "mission_elapsed_time_s": [0.0],
+                "stage1_velocity_mps": [0.0],
+                "stage1_altitude_m": [123.0],
+            }
+        )
+
+    def fake_write_trajectory_outputs(clean_df, *_args, **_kwargs):
+        call_order.append("trajectory")
+        assert clean_df.loc[0, "stage1_altitude_m"] == 123.0
+        return clean_df, pd.DataFrame()
+
+    def fake_create_plots(*_args, **_kwargs) -> None:
+        call_order.append("plots")
+
+    monkeypatch.setattr(jobs_module, "generate_review_frames", fake_review_frames)
+    monkeypatch.setattr(jobs_module, "extract_telemetry", fake_extract_telemetry)
+    monkeypatch.setattr(jobs_module, "apply_outlier_rejection_in_output_dir", fake_reject_outliers)
+    monkeypatch.setattr(jobs_module, "write_trajectory_outputs", fake_write_trajectory_outputs)
+    monkeypatch.setattr(jobs_module, "create_plots", fake_create_plots)
+
+    profile = ProfileConfig(
+        profile_name="outlier_job_test",
+        description="",
+        default_sample_fps=1.0,
+        fixture_frame_count=1,
+        fixture_time_range_s=None,
+        video_overlay=VideoOverlayConfig(enabled=False),
+    )
+    job = JobRecord(
+        id="job",
+        state="running",
+        started_at=time.time(),
+        ended_at=None,
+        options=JobOptions(
+            video_path=tmp_path / "video.mp4",
+            output_dir=tmp_path / "out",
+            profile=profile,
+            sample_fps=None,
+            ocr_backend=OCRBackendOptions().backend,
+            ocr_recognition_level=OCRBackendOptions().recognition_level,
+            ocr_workers=1,
+            ocr_skip_detection=False,
+            overlay_engine="auto",
+            overlay_encoder="auto",
+        ),
+    )
+
+    JobManager()._execute(job)
+
+    assert call_order == ["review", "extract", "reject", "trajectory", "plots"]
+    assert any(event.payload == {"phase": "reject_outliers"} for event in job.events)

@@ -73,6 +73,9 @@ export type TrajectoryDTO = {
   enabled: boolean;
   interpolation_method: string;
   integration_method: string;
+  outlier_rejection_enabled: boolean;
+  outlier_rejection_chi2_threshold: number;
+  outlier_rejection_window_s: number;
   outlier_preconditioning_enabled: boolean;
   coarse_step_smoothing_enabled: boolean;
   coarse_step_max_gap_s: number;

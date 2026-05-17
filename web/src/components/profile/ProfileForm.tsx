@@ -60,16 +60,16 @@ const PRIMARY_SECTIONS: SectionDef[] = [
 
 const ADVANCED_SECTIONS: SectionDef[] = [
   {
-    id: "segments",
-    title: "Segments",
-    Component: SegmentsSection,
-    errorPrefixes: ["segments", "calibration_video"],
-  },
-  {
     id: "parsing",
     title: "Parsing",
     Component: ParsingSection,
     errorPrefixes: ["parsing"],
+  },
+  {
+    id: "segments",
+    title: "Segments",
+    Component: SegmentsSection,
+    errorPrefixes: ["segments", "calibration_video"],
   },
 ];
 
@@ -110,8 +110,8 @@ export function ProfileForm({ state }: { state: ProfileFormState }) {
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              Segment ranges, field bbox table, and parsing rules. Calibrate handles segment
-              fields visually, and parsing falls back to bundled defaults.
+              Parsing rules, segment ranges, and field bbox table. Parsing falls back to bundled
+              defaults, and Calibrate handles segment fields visually.
             </div>
           </div>
           <ChevronDown

@@ -85,6 +85,67 @@ Trajectory reconstruction starts from retained telemetry rows, not from every OC
 
 The clean table remains the source of truth for observed telemetry. Interpolated values are written only to `trajectory.csv` and to summary overlays. The original stage plots still show gaps in retained telemetry rather than pretending that interpolated samples were directly observed.
 
+### Reject local residual outliers
+
+When Mahalanobis outlier rejection is enabled, Webcalyzer scores each telemetry column independently. This matters because an OCR error in Stage 1 altitude should not cause a valid Stage 1 velocity sample from the same row to be removed.
+
+For a sample $y_i$ at mission elapsed time $t_i$, the filter builds a local neighborhood from samples inside the configured `outlier_rejection_window_s`, excluding the sample under test:
+
+$$
+\mathcal{N}_i=\{j:\, |t_j-t_i|\leq T_{\mathrm{window}},\ j\neq i\}
+$$
+
+It fits a local polynomial $p_i(t)$ to the neighboring values $y_j$ and predicts what the sample should have been at $t_i$. The sample residual is:
+
+$$
+e_i=y_i-p_i(t_i)
+$$
+
+The neighboring residuals are:
+
+$$
+r_j=y_j-p_i(t_j),\qquad j\in\mathcal{N}_i
+$$
+
+Those residuals estimate the local noise level with a median absolute deviation (MAD) scale estimate:
+
+$$
+\hat{\sigma}_i=1.4826\,
+\mathrm{median}_{j\in\mathcal{N}_i}
+\left(\left|r_j-\mathrm{median}(r)\right|\right)
+$$
+
+The factor $1.4826$ makes the MAD estimate comparable to the standard deviation for Gaussian noise. Webcalyzer also applies an adaptive variance floor $\sigma_{\min}^2$ so a perfectly flat local window does not make every nonzero residual look infinitely unlikely.
+
+Because the same neighbors were used to fit the local polynomial, the variance receives a degrees-of-freedom correction:
+
+$$
+s_i^2=\max(\hat{\sigma}_i^2,\sigma_{\min}^2)
+\frac{|\mathcal{N}_i|}{|\mathcal{N}_i|-q}
+$$
+
+Here $q$ is the number of fitted polynomial coefficients. A line has $q=2$, and a quadratic has $q=3$.
+
+The squared Mahalanobis score in this 1-D per-column case is:
+
+$$
+D_i^2=\frac{e_i^2}{s_i^2}
+$$
+
+The sample is rejected for that telemetry column when:
+
+$$
+D_i^2>\chi^2_{\mathrm{threshold}}
+$$
+
+Because the score is squared, the default `outlier_rejection_chi2_threshold: 9.0` corresponds to a 3 sigma cutoff in one dimension:
+
+$$
+D_i^2>9 \quad \Longleftrightarrow \quad |e_i|>3\hat{\sigma}_i
+$$
+
+The adaptive part is not an automatically selected sigma threshold. The threshold remains explicit in the profile. What adapts to the data is the local robust variance estimate and the minimum neighbor count, which is derived from the observed sample cadence and the window length. Higher sample cadence therefore requires more local support before a point can be judged as an outlier.
+
 ### Precondition trajectory inputs
 
 Reconstruction applies additional trajectory-only conditioning before interpolation. This step protects the dense trajectory from isolated values that survived the earlier filters but would force a large interpolated excursion.

@@ -84,6 +84,9 @@ class TrajectoryModel(StrictModel):
     enabled: bool = True
     interpolation_method: InterpolationMethod = "pchip"
     integration_method: IntegrationMethod = "rk4"
+    outlier_rejection_enabled: bool = True
+    outlier_rejection_chi2_threshold: float = Field(9.0, gt=0.0)
+    outlier_rejection_window_s: float = Field(40.0, gt=0.0)
     outlier_preconditioning_enabled: bool = True
     coarse_step_smoothing_enabled: bool = True
     coarse_step_max_gap_s: float = Field(10.0, gt=0.0)
@@ -594,6 +597,9 @@ def model_to_profile_dataclass(model: ProfileModel) -> ProfileConfig:
             enabled=model.trajectory.enabled,
             interpolation_method=model.trajectory.interpolation_method,
             integration_method=model.trajectory.integration_method,
+            outlier_rejection_enabled=model.trajectory.outlier_rejection_enabled,
+            outlier_rejection_chi2_threshold=model.trajectory.outlier_rejection_chi2_threshold,
+            outlier_rejection_window_s=model.trajectory.outlier_rejection_window_s,
             outlier_preconditioning_enabled=model.trajectory.outlier_preconditioning_enabled,
             coarse_step_smoothing_enabled=model.trajectory.coarse_step_smoothing_enabled,
             coarse_step_max_gap_s=model.trajectory.coarse_step_max_gap_s,

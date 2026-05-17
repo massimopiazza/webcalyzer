@@ -106,10 +106,13 @@ Use `rebuild-clean` after editing raw data or anchor points:
 webcalyzer rebuild-clean --output outputs/my-run
 ```
 
-Use `reject-outliers` when you want to adjust filtering:
+Use `reject-outliers` when you want to adjust filtering. If `--chi2` or
+`--window-s` are omitted, the command uses the saved trajectory outlier
+settings from `config_resolved.yaml`, falling back to `9.0` and `40.0`
+when no profile is present:
 
 ```bash
-webcalyzer reject-outliers --output outputs/my-run --chi2 36 --window-s 40
+webcalyzer reject-outliers --output outputs/my-run --chi2 9 --window-s 40
 ```
 
 Use `reconstruct-trajectory` when changing interpolation or integration settings:

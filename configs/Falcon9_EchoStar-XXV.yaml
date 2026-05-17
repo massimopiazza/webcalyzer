@@ -1,6 +1,6 @@
 profile_name: new_profile
 description: ''
-default_sample_fps: 0.5
+default_sample_fps: 1.0
 default_ocr_workers: 4
 ocr_backend: auto
 ocr_recognition_level: accurate
@@ -26,6 +26,9 @@ trajectory:
   enabled: true
   interpolation_method: pchip
   integration_method: rk4
+  outlier_rejection_enabled: true
+  outlier_rejection_chi2_threshold: 9.0
+  outlier_rejection_window_s: 40.0
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0
@@ -37,9 +40,9 @@ trajectory:
   derivative_min_window_samples: 5
   derivative_smoothing_mode: interp
   launch_site:
-    latitude_deg: null
-    longitude_deg: null
-    azimuth_deg: null
+    latitude_deg: 28.561944
+    longitude_deg: -80.577222
+    azimuth_deg: 90.0
 parsing:
   velocity:
     default_unit: MPH
@@ -236,6 +239,91 @@ segments:
 - id: segment_4
   start_frame_index: 47851
   start_time_s: 1596.6288082187566
+  end_frame_index: 51302
+  end_time_s: 1711.7772067300298
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
+  - custom_acceleration
+  fields:
+    met:
+      kind: met
+      stage: null
+      bbox_x1y1x2y2: [0.45488189982476634, 0.8910955347871236, 0.5662693487149533, 0.9355286214953271]
+    stage2_velocity:
+      kind: velocity
+      stage: stage2
+      bbox_x1y1x2y2: [0.03812700788551402, 0.8488609813084113, 0.1204001168224299, 0.9574977284527518]
+    stage2_altitude:
+      kind: altitude
+      stage: stage2
+      bbox_x1y1x2y2: [0.12778365946261683, 0.8481876298026999, 0.20735981308411214, 0.9542202102803738]
+    custom_acceleration:
+      kind: custom
+      stage: null
+      bbox_x1y1x2y2: [0.7943058192172897, 0.849128699376947, 0.87353515625, 0.9569704049844237]
+      quantity_id: q_83c4b5d476e2
+- id: segment_5
+  start_frame_index: 51302
+  start_time_s: 1711.7772067300298
+  end_frame_index: 59905
+  end_time_s: 1998.8307194488018
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
+  - custom_acceleration
+  fields:
+    met:
+      kind: met
+      stage: null
+      bbox_x1y1x2y2: [0.45488189982476634, 0.8910955347871236, 0.5662693487149533, 0.9355286214953271]
+    stage2_velocity:
+      kind: velocity
+      stage: stage2
+      bbox_x1y1x2y2: [0.31197977511682246, 0.8752433800623053, 0.3793397707359813, 0.9591121495327103]
+    stage2_altitude:
+      kind: altitude
+      stage: stage2
+      bbox_x1y1x2y2: [0.6289792640186916, 0.8741968457943925, 0.6822749342873832, 0.9567919262720664]
+- id: segment_6
+  start_frame_index: 59905
+  start_time_s: 1998.8307194488018
+  end_frame_index: 64101
+  end_time_s: 2138.837291501338
+  visible_fields:
+  - met
+  - stage1_velocity
+  - stage1_altitude
+  - stage2_velocity
+  - stage2_altitude
+  - custom_acceleration
+  fields:
+    met:
+      kind: met
+      stage: null
+      bbox_x1y1x2y2: [0.45488189982476634, 0.8910955347871236, 0.5662693487149533, 0.9355286214953271]
+    stage2_velocity:
+      kind: velocity
+      stage: stage2
+      bbox_x1y1x2y2: [0.04171382155373832, 0.8484147845275182, 0.1226544246495327, 0.9599396417445483]
+    stage2_altitude:
+      kind: altitude
+      stage: stage2
+      bbox_x1y1x2y2: [0.12956793954439252, 0.8465569833852544, 0.20686696845794392, 0.9585848260643821]
+    custom_acceleration:
+      kind: custom
+      stage: null
+      bbox_x1y1x2y2: [0.7914902161214953, 0.8513434579439252, 0.8700989339953271, 0.9620489356178609]
+      quantity_id: q_83c4b5d476e2
+- id: segment_7
+  start_frame_index: 64101
+  start_time_s: 2138.837291501338
   end_frame_index: 64952
   end_time_s: 2167.232332687398
   visible_fields:
@@ -253,13 +341,8 @@ segments:
     stage2_velocity:
       kind: velocity
       stage: stage2
-      bbox_x1y1x2y2: [0.3076354410046729, 0.8767198857736241, 0.3795633761682243, 0.9536685488058152]
+      bbox_x1y1x2y2: [0.31145955023364486, 0.8745456905503635, 0.3834285557827103, 0.9553722092419522]
     stage2_altitude:
       kind: altitude
       stage: stage2
-      bbox_x1y1x2y2: [0.6282856308411215, 0.8752677180685359, 0.6778940931658879, 0.9529384086188992]
-    custom_acceleration:
-      kind: custom
-      stage: null
-      bbox_x1y1x2y2: [0.7943058192172897, 0.849128699376947, 0.87353515625, 0.9569704049844237]
-      quantity_id: q_83c4b5d476e2
+      bbox_x1y1x2y2: [0.6313339661214953, 0.8771741952232607, 0.677633980724299, 0.9546664070612668]

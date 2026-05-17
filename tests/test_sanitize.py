@@ -90,6 +90,80 @@ def test_parsing_profile_enables_custom_unit_aliases() -> None:
     assert round(chosen.value_si, 3) == 100.0
 
 
+def test_altitude_parser_recovers_split_decimal_kilometer_text() -> None:
+    profile = ParsingProfile(
+        velocity=FieldKindParsing(
+            units=(UnitAlias(name="KMH", aliases=("KM/H", "KMH"), si_factor=0.27777777777777778),),
+            default_unit="KMH",
+        ),
+        altitude=FieldKindParsing(
+            units=(UnitAlias(name="KM", aliases=("KM",), si_factor=1000.0),),
+            default_unit="KM",
+        ),
+        met=MetParsing(timestamp_patterns=(r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",)),
+        custom_words=("KM/H", "KM"),
+    )
+
+    results = resolve_measurement_series(
+        [
+            [("ALTITUDE 7.1 KM", "raw")],
+            [("ALTITUDE 7 .7 KM", "raw")],
+            [("ALTITUDE 7 .9 KM", "raw")],
+            [("ALTITUDE 8.3 KM", "raw")],
+        ],
+        kind="altitude",
+        parsing=profile,
+        met_values=[59.0, 61.0, 63.0, 65.0],
+    )
+
+    assert [result.chosen.value_si if result.chosen else None for result in results] == [
+        7100.0,
+        7700.0,
+        7900.0,
+        8300.0,
+    ]
+
+
+def test_altitude_parser_recovers_missing_decimal_point_before_unit() -> None:
+    profile = ParsingProfile(
+        velocity=FieldKindParsing(
+            units=(UnitAlias(name="KMH", aliases=("KM/H", "KMH"), si_factor=0.27777777777777778),),
+            default_unit="KMH",
+        ),
+        altitude=FieldKindParsing(
+            units=(UnitAlias(name="KM", aliases=("KM",), si_factor=1000.0),),
+            default_unit="KM",
+        ),
+        met=MetParsing(timestamp_patterns=(r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",)),
+        custom_words=("KM/H", "KM"),
+    )
+
+    options = parse_measurement_options("ALTITUDE 4 7 KM", kind="altitude", variant="raw", parsing=profile)
+
+    assert options[0].raw_token == "4.7"
+    assert options[0].value_si == 4700.0
+
+
+def test_split_decimal_suffix_uses_profile_unit_aliases() -> None:
+    profile = ParsingProfile(
+        velocity=FieldKindParsing(
+            units=(UnitAlias(name="V", aliases=("V",), unit_expression="meter/second"),),
+            default_unit="V",
+        ),
+        altitude=FieldKindParsing(
+            units=(UnitAlias(name="CUSTOMALT", aliases=("ALTU",), unit_expression="meter"),),
+            default_unit="CUSTOMALT",
+        ),
+        met=MetParsing(timestamp_patterns=(r"T\s*([+-])?\s*(\d{2})(?::(\d{2}))(?::(\d{2}))?",)),
+        custom_words=("ALTU",),
+    )
+
+    options = parse_measurement_options("ALTITUDE 4 7 ALTU", kind="altitude", variant="raw", parsing=profile)
+
+    assert options[0].raw_token == "4.7"
+    assert options[0].value_si == 4.7
+
+
 def test_altitude_parser_keeps_recent_explicit_unit_for_unitless_text() -> None:
     profile = default_parsing_profile()
     options = parse_measurement_options(

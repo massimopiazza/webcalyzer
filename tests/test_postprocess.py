@@ -4,6 +4,7 @@ import pandas as pd
 from webcalyzer.config import default_parsing_profile
 from webcalyzer.models import HardcodedRawDataPoint
 from webcalyzer.models import ProfileConfig
+from webcalyzer.models import TrajectoryConfig
 from webcalyzer.postprocess import (
     apply_mahalanobis_outlier_rejection_with_rejected,
     apply_outlier_rejection_in_output_dir,
@@ -107,6 +108,61 @@ def test_outlier_rejection_scores_velocity_and_altitude_independently() -> None:
     assert rejected.at[altitude_outlier, "stage1_altitude_m"] == 0.0
 
 
+def test_outlier_rejection_catches_split_decimal_altitude_without_rejecting_landing_crossing() -> None:
+    ascent_times = np.arange(21, 103, 2, dtype=float)
+    ascent_altitude = np.array(
+        [
+            500, 600, 800, 900, 1100, 1400, 1600, 1900, 2200, 2500,
+            2900, 3200, 3600, 4000, 4500, 5000, 5500, 6000, 6600, 7100,
+            700, 8300, 9000, 9600, 10300, 11000, 11700, 12500, 13200, 14100,
+            14900, 15800, 16700, 17600, 18600, 19600, 20600, 21700, 22800, 23900,
+            25100,
+        ],
+        dtype=float,
+    )
+    descent_times = np.array(
+        [
+            397, 399, 401, 403, 405, 407, 409, 411, 412, 415, 416, 419,
+            421, 422, 425, 426, 429, 431, 433, 435, 437, 439, 441, 443,
+            445, 446, 448, 451, 452, 455, 457, 459, 461, 463, 465, 467,
+            469, 471, 473, 475, 477, 479, 481, 483, 485, 486, 489, 491,
+            493, 495, 497, 499, 501, 503, 505, 507, 509, 511, 513, 515,
+            517, 519, 521, 523, 525, 527, 529, 531,
+        ],
+        dtype=float,
+    )
+    descent_altitude = np.array(
+        [
+            74200, 72100, 70000, 67800, 65700, 63500, 61200, 58900, 56700, 54400,
+            52300, 50200, 48100, 46100, 44200, 42400, 40700, 39000, 37400, 35900,
+            34300, 32700, 31100, 29400, 27800, 26200, 24500, 22900, 21400, 19900,
+            18400, 17100, 15800, 14600, 13600, 12700, 11900, 11100, 10500, 9900,
+            9300, 8800, 8400, 900, 7500, 7100, 7000, 6300, 5900, 5500,
+            5100, 4000, 3000, 3900, 3500, 3100, 2700, 2300, 1900, 1600,
+            1300, 1000, 700, 500, 300, 200, 100, 0,
+        ],
+        dtype=float,
+    )
+    times = np.concatenate([ascent_times, descent_times])
+    clean_df = pd.DataFrame(
+        {
+            "frame_index": np.arange(times.size),
+            "sample_time_s": times,
+            "mission_elapsed_time_s": times,
+            "stage1_velocity_mps": np.nan,
+            "stage1_altitude_m": np.concatenate([ascent_altitude, descent_altitude]),
+            "stage2_velocity_mps": np.nan,
+            "stage2_altitude_m": np.nan,
+        }
+    )
+
+    cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(clean_df, window_s=40.0)
+
+    rejected_altitude = rejected[rejected["stage1_altitude_m"].notna()]
+    assert rejected_altitude["mission_elapsed_time_s"].tolist() == [61.0, 483.0]
+    assert cleaned.loc[cleaned["mission_elapsed_time_s"].eq(521.0), "stage1_altitude_m"].iloc[0] == 700.0
+
+
 def test_output_dir_outlier_rejection_is_repeatable_from_raw(tmp_path) -> None:
     times = np.arange(0, 42, 2, dtype=float)
     rows = []
@@ -141,6 +197,39 @@ def test_output_dir_outlier_rejection_is_repeatable_from_raw(tmp_path) -> None:
 
     assert first_rejected["stage1_velocity_mps"].notna().sum() == 1
     assert second_rejected["stage1_velocity_mps"].notna().sum() == 1
+
+
+def test_output_dir_outlier_rejection_uses_profile_thresholds(tmp_path) -> None:
+    times = np.arange(0, 42, 2, dtype=float)
+    altitude = 100.0 * times
+    altitude[10] = 0.0
+    clean_df = pd.DataFrame(
+        {
+            "frame_index": np.arange(times.size),
+            "sample_time_s": times,
+            "mission_elapsed_time_s": times,
+            "stage1_velocity_mps": 10.0 * times,
+            "stage1_altitude_m": altitude,
+            "stage2_velocity_mps": np.nan,
+            "stage2_altitude_m": np.nan,
+        }
+    )
+    clean_df.to_csv(tmp_path / "telemetry_clean.csv", index=False)
+    profile = ProfileConfig(
+        profile_name="wide_outlier_threshold",
+        description="",
+        default_sample_fps=1.0,
+        fixture_frame_count=1,
+        fixture_time_range_s=None,
+        trajectory=TrajectoryConfig(
+            outlier_rejection_chi2_threshold=1_000_000.0,
+            outlier_rejection_window_s=30.0,
+        ),
+    )
+
+    cleaned = apply_outlier_rejection_in_output_dir(tmp_path, profile=profile)
+
+    assert cleaned.at[10, "stage1_altitude_m"] == 0.0
 
 
 def test_rebuild_clean_inserts_hardcoded_raw_data_point() -> None:

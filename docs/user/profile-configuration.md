@@ -117,6 +117,9 @@ For the physical meaning of these controls, read [trajectory reconstruction](tra
 | **Reconstruct trajectory** | Enables `trajectory.csv` and trajectory-aware plots. |
 | **Interpolation method** | Estimates values between retained telemetry samples. Options are `linear`, `pchip`, `akima`, and `cubic`. |
 | **Integration method** | Integrates velocity into total distance. Options are `euler`, `midpoint`, `trapezoid`, `rk4`, and `simpson`. |
+| **Mahalanobis outlier rejection** | Removes samples whose local residual exceeds the configured threshold before plots and trajectory reconstruction use them. |
+| **Chi2 threshold** | Squared Mahalanobis threshold for rejection. Default `9.0` is equivalent to a 3 sigma cutoff in one dimension. |
+| **Window (s)** | Mission elapsed time window used to fit the local trend around each sample. |
 | **Outlier preconditioning** | Removes isolated points before interpolation when enabled. |
 | **Coarse step smoothing** | Smooths obvious quantization steps in coarse telemetry values. |
 | **Coarse-step max gap (s)** | Maximum time gap considered by coarse-step smoothing. |

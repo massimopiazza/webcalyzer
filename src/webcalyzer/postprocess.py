@@ -165,7 +165,7 @@ DEFAULT_MAHALANOBIS_MIN_SIDE_NEIGHBORS = 2
 
 def apply_mahalanobis_outlier_rejection(
     clean_df: pd.DataFrame,
-    chi2_threshold: float = 36.0,
+    chi2_threshold: float = 9.0,
     window_s: float = 40.0,
     min_neighbors: int | None = None,
     min_side_neighbors: int | None = None,
@@ -186,7 +186,7 @@ def apply_mahalanobis_outlier_rejection(
 
 def apply_mahalanobis_outlier_rejection_with_rejected(
     clean_df: pd.DataFrame,
-    chi2_threshold: float = 36.0,
+    chi2_threshold: float = 9.0,
     window_s: float = 40.0,
     min_neighbors: int | None = None,
     min_side_neighbors: int | None = None,
@@ -357,6 +357,8 @@ def _reject_column_outliers(
             predicted_neighbors = np.polyval(coefficients, t_neighbors)
             residuals = y_neighbors - predicted_neighbors
             variance = _robust_residual_variance(residuals, min_variance=min_variance)
+            dof = max(1, neighbor_idx.size - (degree + 1))
+            variance *= float(neighbor_idx.size) / float(dof)
             predicted_sample = float(np.polyval(coefficients, t0))
             delta = values[idx] - predicted_sample
             md2 = float((delta * delta) / variance)
@@ -433,12 +435,26 @@ def _empty_rejected_frame(clean_df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_outlier_rejection_in_output_dir(
     output_dir: str | Path,
-    chi2_threshold: float = 36.0,
-    window_s: float = 40.0,
+    chi2_threshold: float | None = None,
+    window_s: float | None = None,
     profile: ProfileConfig | None = None,
 ) -> pd.DataFrame:
     output_path = Path(output_dir)
     profile = profile or _profile_from_output(output_path)
+    resolved_chi2 = (
+        float(chi2_threshold)
+        if chi2_threshold is not None
+        else float(profile.trajectory.outlier_rejection_chi2_threshold if profile is not None else 9.0)
+    )
+    resolved_window_s = (
+        float(window_s)
+        if window_s is not None
+        else float(profile.trajectory.outlier_rejection_window_s if profile is not None else 40.0)
+    )
+    if resolved_chi2 <= 0.0 or not np.isfinite(resolved_chi2):
+        raise ValueError("outlier rejection chi2 threshold must be a positive finite value")
+    if resolved_window_s <= 0.0 or not np.isfinite(resolved_window_s):
+        raise ValueError("outlier rejection window_s must be a positive finite value")
     raw_path = output_path / "telemetry_raw.csv"
     if raw_path.exists():
         clean_df = rebuild_clean_from_raw(
@@ -466,8 +482,8 @@ def apply_outlier_rejection_in_output_dir(
             }
     cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
         clean_df,
-        chi2_threshold=chi2_threshold,
-        window_s=window_s,
+        chi2_threshold=resolved_chi2,
+        window_s=resolved_window_s,
         protected_by_column=protected_by_column,
     )
     cleaned.to_csv(output_path / "telemetry_clean.csv", index=False)

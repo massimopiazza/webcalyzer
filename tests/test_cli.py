@@ -2,6 +2,8 @@ import argparse
 import os
 import platform
 
+import pytest
+
 from webcalyzer.cli import _resolve_workers, build_parser
 from webcalyzer.ocr_factory import OCRBackendOptions
 
@@ -51,3 +53,13 @@ def test_none_ocr_workers_uses_profile_default() -> None:
     workers = _resolve_workers(args, OCRBackendOptions(backend="rapidocr"), default_workers=5)
 
     assert workers == 5
+
+
+def test_reject_outliers_uses_chi2_flag() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["reject-outliers", "--output", "outputs/run", "--chi2", "20"])
+    assert args.chi2 == 20.0
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["reject-outliers", "--output", "outputs/run", "--sigma", "4.5"])

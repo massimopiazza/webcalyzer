@@ -27,6 +27,9 @@ def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> 
     assert profile.video_overlay.encoder == "auto"
     assert profile.trajectory.interpolation_method == "pchip"
     assert profile.trajectory.integration_method == "rk4"
+    assert profile.trajectory.outlier_rejection_enabled is True
+    assert profile.trajectory.outlier_rejection_chi2_threshold == 9.0
+    assert profile.trajectory.outlier_rejection_window_s == 40.0
     assert profile.trajectory.outlier_preconditioning_enabled is True
     assert profile.trajectory.coarse_step_max_gap_s == 10.0
     assert profile.trajectory.coarse_altitude_threshold_m == 500.0

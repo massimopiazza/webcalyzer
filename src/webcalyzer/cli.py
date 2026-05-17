@@ -100,8 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply Mahalanobis-distance outlier rejection to telemetry_clean.csv.",
     )
     outlier_parser.add_argument("--output", required=True, help="Extraction output directory.")
-    outlier_parser.add_argument("--chi2", type=float, default=36.0, help="Per-field squared residual threshold.")
-    outlier_parser.add_argument("--window-s", type=float, default=40.0, help="Neighbor window in seconds.")
+    outlier_parser.add_argument("--chi2", type=float, default=None, help="Per-field squared residual threshold.")
+    outlier_parser.add_argument("--window-s", type=float, default=None, help="Neighbor window in seconds.")
 
     trajectory_parser = subparsers.add_parser(
         "reconstruct-trajectory",
@@ -351,7 +351,7 @@ def main(argv: list[str] | None = None) -> None:
             profile=profile,
             backend_options=_ocr_backend_options(args, profile),
         )
-        clean_df = rebuild_clean_in_output_dir(args.output, profile=profile)
+        clean_df = _reject_outliers_for_output(args.output, profile=profile)
         clean_df, trajectory_df = _write_trajectory_for_output(clean_df, args.output, profile=profile)
         create_plots(
             clean_df,
@@ -448,6 +448,7 @@ def main(argv: list[str] | None = None) -> None:
             workers=_resolve_workers(args, backend_options, profile.default_ocr_workers),
             skip_detection=_skip_detection_from_args(args, profile),
         )
+        clean_df = _reject_outliers_for_output(args.output, profile=profile)
         _write_trajectory_for_output(clean_df, args.output, profile=profile, sample_fps=effective_fps)
         return
 
@@ -468,6 +469,7 @@ def main(argv: list[str] | None = None) -> None:
             workers=_resolve_workers(args, backend_options, profile.default_ocr_workers),
             skip_detection=_skip_detection_from_args(args, profile),
         )
+        clean_df = _reject_outliers_for_output(output_dir, profile=profile)
         clean_df, trajectory_df = _write_trajectory_for_output(
             clean_df, output_dir, profile=profile, sample_fps=effective_fps
         )
@@ -665,6 +667,15 @@ def _write_trajectory_for_output(
     if sample_fps is None:
         sample_fps = _sample_fps_for_output(output_dir)
     return write_trajectory_outputs(clean_df, output_dir, config, sample_fps=sample_fps)
+
+
+def _reject_outliers_for_output(output_dir: str | Path, profile: ProfileConfig | None = None):
+    resolved_profile = profile or _profile_from_output(output_dir)
+    if resolved_profile is not None and not resolved_profile.trajectory.outlier_rejection_enabled:
+        print("[webcalyzer] skipping Mahalanobis outlier rejection")
+        return rebuild_clean_in_output_dir(output_dir, profile=resolved_profile)
+    print("[webcalyzer] applying Mahalanobis outlier rejection")
+    return apply_outlier_rejection_in_output_dir(output_dir=output_dir, profile=resolved_profile)
 
 
 def _overlay_config_from_args(profile: ProfileConfig | None, args: argparse.Namespace) -> VideoOverlayConfig:

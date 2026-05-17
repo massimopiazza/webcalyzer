@@ -26,6 +26,9 @@ trajectory:
   enabled: true
   interpolation_method: pchip
   integration_method: rk4
+  outlier_rejection_enabled: true
+  outlier_rejection_chi2_threshold: 9.0
+  outlier_rejection_window_s: 40.0
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0

@@ -32,6 +32,9 @@ writing a new YAML profile.
                                                    └─ choose best measurement
                                        │
                                        ▼
+                           Mahalanobis outlier rejection
+                                       │
+                                       ▼
                             ┌─────────────────────────┐
    outputs/<run>/      ───▶ │ telemetry_raw.csv       │
                             │ telemetry_clean.csv     │
@@ -53,9 +56,9 @@ writing a new YAML profile.
 ```
 
 The `run` subcommand stitches review-frame generation, extraction,
-trajectory reconstruction, plotting, and overlay rendering together. The
-individual subcommands exist so each stage can be re-run independently
-without redoing the slow OCR work.
+outlier rejection, trajectory reconstruction, plotting, and overlay
+rendering together. The individual subcommands exist so each stage can be
+re-run independently without redoing the slow OCR work.
 
 ## Install
 
@@ -191,11 +194,11 @@ section lists independently from page-title navigation.
 | `quantities edit` | `id` | string | yes | - | - | Updates the library and all affected templates immediately. |
 |                   | `--name`, `--dimensionality`, `--display-unit`, `--description`, `--alias` | mixed | no | current value | - | `--alias` entries replace the old alias map when provided. |
 | `quantities delete` | `id` | string | yes | - | - | Deletes a custom library item and removes it from all affected templates. |
-| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (4.0 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. |
+| `extract` | `--sample-fps` | float | no | profile's `default_sample_fps` (4.0 in the shipped NG-3 profile) | any positive float | Sampling cadence in frames per second. Lower = fewer samples = faster, less detail. The command now applies the Mahalanobis outlier pass before writing trajectory outputs. |
 |           | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | Used when extraction writes trajectory outputs. |
 |           | `--trajectory-integration` | choice | no | profile's `trajectory.integration_method` | `euler`, `midpoint`, `trapezoid`, `rk4`, `simpson` | Used when extraction writes trajectory outputs. |
 |           | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Savitzky-Golay window length for acceleration output. |
-| `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. |
+| `run` | `--sample-fps` | float | no | profile's `default_sample_fps` | any positive float | Same semantics as `extract`. The full pipeline applies outlier rejection before trajectory, plots, and overlay rendering. |
 |       | `--skip-video-overlay` | flag | no | overlay enabled | - | Skip the post-extract overlay render. |
 |       | `--overlay-plot-mode` | choice | no | profile's `video_overlay.plot_mode` | `filtered`, `with_rejected` | Choose which dataset drives the embedded plot. |
 |       | `--overlay-engine` | choice | no | profile's `video_overlay.engine` | `auto`, `ffmpeg`, `opencv` | `auto` picks `ffmpeg` when it's on `PATH`, else `opencv`. Force `ffmpeg` to fail loudly if missing. |
@@ -205,12 +208,12 @@ section lists independently from page-title navigation.
 |       | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Override Savitzky-Golay window length for this run. |
 | `plot` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
 | `rebuild-clean` | `--output` | path | yes | - | - | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
-| `rescue` | `--video` | path | yes | - | - | |
+| `rescue` | `--video` | path | yes | - | - | Rebuilds clean telemetry and reapplies outlier rejection after re-OCR. |
 |          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | - | Optional override of the profile saved alongside the run. |
 |          | `--output` | path | yes | - | - | |
 | `reject-outliers` | `--output` | path | yes | - | - | |
-|                   | `--chi2` | float | no | `36.0` | any positive float | Per-field squared residual threshold (1-D Mahalanobis). |
-|                   | `--window-s` | float | no | `40.0` | any positive float | Neighbor window in seconds for the local residual fit. |
+|                   | `--chi2` | float | no | profile's `trajectory.outlier_rejection_chi2_threshold`, else `9.0` | any positive float | Per-field squared residual threshold (1-D Mahalanobis). |
+|                   | `--window-s` | float | no | profile's `trajectory.outlier_rejection_window_s`, else `40.0` | any positive float | Neighbor window in seconds for the local residual fit. |
 | `reconstruct-trajectory` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
 |                          | `--config` | path | no | `<output>/config_resolved.yaml` | - | Optional YAML profile override. |
 |                          | `--trajectory-interpolation` | choice | no | profile's `trajectory.interpolation_method` | `linear`, `pchip`, `akima`, `cubic` | |
@@ -470,12 +473,55 @@ webcalyzer rescue \
 
 Drops samples whose squared local residual exceeds the threshold and
 moves them to `telemetry_rejected.csv`. Operates per field, per stage,
-on a sliding MET window. Repeatable: re-running on the same directory
-re-derives clean+rejected from `telemetry_raw.csv` so you can tighten
-or loosen thresholds without losing data.
+on a sliding MET window. `extract`, `run`, `rescue`, and the web job
+apply this pass automatically before trajectory reconstruction. This
+automatic pass is controlled by `trajectory.outlier_rejection_enabled`,
+`trajectory.outlier_rejection_chi2_threshold`, and
+`trajectory.outlier_rejection_window_s`. This subcommand remains the
+repeatable manual entrypoint: re-running on the same directory re-derives
+clean+rejected from `telemetry_raw.csv` so you can tighten or loosen
+thresholds without losing data.
+
+For each telemetry column independently, the filter evaluates a sample
+$y_i$ at mission time $t_i$ against a local polynomial $p_i(t)$ fitted to
+neighboring samples inside the configured window, excluding the sample
+under test:
+
+$$
+e_i = y_i - p_i(t_i)
+$$
+
+Neighbor residuals estimate the local noise scale with a robust MAD
+estimator:
+
+$$
+\hat{\sigma}_i = 1.4826\,
+\mathrm{median}_j\left(\left|r_j-\mathrm{median}(r)\right|\right)
+$$
+
+After a small degrees-of-freedom correction for the fitted polynomial, the
+local variance is:
+
+$$
+s_i^2=\max(\hat{\sigma}_i^2,\sigma_{\min}^2)
+\frac{|\mathcal{N}_i|}{|\mathcal{N}_i|-q}
+$$
+
+Here $q$ is the number of fitted polynomial coefficients. The squared
+1-D Mahalanobis score is then:
+
+$$
+D_i^2=\frac{e_i^2}{s_i^2}
+$$
+
+The row is rejected for that field when $D_i^2$ is greater than
+`chi2_threshold`. The default `9.0` is a 3 sigma cutoff in one dimension
+because the score is squared. The adaptive parts are the local robust
+variance and the cadence-scaled neighbor requirements, not an automatically
+selected sigma threshold.
 
 ```bash
-webcalyzer reject-outliers --output outputs/ng3 --chi2 36 --window-s 40
+webcalyzer reject-outliers --output outputs/ng3 --chi2 9 --window-s 40
 ```
 
 ### `reconstruct-trajectory`:  integrate velocity into downrange
@@ -565,6 +611,9 @@ trajectory:
   enabled: true
   interpolation_method: pchip     # linear, pchip, akima, cubic
   integration_method: rk4         # euler, midpoint, trapezoid, rk4, simpson
+  outlier_rejection_enabled: true
+  outlier_rejection_chi2_threshold: 9.0
+  outlier_rejection_window_s: 40.0
   outlier_preconditioning_enabled: true
   coarse_step_smoothing_enabled: true
   coarse_step_max_gap_s: 10.0

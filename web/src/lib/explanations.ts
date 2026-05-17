@@ -49,6 +49,12 @@ export const FIELD_HELP: Record<string, string> = {
     "Algorithm used to fill the dense grid between OCR samples.",
   trajectory_integration_method:
     "Numerical integration scheme used to derive position from velocity (and velocity from acceleration).",
+  trajectory_outlier_rejection:
+    "Remove samples whose local Mahalanobis residual is too large before plots and trajectory reconstruction use them.",
+  trajectory_outlier_rejection_chi2_threshold:
+    "Squared local residual threshold. In 1-D, 9 means 3 sigma because Mahalanobis distance is squared.",
+  trajectory_outlier_rejection_window_s:
+    "MET window used to fit the local trend around each sample.",
   trajectory_outlier_preconditioning:
     "Run a first pass that removes egregious outliers before interpolation, so a single bad OCR sample doesn't distort the spline.",
   trajectory_coarse_step_smoothing:
@@ -200,7 +206,7 @@ export const SECTION_HELP: Record<string, string> = {
   general:
     "Identity of this profile and how the video is sampled for OCR / calibration.",
   trajectory:
-    "Interpolation, integration, and smoothing controls for the dense reconstructed trajectory.",
+    "Outlier rejection plus interpolation, integration, and smoothing controls for telemetry outputs.",
   hardcoded:
     "Manually injected raw samples, useful when you have known anchors (e.g. T+0 altitude is 0 m) the OCR can't see.",
   video_overlay:

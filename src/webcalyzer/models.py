@@ -159,6 +159,9 @@ class TrajectoryConfig:
     enabled: bool = True
     interpolation_method: str = "pchip"
     integration_method: str = "rk4"
+    outlier_rejection_enabled: bool = True
+    outlier_rejection_chi2_threshold: float = 9.0
+    outlier_rejection_window_s: float = 40.0
     outlier_preconditioning_enabled: bool = True
     coarse_step_smoothing_enabled: bool = True
     coarse_step_max_gap_s: float = 10.0
@@ -176,6 +179,9 @@ class TrajectoryConfig:
             "enabled": self.enabled,
             "interpolation_method": self.interpolation_method,
             "integration_method": self.integration_method,
+            "outlier_rejection_enabled": self.outlier_rejection_enabled,
+            "outlier_rejection_chi2_threshold": self.outlier_rejection_chi2_threshold,
+            "outlier_rejection_window_s": self.outlier_rejection_window_s,
             "outlier_preconditioning_enabled": self.outlier_preconditioning_enabled,
             "coarse_step_smoothing_enabled": self.coarse_step_smoothing_enabled,
             "coarse_step_max_gap_s": self.coarse_step_max_gap_s,

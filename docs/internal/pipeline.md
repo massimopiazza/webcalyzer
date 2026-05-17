@@ -106,7 +106,10 @@ Unit inference only happens inside the parsing layer. Unit conversion is Pint-ba
 
 `rebuild_clean_from_raw(...)` builds `telemetry_clean.csv` from raw observations. It reuses the same series resolver, parsed mission elapsed time, stage/type consistency, measurement plausibility, and hardcoded raw data points.
 
-`apply_mahalanobis_outlier_rejection(...)` can reject multivariate outliers over a rolling window. Rejected rows are preserved in `telemetry_rejected.csv` when available.
+`apply_mahalanobis_outlier_rejection(...)` rejects per-field local residual
+outliers over a rolling window. Rejected rows are preserved in
+`telemetry_rejected.csv` when available. Automatic runs use the saved
+`trajectory.outlier_rejection_*` settings.
 
 ## Trajectory and Output Stages
 

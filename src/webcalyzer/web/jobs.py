@@ -20,6 +20,7 @@ from webcalyzer.models import ProfileConfig, VideoOverlayConfig
 from webcalyzer.ocr_factory import OCRBackendOptions, resolve_backend_name
 from webcalyzer.overlay import render_telemetry_overlay_video
 from webcalyzer.plotting import create_plots
+from webcalyzer.postprocess import apply_outlier_rejection_in_output_dir, rebuild_clean_in_output_dir
 from webcalyzer.trajectory import TRAJECTORY_FILENAME, write_trajectory_outputs
 
 
@@ -253,6 +254,21 @@ class JobManager:
             skip_detection=options.ocr_skip_detection,
             cancel_check=lambda: self._check_cancel(job),
         )
+        self._refresh_output_paths(job, output_path)
+        self._check_cancel(job)
+
+        if options.profile.trajectory.outlier_rejection_enabled:
+            self._emit(
+                job,
+                JobEvent("phase", "Rejecting outliers", {"phase": "reject_outliers"}),
+            )
+            clean_df = apply_outlier_rejection_in_output_dir(output_path, profile=options.profile)
+        else:
+            self._emit(
+                job,
+                JobEvent("phase", "Skipping outlier rejection", {"phase": "reject_outliers_skipped"}),
+            )
+            clean_df = rebuild_clean_in_output_dir(output_path, profile=options.profile)
         self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Field, Section } from "@/components/Field";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -12,7 +13,7 @@ import { ProfileFormState } from "@/lib/profileForm";
 import { getError } from "@/lib/errors";
 import { useMeta } from "@/lib/meta";
 import { NumberInput } from "./NumberInput";
-import { FIELD_HELP, SELECT_HELP } from "@/lib/explanations";
+import { FIELD_HELP, SECTION_HELP, SELECT_HELP } from "@/lib/explanations";
 
 const SMOOTHING_MODES = ["interp", "nearest", "mirror", "constant", "wrap"] as const;
 
@@ -58,9 +59,9 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
     const restored = lastLaunchRef.current;
     const next =
       restored &&
-      (restored.latitude_deg !== null ||
-        restored.longitude_deg !== null ||
-        restored.azimuth_deg !== null)
+        (restored.latitude_deg !== null ||
+          restored.longitude_deg !== null ||
+          restored.azimuth_deg !== null)
         ? restored
         : DEFAULT_LAUNCH_SITE;
     setProfile((prev) => ({
@@ -70,7 +71,7 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
   };
 
   return (
-    <Section description="Interpolation, integration, and smoothing controls.">
+    <Section description={SECTION_HELP.trajectory}>
       <div className="flex items-center gap-3 rounded-md border border-border/60 bg-muted/30 p-3">
         <Switch
           checked={trajectory.enabled}
@@ -234,6 +235,61 @@ export function TrajectorySection({ state }: { state: ProfileFormState }) {
             </SelectContent>
           </Select>
         </Field>
+      </div>
+
+      <div className="rounded-md border border-border/60 bg-muted/15 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-semibold">Mahalanobis outlier rejection</h4>
+            <p className="text-xs text-muted-foreground/90">
+              Removes isolated OCR samples before clean plots and trajectory outputs are built.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">
+              {trajectory.outlier_rejection_enabled ? "On" : "Off"}
+            </span>
+            <Tooltip delayDuration={150}>
+              <TooltipTrigger asChild>
+                <div className="[@media(hover:hover)]:cursor-help">
+                  <Switch
+                    checked={trajectory.outlier_rejection_enabled}
+                    onCheckedChange={(checked) =>
+                      patch(["trajectory", "outlier_rejection_enabled"], checked)
+                    }
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top">{FIELD_HELP.trajectory_outlier_rejection}</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <Field
+            label="Chi2 threshold"
+            tooltip={FIELD_HELP.trajectory_outlier_rejection_chi2_threshold}
+            disabled={!trajectory.outlier_rejection_enabled}
+            error={getError(errors, ["trajectory", "outlier_rejection_chi2_threshold"])}
+          >
+            <NumberInput
+              value={trajectory.outlier_rejection_chi2_threshold}
+              disabled={!trajectory.outlier_rejection_enabled}
+              onChange={(v) => patch(["trajectory", "outlier_rejection_chi2_threshold"], v ?? 0)}
+            />
+          </Field>
+          <Field
+            label="Window (s)"
+            tooltip={FIELD_HELP.trajectory_outlier_rejection_window_s}
+            disabled={!trajectory.outlier_rejection_enabled}
+            error={getError(errors, ["trajectory", "outlier_rejection_window_s"])}
+          >
+            <NumberInput
+              value={trajectory.outlier_rejection_window_s}
+              disabled={!trajectory.outlier_rejection_enabled}
+              onChange={(v) => patch(["trajectory", "outlier_rejection_window_s"], v ?? 0)}
+            />
+          </Field>
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3 rounded-md border border-border/60 bg-muted/30 p-3">
