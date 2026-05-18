@@ -5,8 +5,8 @@ time) from a launch webcast video by OCR'ing the on-screen overlay frame by
 frame, sanitizing the text, and producing CSVs, plots, and a video copy with
 a synchronized telemetry plot.
 
-The repository was originally tuned for Blue Origin New Glenn-style overlays and was
-validated against it, but the calibration profile is generic: any printed-digit
+The repository was originally tuned for SpaceX & Blue Origin overlays and was
+validated against them, but the calibration profile is generic: any printed-digit
 telemetry overlay with segment-specific bounding boxes can be supported by
 writing a new YAML profile.
 
@@ -71,7 +71,7 @@ On macOS the install will additionally pull in `pyobjc-framework-Vision` and
 and Windows those are skipped automatically and the project falls back to
 the cross-platform RapidOCR backend.
 
-<img width="1280" height="720" alt="telemetry_overlay" src="https://github.com/user-attachments/assets/fa5eedd2-a348-450e-b5c3-61c0cc7bea3d" />
+<img width="1280" height="720" alt="telemetry_overlay" src="https://github.com/user-attachments/assets/aa767be6-7e59-4041-9b55-bb2a6d38d618" />
 
 ## Web UI (local)
 
