@@ -16,6 +16,7 @@ from webcalyzer.models import (
     ProfileConfig,
 )
 from webcalyzer.quantities import (
+    default_quantity_library_dir,
     is_default_quantity_id,
     load_quantity_library,
     normalize_quantity_mapping,
@@ -73,6 +74,7 @@ def launch_calibration_ui(
     video_height: int | None = None,
     templates_dir: str | Path = "configs",
 ) -> Path:
+    library_dir = default_quantity_library_dir(templates_dir)
     _ensure_calibration_video(profile, video_path, video_frame_count, video_fps, video_width, video_height)
     _ensure_segments(profile, video_frame_count, video_fps)
     mouse_state = _MouseState()
@@ -162,9 +164,9 @@ def launch_calibration_ui(
         elif key == ord("a"):
             _split_segment(profile, current_frame_index, video_fps)
         elif key == ord("g"):
-            _add_existing_custom_quantity(profile, templates_dir)
+            _add_existing_custom_quantity(profile, library_dir)
         elif key == ord("G"):
-            _create_custom_quantity(profile, templates_dir)
+            _create_custom_quantity(profile, library_dir)
         elif key == ord("b"):
             _set_crop_start(profile, current_frame_index, video_fps)
         elif key == ord("v"):
@@ -349,11 +351,11 @@ def _field_names(profile: ProfileConfig) -> list[str]:
     return names
 
 
-def _add_existing_custom_quantity(profile: ProfileConfig, templates_dir: str | Path) -> None:
+def _add_existing_custom_quantity(profile: ProfileConfig, library_dir: str | Path) -> None:
     try:
         quantities = [
             quantity
-            for quantity in load_quantity_library(templates_dir)
+            for quantity in load_quantity_library(library_dir)
             if not is_default_quantity_id(quantity.id)
         ]
     except Exception as exc:  # noqa: BLE001
@@ -375,7 +377,7 @@ def _add_existing_custom_quantity(profile: ProfileConfig, templates_dir: str | P
     _add_custom_quantity_to_profile(profile, quantities[selected - 1])
 
 
-def _create_custom_quantity(profile: ProfileConfig, templates_dir: str | Path) -> None:
+def _create_custom_quantity(profile: ProfileConfig, library_dir: str | Path) -> None:
     name = input("Quantity name: ").strip()
     dimensionality = input("Dimensionality (e.g. L/T^2): ").strip()
     display_unit = input("Display unit (e.g. m/s^2): ").strip()
@@ -401,8 +403,8 @@ def _create_custom_quantity(profile: ProfileConfig, templates_dir: str | Path) -
                 "unit_aliases": aliases,
             }
         )
-        quantities = upsert_quantity(load_quantity_library(templates_dir), quantity)
-        save_quantity_library(templates_dir, quantities)
+        quantities = upsert_quantity(load_quantity_library(library_dir), quantity)
+        save_quantity_library(library_dir, quantities)
         _add_custom_quantity_to_profile(profile, quantity)
     except Exception as exc:  # noqa: BLE001
         print(f"Could not create quantity: {exc}")

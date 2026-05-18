@@ -11,7 +11,7 @@ The frontend is a Vite React app under `web/src/`. It is compiled into `web/dist
 | `/` | `RunPage` | Full extraction configuration and job submission. |
 | `/calibrate` | `CalibratePage` | Frame-scrubber segment calibration with canonical field slots. |
 | `/quantities` | `QuantityLibraryPage` | Reusable telemetry quantity library with dimensions, units, aliases, and usage-aware deletion. |
-| `/templates` | `TemplatesPage` | Template list, import, download, and delete. |
+| `/templates` | `TemplatesPage` | Template list, import, duplicate, download, and delete. |
 | `/documentation` | `DocumentationPage` | In-app reader for `docs/user` and `docs/internal`. |
 
 `AppShell` provides the persistent sidebar, mobile top nav, templates directory display, roots display, version badge, and page layout.
@@ -97,7 +97,7 @@ The picker action button starts from a blank template. Pages provide the reset c
 
 ### Quantity library
 
-`QuantityLibraryPage` owns the library view for `custom_quantities.yaml`. It loads `/api/quantities`, separates default and custom quantities, opens a dialog for create or edit, normalizes dimensionality through `/api/dimensions/normalize`, and requests typical display units through `/api/units/si`.
+`QuantityLibraryPage` owns the library view for `lib/custom_quantities.yaml`. It loads `/api/quantities`, separates default and custom quantities, opens a dialog for create or edit, normalizes dimensionality through `/api/dimensions/normalize`, and requests typical display units through `/api/units/si`.
 
 The dimensionality and display-unit inputs provide local suggestions from `/api/meta`. Deleting a custom quantity first calls `/api/quantities/{id}/usage` and shows affected templates before the delete request is sent.
 

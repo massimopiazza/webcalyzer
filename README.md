@@ -133,8 +133,8 @@ Then open <http://localhost:8765>. The UI exposes five pages:
   the web UI. The form can fill the typical SI display unit for the current
   dimensionality. Deleting a custom quantity asks for confirmation after
   showing affected templates.
-- **Templates**: list, import (paste YAML), download, and delete templates
-  in `--templates-dir`.
+- **Templates**: list, import (paste YAML), duplicate, download, and delete
+  templates in `--templates-dir`.
 - **Documentation**: read the bundled user guide and internal reference
   docs with the same navigation used by the built frontend.
 
@@ -185,8 +185,8 @@ section lists independently from page-title navigation.
 | `calibrate` | `--video` | path | yes | - | - | |
 |             | `--config` | path | yes | - | - | Loaded as the starting point; saved into `--output`. |
 |             | `--output` | path | yes | - | - | Destination YAML for the edited profile. |
-|             | `--templates-dir` | path | no | `configs` | - | Source for `custom_quantities.yaml` when adding custom slots in the OpenCV editor. |
-| `quantities list` | `--templates-dir` | path | no | `configs` | - | Lists reusable telemetry quantities. |
+|             | `--templates-dir` | path | no | `configs` | - | YAML template directory. With the default `configs`, the quantity library is read from sibling `lib`. |
+| `quantities list` | `--templates-dir` | path | no | `configs` | - | Lists reusable telemetry quantities from `lib/custom_quantities.yaml` when using the default templates directory. |
 | `quantities add` | `--name` | string | yes | - | - | Human label for the new quantity. |
 |                  | `--dimensionality` | string | yes | - | e.g. `L/T^2`, `M/L^3`, `1` | Parsed with base dimensions and normalized before saving. |
 |                  | `--display-unit` | string | yes | - | any compatible Pint unit | Unit used for persisted custom values and plots. |
@@ -306,6 +306,11 @@ The OCR step itself is split into two phases:
   offset filter, time-series unit resolution, stage activation, and
   plausibility filtering.
 
+If strip-level OCR sees a numeric measurement plus an unrecognized
+unit-like token, Phase A retries recognition on that calibrated field crop
+before handing the sample to Phase B. This catches script-confusable unit
+glyphs without broadening the accepted alias set.
+
 Phase B uses the configured unit aliases with exact matching first,
 RapidFuzz fallback matching second, and Pint-backed unit conversion into SI
 units. Measurement fields are resolved over the whole time series instead
@@ -369,7 +374,7 @@ webcalyzer calibrate \
 | `1`-`9` | Select one of the visible telemetry slots |
 | Left / right arrows | Cycle the active telemetry slot |
 | `e` | Enable or disable the selected slot in the active segment |
-| `g` | Add an existing custom quantity from `custom_quantities.yaml` |
+| `g` | Add an existing custom quantity from `lib/custom_quantities.yaml` |
 | `G` | Create a custom quantity, save it to the library, then add it to the profile |
 | `[` / `]` | Previous / next source frame |
 | `n` / `p` | Jump forward / backward by roughly one second |
@@ -385,9 +390,9 @@ webcalyzer calibrate \
 
 ### `quantities`: manage telemetry quantity definitions
 
-Maintains the global quantity library in `custom_quantities.yaml`
-inside `--templates-dir`. A quantity stores dimensionality and a
-mandatory display unit. The display unit is the normalization target for
+Maintains the global quantity library in `lib/custom_quantities.yaml`
+when using the default `configs` templates directory. A quantity stores
+dimensionality and a mandatory display unit. The display unit is the normalization target for
 OCR output, so a stream that changes from `m/s` to `km/s` can still be
 stored and plotted in one consistent unit. A missing library file is seeded
 with editable built-in definitions for time, stage velocity, and stage
@@ -653,7 +658,7 @@ parsing:
     inferred_units_without_separator: [FT]
     units:
       FT: { aliases: [FT, F7, FI, ET, E7, EI], unit: foot }
-      MI: { aliases: [MI, ML, M1], unit: mile }
+      MI: { aliases: [MI, ML, M1, MIL, MII], unit: mile }
       KM: { aliases: [KM], unit: kilometer }
       M:  { aliases: [M], unit: meter }
   met:
@@ -734,7 +739,7 @@ with optional `velocity_mps` and `altitude_m`. Custom anchor values live in
 valid only when that custom quantity is enabled in at least one segment.
 
 Custom quantities are profile snapshots copied from the global
-`custom_quantities.yaml` library. `dimensionality` uses base symbols such as
+`lib/custom_quantities.yaml` library. `dimensionality` uses base symbols such as
 `L`, `M`, `T`, `TEMP`, `ANG`, `BIT`, and `COUNT`; `display_unit` must be a
 compatible Pint unit and is mandatory. Unit aliases are optional mappings
 from OCR text to Pint unit expressions. When extraction sees explicit units,

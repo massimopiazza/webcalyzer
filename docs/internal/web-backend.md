@@ -12,6 +12,7 @@ The web backend is a FastAPI app created by `create_app(...)`. It exposes local 
 |---|---|---|
 | `roots` | `list[BrowseRoot]` | Allowed filesystem roots for reads and writes. |
 | `templates_dir` | `Path` | Directory containing YAML templates. |
+| `library_dir` | `Path` | Directory containing the reusable quantity library. |
 | `dist_dir` | `Path or None` | Built React bundle directory. |
 | `cors_origins` | `list[str]` | Development CORS origins. |
 
@@ -21,13 +22,13 @@ The web backend is a FastAPI app created by `create_app(...)`. It exposes local 
 
 | Prefix | Methods | Responsibility |
 |---|---|---|
-| `/api/meta` | `GET` | Version, roots, templates directory, trajectory choices, default parsing model, dimension presets, and known units. |
+| `/api/meta` | `GET` | Version, roots, templates directory, quantity library directory, trajectory choices, default parsing model, dimension presets, and known units. |
 | `/api/quantities*` | `GET`, `POST`, `PUT`, `DELETE` | List, create, update, delete, and scan usage for reusable telemetry quantities. |
 | `/api/dimensions/*` | `POST` | Normalize dimensionality expressions. |
 | `/api/units/*` | `GET` | Suggest Pint unit identifiers and return typical SI display units for dimensions. |
 | `/api/files` | `GET` | Root-scoped file browser. |
 | `/api/video/*` | `GET` | Metadata, frame JPEGs, and fixture frame lists. |
-| `/api/templates*` | `GET`, `PUT`, `POST`, `DELETE` | List, load, save, import, download, and delete YAML templates. |
+| `/api/templates*` | `GET`, `PUT`, `POST`, `DELETE` | List, load, save, import, duplicate, download, and delete YAML templates. |
 | `/api/profile/*` | `POST` | Validate a profile and render a YAML preview. |
 | `/api/calibrate/save` | `POST` | Save calibration edits back to a template. |
 | `/api/jobs*` | `GET`, `POST` | Submit runs, inspect jobs, cancel jobs, stream events, download output files. |
@@ -53,13 +54,15 @@ Do not bypass these helpers in new endpoints.
 
 `GET /api/templates` recursively lists `*.yaml` under `templates_dir`. Each file is loaded with `load_profile(...)` when possible. Files with parse errors are still listed with an `error` string.
 
-`custom_quantities.yaml` is excluded from `GET /api/templates`; it belongs to the quantity library endpoints.
+`custom_quantities.yaml` belongs to the quantity library endpoints and is not listed as a profile template.
 
 `GET /api/templates/{name}` loads YAML into `ProfileConfig`, converts it to `ProfileModel`, and returns JSON.
 
 `PUT /api/templates/{name}` validates posted JSON as a draft profile with `ProfileModel.model_validate(...)`, converts to `ProfileConfig`, and saves YAML with `save_profile(...)`.
 
 `POST /api/templates/import` accepts raw YAML text, writes it only after path validation, validates that `load_profile(...)` succeeds, and removes the file if parsing fails.
+
+`POST /api/templates/{name}/duplicate` copies the source YAML file into the same template folder with a new filename and rejects overwrites.
 
 Note: The frontend refreshes template pickers after a save. Backend template endpoints should keep returning the canonical list immediately after writes.
 
@@ -77,7 +80,7 @@ Validation errors are cleaned by `_format_validation_error(...)` so FastAPI resp
 
 ### Quantity flow
 
-`GET /api/quantities` loads `custom_quantities.yaml`, seeding default quantities when the file is missing. Each response item includes `is_default` and `field_name` metadata for frontend display.
+`GET /api/quantities` loads `lib/custom_quantities.yaml` by default, seeding default quantities when the file is missing. Each response item includes `is_default` and `field_name` metadata for frontend display.
 
 `POST /api/quantities` normalizes dimensionality, validates display-unit compatibility, writes the library, and returns the updated list.
 

@@ -16,7 +16,7 @@ Quantities define reusable telemetry measurements that can be enabled as custom 
 | **Description** | Optional note for the library row. |
 | **Unit aliases** | Optional OCR text to unit expression mappings, one `ALIAS=UNIT` per line. |
 
-The library is stored as `custom_quantities.yaml` inside the server templates directory. It is separate from profile templates, but profiles embed snapshots of quantities that are enabled in calibration.
+The library is stored as `lib/custom_quantities.yaml` when using the default `configs` templates directory. It is separate from profile templates, but profiles embed snapshots of quantities that are enabled in calibration.
 
 ### Default quantities
 

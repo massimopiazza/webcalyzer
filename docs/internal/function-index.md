@@ -49,6 +49,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `_run_phase_b(...)` | `src/webcalyzer/extract.py` | Runs sequential MET parsing, measurement-series resolution, stage activation, and raw row writing. |
 | `normalize_text(text)` | `src/webcalyzer/sanitize.py` | Normalizes OCR text before parsing. |
 | `detect_unit(text, kind, parsing)` | `src/webcalyzer/sanitize.py` | Finds a configured unit alias for a measurement type. |
+| `measurement_text_needs_unit_fallback(...)` | `src/webcalyzer/sanitize.py` | Detects numeric OCR text with an unrecognized unit-like token so Phase A can retry the calibrated crop. |
 | `parse_met_candidates(text, parsing)` | `src/webcalyzer/sanitize.py` | Returns possible MET values from OCR text. |
 | `parse_measurement_options(...)` | `src/webcalyzer/sanitize.py` | Returns possible parsed telemetry values with unit candidates. |
 | `parse_custom_measurement_options(...)` | `src/webcalyzer/sanitize.py` | Parses custom quantity OCR text using quantity aliases and display units. |
@@ -59,7 +60,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `validate_unit_compatible_with_dimension(...)` | `src/webcalyzer/units.py` | Validates that a Pint unit has the expected dimensionality. |
 | `parse_dimension_expression(...)` | `src/webcalyzer/dimensions.py` | Parses a dimensionality expression into base exponents. |
 | `normalize_dimension_expression(...)` | `src/webcalyzer/dimensions.py` | Returns canonical text for a dimensionality expression. |
-| `load_quantity_library(...)` | `src/webcalyzer/quantities.py` | Loads and seeds `custom_quantities.yaml`. |
+| `load_quantity_library(...)` | `src/webcalyzer/quantities.py` | Loads and seeds `custom_quantities.yaml` from the configured library directory. |
 | `normalize_quantity_mapping(...)` | `src/webcalyzer/quantities.py` | Validates and normalizes a quantity payload. |
 | `update_quantity_snapshots(...)` | `src/webcalyzer/quantities.py` | Updates embedded quantity snapshots across saved templates. |
 | `remove_quantity_from_templates(...)` | `src/webcalyzer/quantities.py` | Removes a deleted custom quantity from saved templates. |
@@ -121,7 +122,7 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `RunPage` | `web/src/pages/RunPage.tsx` | Profile editing, template save, and job submission. |
 | `CalibratePage` | `web/src/pages/CalibratePage.tsx` | Frame sampling and visual bbox editing. |
 | `QuantityLibraryPage` | `web/src/pages/QuantityLibraryPage.tsx` | Quantity library CRUD, dimension editing, and unit suggestions. |
-| `TemplatesPage` | `web/src/pages/TemplatesPage.tsx` | Template list, import, download, and delete UI. |
+| `TemplatesPage` | `web/src/pages/TemplatesPage.tsx` | Template list, import, duplicate, download, and delete UI. |
 | `DocumentationPage` | `web/src/pages/DocumentationPage.tsx` | Markdown documentation reader and local table of contents. |
 | `RunPanel` | `web/src/components/RunPanel.tsx` | Run console, EventSource subscription, output links, and view toggle. |
 | `TemplatePicker` | `web/src/components/TemplatePicker.tsx` | Template loading and blank-template reset support. |

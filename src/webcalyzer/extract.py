@@ -25,6 +25,7 @@ from webcalyzer.raw_points import apply_hardcoded_raw_data_points
 from webcalyzer.sanitize import (
     MeasurementOption,
     MeasurementSeriesResult,
+    measurement_text_needs_unit_fallback,
     parse_custom_measurement_options,
     parse_measurement_options,
     parse_met_candidates,
@@ -315,6 +316,7 @@ def _ocr_with_detection(
         if field_cfg.box is None:
             continue
         candidates = ocr_candidates_by_field.get(field_name, [])
+        force_unit_fallback = False
         if field_cfg.kind == "met":
             if parse_met_candidates(candidates, parsing=parsing) is not None:
                 continue
@@ -339,15 +341,29 @@ def _ocr_with_detection(
                     )
                     if _field_specific_option_is_valid(field_name, option)
                 ]
-            if options:
+                force_unit_fallback = bool(options) and not any(option.explicit_unit for option in options) and any(
+                    measurement_text_needs_unit_fallback(raw_text, kind=field_cfg.kind, parsing=parsing)
+                    for raw_text, _variant in candidates
+                )
+            if options and not force_unit_fallback:
                 continue
         crop = crop_box(frame, field_cfg.box)
         fallback_kind = field_cfg.kind if field_cfg.kind in {"met", "velocity", "altitude"} else "custom"
         fallback = backend.extract_text(crop, field_kind=fallback_kind)
         if fallback:
-            ocr_candidates_by_field[field_name] = [
-                (candidate.text, candidate.variant) for candidate in fallback
-            ]
+            fallback_pairs = [(candidate.text, candidate.variant) for candidate in fallback]
+            if field_cfg.kind in {"velocity", "altitude"} and force_unit_fallback:
+                fallback_options = [
+                    option
+                    for raw_text, variant in fallback_pairs
+                    for option in parse_measurement_options(
+                        raw_text, kind=field_cfg.kind, variant=variant, parsing=parsing
+                    )
+                    if _field_specific_option_is_valid(field_name, option)
+                ]
+                if not any(option.explicit_unit for option in fallback_options):
+                    continue
+            ocr_candidates_by_field[field_name] = fallback_pairs
     return ocr_candidates_by_field
 
 

@@ -70,6 +70,7 @@ from webcalyzer.web.schema import (
 class ServeConfig:
     roots: list[BrowseRoot]
     templates_dir: Path
+    library_dir: Path
     dist_dir: Path | None
     cors_origins: list[str]
 
@@ -113,6 +114,7 @@ def create_app(config: ServeConfig) -> FastAPI:
             "version": "0.1.0",
             "roots": [{"label": root.label, "path": str(root.path)} for root in config.roots],
             "templates_dir": str(config.templates_dir),
+            "quantity_library_dir": str(config.library_dir),
             "trajectory": trajectory_choices(),
             "default_parsing": default_parsing_model().model_dump(),
             "dimensions": {
@@ -127,21 +129,21 @@ def create_app(config: ServeConfig) -> FastAPI:
     @app.get("/api/quantities")
     def list_quantities() -> dict[str, Any]:
         try:
-            quantities = load_quantity_library(config.templates_dir)
+            quantities = load_quantity_library(config.library_dir)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
-            "path": str((config.templates_dir / QUANTITY_LIBRARY_FILENAME).resolve()),
+            "path": str((config.library_dir / QUANTITY_LIBRARY_FILENAME).resolve()),
             "quantities": [_quantity_response(quantity) for quantity in quantities],
         }
 
     @app.post("/api/quantities")
     def create_quantity(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
-            quantities = load_quantity_library(config.templates_dir)
+            quantities = load_quantity_library(config.library_dir)
             quantity = normalize_quantity_mapping(payload)
             quantities = upsert_quantity(quantities, quantity)
-            save_quantity_library(config.templates_dir, quantities)
+            save_quantity_library(config.library_dir, quantities)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
@@ -152,13 +154,13 @@ def create_app(config: ServeConfig) -> FastAPI:
     @app.put("/api/quantities/{quantity_id}")
     def update_quantity(quantity_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
-            quantities = load_quantity_library(config.templates_dir)
+            quantities = load_quantity_library(config.library_dir)
             existing = next((item for item in quantities if item.id == quantity_id), None)
             if existing is None:
                 raise HTTPException(status_code=404, detail="Quantity not found")
             quantity = normalize_quantity_mapping({**payload, "id": quantity_id}, existing_id=quantity_id)
             quantities = upsert_quantity(quantities, quantity)
-            save_quantity_library(config.templates_dir, quantities)
+            save_quantity_library(config.library_dir, quantities)
             update_quantity_snapshots(config.templates_dir, quantity)
         except HTTPException:
             raise
@@ -172,9 +174,9 @@ def create_app(config: ServeConfig) -> FastAPI:
     @app.delete("/api/quantities/{quantity_id}")
     def remove_quantity(quantity_id: str) -> dict[str, Any]:
         try:
-            quantities = load_quantity_library(config.templates_dir)
+            quantities = load_quantity_library(config.library_dir)
             quantities = delete_quantity(quantities, quantity_id)
-            save_quantity_library(config.templates_dir, quantities)
+            save_quantity_library(config.library_dir, quantities)
             remove_quantity_from_templates(config.templates_dir, quantity_id)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -359,6 +361,27 @@ def create_app(config: ServeConfig) -> FastAPI:
         target = _resolve_template_path(config, name, must_exist=True)
         target.unlink()
         return {"name": name, "deleted": True}
+
+    @app.post("/api/templates/{name:path}/duplicate")
+    def duplicate_template(name: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        source = _resolve_template_path(config, name, must_exist=True)
+        file_name = str(payload.get("name", "")).strip()
+        if not file_name:
+            raise HTTPException(status_code=422, detail="`name` is required")
+        if "/" in file_name or "\\" in file_name or ".." in Path(file_name).parts:
+            raise HTTPException(status_code=422, detail="Duplicate name must be a file name")
+        if not file_name.endswith(".yaml"):
+            file_name = f"{file_name}.yaml"
+        source_parent = Path(name).parent
+        target_name = file_name if str(source_parent) == "." else f"{source_parent.as_posix()}/{file_name}"
+        target = _resolve_template_path(config, target_name, must_exist=False)
+        if target == source:
+            raise HTTPException(status_code=422, detail="Duplicate name must differ from source")
+        if target.exists():
+            raise HTTPException(status_code=409, detail="Template already exists")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        return {"name": str(target.relative_to(config.templates_dir.resolve())), "path": str(target)}
 
     @app.post("/api/templates/import")
     def import_template(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

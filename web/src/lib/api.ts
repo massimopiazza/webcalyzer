@@ -16,6 +16,7 @@ export type Meta = {
   version: string;
   roots: { label: string; path: string }[];
   templates_dir: string;
+  quantity_library_dir: string;
   units: string[];
   trajectory: {
     interpolation_methods: string[];
@@ -279,6 +280,11 @@ export const api = {
   deleteTemplate: (name: string) =>
     request<{ name: string; deleted: boolean }>(`/api/templates/${encodeURI(name)}`, {
       method: "DELETE",
+    }),
+  duplicateTemplate: (sourceName: string, fileName: string) =>
+    request<{ name: string; path: string }>(`/api/templates/${encodeURI(sourceName)}/duplicate`, {
+      method: "POST",
+      body: JSON.stringify({ name: fileName }),
     }),
   importTemplate: (name: string, yamlText: string) =>
     request<{ name: string; profile: ProfileDTO }>(`/api/templates/import`, {

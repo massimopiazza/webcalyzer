@@ -469,7 +469,7 @@ function QuantityRows({
               </div>
             )}
           </div>
-          <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity duration-150 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+          <div className="hover-reveal-actions">
             <Button
               variant="outline"
               size="sm"

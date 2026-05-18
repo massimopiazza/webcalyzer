@@ -105,6 +105,10 @@ Use `quantities` to inspect or edit the shared custom quantity library:
 webcalyzer quantities --templates-dir configs list
 ```
 
+With the default `configs` templates directory, the library is stored at
+`lib/custom_quantities.yaml`. The `--templates-dir` value still controls
+which saved templates receive embedded snapshot updates.
+
 Add a quantity:
 
 ```bash

@@ -12,6 +12,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `Launch Webcalyzer.bat` | Windows double-click launcher for local setup and server start. |
 | `pyproject.toml` | Python package metadata, dependencies, console script, and pytest configuration. |
 | `configs/` | Bundled YAML profile templates. |
+| `lib/` | Reusable custom quantity library. |
 | `scripts/` | Launcher support scripts and dependency/build fingerprinting. |
 | `outputs/` | Conventional local run output directory, not required by code. |
 | `docs/` | User and internal documentation source. |
@@ -86,7 +87,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `RunPage.tsx` | `/` | Profile editing, input/output selection, YAML preview, job submission, and validation summary. |
 | `CalibratePage.tsx` | `/calibrate` | Frame-scrubber segment editor, canonical slot boxes, and calibration save workflow. |
 | `QuantityLibraryPage.tsx` | `/quantities` | Quantity library CRUD, dimensionality editor, unit suggestions, and usage-aware deletion. |
-| `TemplatesPage.tsx` | `/templates` | Template inventory, import, download, delete, and parse-error reporting. |
+| `TemplatesPage.tsx` | `/templates` | Template inventory, import, duplicate, download, delete, and parse-error reporting. |
 | `DocumentationPage.tsx` | `/documentation` | Markdown documentation reader with page groups, local table of contents, and math styling. |
 
 ## `web/src/components/`

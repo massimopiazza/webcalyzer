@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, FileText, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Copy, Download, FileText, RefreshCw, Trash2, Upload } from "lucide-react";
 import { ApiError, TemplateSummary, api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ export function TemplatesPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importName, setImportName] = useState("");
   const [importYaml, setImportYaml] = useState("");
+  const [duplicateTarget, setDuplicateTarget] = useState<TemplateSummary | null>(null);
+  const [duplicateName, setDuplicateName] = useState("");
 
   const refresh = async () => {
     try {
@@ -68,6 +70,37 @@ export function TemplatesPage() {
     }
   };
 
+  const openDuplicateDialog = (template: TemplateSummary) => {
+    setDuplicateTarget(template);
+    setDuplicateName(suggestDuplicateFileName(template.name));
+  };
+
+  const closeDuplicateDialog = () => {
+    setDuplicateTarget(null);
+    setDuplicateName("");
+  };
+
+  const duplicateTemplate = async () => {
+    if (!duplicateTarget) return;
+    const fileName = duplicateName.trim();
+    if (!fileName) {
+      toast.error("Provide a file name for the duplicated template.");
+      return;
+    }
+    if (/[\\/]/.test(fileName)) {
+      toast.error("Use a file name only. The duplicate is saved in the same folder.");
+      return;
+    }
+    try {
+      const result = await api.duplicateTemplate(duplicateTarget.name, ensureYamlExtension(fileName));
+      toast.success(`Duplicated ${result.name}`);
+      closeDuplicateDialog();
+      refresh();
+    } catch (err) {
+      toast.error((err as ApiError).message);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -99,10 +132,7 @@ export function TemplatesPage() {
             )}
             <ul className="divide-y divide-border/60">
               {templates.map((tpl) => (
-                <li
-                  key={tpl.name}
-                  className="flex flex-wrap items-center gap-3 p-4 hover:bg-muted/30"
-                >
+                <li key={tpl.name} className="group flex flex-wrap items-center gap-3 p-4 hover:bg-muted/30">
                   <FileText className="h-4 w-4 text-primary" />
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -119,18 +149,24 @@ export function TemplatesPage() {
                       {formatBytes(tpl.size)} · {formatTimeAgo(tpl.modified)}
                     </div>
                   </div>
-                  <Button asChild size="sm" variant="outline">
-                    <a href={api.templateYamlUrl(tpl.name)} target="_blank" rel="noreferrer">
-                      <Download className="mr-1 h-3 w-3" /> YAML
-                    </a>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => remove(tpl.name)}
-                  >
-                    <Trash2 className="h-3 w-3 text-destructive/80" />
-                  </Button>
+                  <div className="hover-reveal-actions shrink-0">
+                    <Button size="sm" variant="outline" onClick={() => openDuplicateDialog(tpl)}>
+                      <Copy className="mr-1 h-3 w-3" /> Duplicate
+                    </Button>
+                    <Button asChild size="sm" variant="outline">
+                      <a href={api.templateYamlUrl(tpl.name)} target="_blank" rel="noreferrer">
+                        <Download className="mr-1 h-3 w-3" /> YAML
+                      </a>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => remove(tpl.name)}
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-3 w-3 text-destructive/80" />
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -173,7 +209,66 @@ export function TemplatesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={duplicateTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) closeDuplicateDialog();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Duplicate template</DialogTitle>
+            <DialogDescription>
+              Save a copy of {duplicateTarget?.name} in the same folder.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {duplicateTarget && templateDirectory(duplicateTarget.name) && (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs text-muted-foreground">
+                {templateDirectory(duplicateTarget.name)}/
+              </div>
+            )}
+            <Input
+              placeholder="template copy.yaml"
+              value={duplicateName}
+              onChange={(e) => setDuplicateName(e.target.value)}
+              spellCheck={false}
+              className="font-mono"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeDuplicateDialog}>
+              Cancel
+            </Button>
+            <Button onClick={duplicateTemplate}>
+              <Copy className="mr-1 h-4 w-4" /> Duplicate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </>
   );
+}
+
+function templateDirectory(name: string): string {
+  const slashIndex = name.lastIndexOf("/");
+  return slashIndex === -1 ? "" : name.slice(0, slashIndex);
+}
+
+function templateBaseName(name: string): string {
+  const slashIndex = name.lastIndexOf("/");
+  return slashIndex === -1 ? name : name.slice(slashIndex + 1);
+}
+
+function suggestDuplicateFileName(name: string): string {
+  const baseName = templateBaseName(name);
+  return baseName.endsWith(".yaml")
+    ? `${baseName.slice(0, -".yaml".length)} copy.yaml`
+    : `${baseName} copy`;
+}
+
+function ensureYamlExtension(fileName: string): string {
+  return fileName.endsWith(".yaml") ? fileName : `${fileName}.yaml`;
 }

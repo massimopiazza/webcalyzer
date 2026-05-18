@@ -3,6 +3,7 @@ from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, Unit
 from webcalyzer.sanitize import (
     choose_best_measurement,
     detect_unit,
+    measurement_text_needs_unit_fallback,
     parse_measurement_options,
     parse_met,
     resolve_measurement_series,
@@ -57,6 +58,15 @@ def test_ambiguous_altitude_with_no_explicit_unit_prefers_feet() -> None:
     )
     assert chosen is not None
     assert chosen.unit == "FT"
+
+
+def test_unrecognized_non_ascii_unit_token_requests_ocr_fallback() -> None:
+    profile = default_parsing_profile()
+
+    assert measurement_text_needs_unit_fallback("000,063 М", kind="altitude", parsing=profile)
+    assert measurement_text_needs_unit_fallback("000,064 МI", kind="altitude", parsing=profile)
+    assert not measurement_text_needs_unit_fallback("000,064 MI", kind="altitude", parsing=profile)
+    assert not measurement_text_needs_unit_fallback("ALTITUDE 000,064", kind="altitude", parsing=profile)
 
 
 def test_parsing_profile_enables_custom_unit_aliases() -> None:

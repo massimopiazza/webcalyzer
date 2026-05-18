@@ -33,7 +33,7 @@ Every user-settable field must exist in all layers. Missing one layer creates a 
 | `video_overlay` | `VideoOverlayConfig` | Overlay rendering settings. |
 | `trajectory` | `TrajectoryConfig` | Dense reconstruction settings. |
 | `parsing` | `ParsingProfile` or `None` | `None` means use bundled defaults. |
-| `custom_telemetry_quantities` | `list[TelemetryQuantityDefinition]` | Embedded snapshots copied from `custom_quantities.yaml` for custom fields. |
+| `custom_telemetry_quantities` | `list[TelemetryQuantityDefinition]` | Embedded snapshots copied from `lib/custom_quantities.yaml` for custom fields. |
 | `hardcoded_raw_data_points` | `list[HardcodedRawDataPoint]` | Trusted telemetry values injected into raw data. |
 | `segments` | `list[CalibrationSegmentConfig]` | Ordered calibration ranges with segment-specific canonical fields. |
 

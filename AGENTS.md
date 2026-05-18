@@ -68,6 +68,7 @@ web/                    # web UI frontend (Vite + React + TS + Tailwind + shadcn
   dist/                            # built bundle, served by FastAPI
 
 configs/                # YAML profile templates (default --templates-dir)
+lib/                    # reusable custom quantity library
 outputs/                # convention: per-run output directory
 ```
 
@@ -163,7 +164,7 @@ These must hold for any change to pass:
   - `custom_words: [str,...]` - auto-derived from aliases when omitted.
 - `custom_telemetry_quantities: list[TelemetryQuantityDefinition]` -
   profile-embedded snapshots copied from the global library in
-  `<templates-dir>/custom_quantities.yaml`. Each has `id`, `name`, `slug`,
+  `lib/custom_quantities.yaml` by default. Each has `id`, `name`, `slug`,
   `dimensionality`, mandatory `display_unit`, optional `description`, and
   optional `unit_aliases: { OCR_TEXT: Pint unit expression }`.
   Dimensionality expressions support base dimensions such as `L`, `M`,
@@ -221,10 +222,11 @@ section under "Argument reference" + "Subcommands" in `README.md`.
 - `--dist-dir <path>` (default `<repo>/web/dist` if present)
 - `--reload` and `--cors-origin <origin>` (dev-only, for the Vite proxy)
 
-`quantities` manages `<templates-dir>/custom_quantities.yaml` through
-`list`, `add`, `edit`, and `delete`. `edit` and `delete` must immediately
-update affected template snapshots so the CLI and web UI keep the same
-library behavior.
+`quantities` manages `lib/custom_quantities.yaml` by default through
+`list`, `add`, `edit`, and `delete`, while `--templates-dir` selects the
+YAML templates whose embedded snapshots are updated. `edit` and `delete`
+must immediately update affected template snapshots so the CLI and web UI
+keep the same library behavior.
 
 When you add a new flag to `extract`/`run`/`render-overlay`, decide
 whether it belongs in the persisted profile form or remains a one-run
@@ -293,6 +295,10 @@ Visual language (do not drift):
 - `rounded-lg` for cards, `rounded-md` for inputs/buttons. Generous
   padding (`p-5` cards). Subtle shadows (`shadow-sm`).
 - Sidebar + content layout via `AppShell.tsx`.
+- Row action buttons may be hidden until hover only on hover-capable
+  fine-pointer devices. On touch or non-hover devices, those actions must
+  remain visible. Prefer the shared `hover-reveal-actions` utility for
+  this pattern.
 
 Form rules:
 

@@ -13,6 +13,7 @@ from webcalyzer.units import validate_unit_compatible_with_dimension
 
 
 QUANTITY_LIBRARY_FILENAME = "custom_quantities.yaml"
+QUANTITY_LIBRARY_DIRNAME = "lib"
 DEFAULT_QUANTITY_FIELD_NAMES: dict[str, str] = {
     "q_time": "met",
     "q_stage1_velocity": "stage1_velocity",
@@ -68,6 +69,8 @@ def default_quantity_library() -> list[TelemetryQuantityDefinition]:
             unit_aliases={
                 "FT": "foot",
                 "MI": "mile",
+                "MIL": "mile",
+                "MII": "mile",
                 "KM": "kilometer",
                 "M": "meter",
             },
@@ -100,6 +103,8 @@ def default_quantity_library() -> list[TelemetryQuantityDefinition]:
             unit_aliases={
                 "FT": "foot",
                 "MI": "mile",
+                "MIL": "mile",
+                "MII": "mile",
                 "KM": "kilometer",
                 "M": "meter",
             },
@@ -125,15 +130,24 @@ def make_quantity_slug(value: str) -> str:
     return slug or "quantity"
 
 
-def quantity_library_path(templates_dir: str | Path) -> Path:
-    return Path(templates_dir) / QUANTITY_LIBRARY_FILENAME
+def default_quantity_library_dir(templates_dir: str | Path) -> Path:
+    """Return the default library directory for a templates directory."""
+
+    path = Path(templates_dir)
+    if path.name == "configs":
+        return path.parent / QUANTITY_LIBRARY_DIRNAME
+    return path
 
 
-def load_quantity_library(templates_dir: str | Path) -> list[TelemetryQuantityDefinition]:
-    path = quantity_library_path(templates_dir)
+def quantity_library_path(library_dir: str | Path) -> Path:
+    return Path(library_dir) / QUANTITY_LIBRARY_FILENAME
+
+
+def load_quantity_library(library_dir: str | Path) -> list[TelemetryQuantityDefinition]:
+    path = quantity_library_path(library_dir)
     if not path.exists():
         quantities = default_quantity_library()
-        save_quantity_library(templates_dir, quantities)
+        save_quantity_library(library_dir, quantities)
         return quantities
     data = yaml.safe_load(path.read_text()) or {}
     if isinstance(data, list):
@@ -147,11 +161,11 @@ def load_quantity_library(templates_dir: str | Path) -> list[TelemetryQuantityDe
 
 
 def save_quantity_library(
-    templates_dir: str | Path,
+    library_dir: str | Path,
     quantities: list[TelemetryQuantityDefinition],
 ) -> Path:
     quantities = _normalize_library_quantities(quantities)
-    path = quantity_library_path(templates_dir)
+    path = quantity_library_path(library_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(

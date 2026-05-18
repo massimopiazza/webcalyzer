@@ -87,10 +87,23 @@ def _default_velocity_units() -> tuple[UnitAlias, ...]:
     )
 
 
+_DEFAULT_MILE_ALTITUDE_ALIASES: tuple[str, ...] = (
+    "MI",
+    "ML",
+    "M1",
+    "MIL",
+    "MII",
+)
+
+
 def _default_altitude_units() -> tuple[UnitAlias, ...]:
     return (
         UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), unit_expression="foot"),
-        UnitAlias(name="MI", aliases=("MI", "ML", "M1"), unit_expression="mile"),
+        UnitAlias(
+            name="MI",
+            aliases=_DEFAULT_MILE_ALTITUDE_ALIASES,
+            unit_expression="mile",
+        ),
     )
 
 
@@ -142,6 +155,39 @@ def detect_unit(text: str, kind: str, parsing: ParsingProfile | None = None) -> 
 
     match = _detect_unit_matches(text, kind=kind, parsing=parsing, include_fuzzy=False)
     return match[0].unit_name if match else None
+
+
+def measurement_text_needs_unit_fallback(
+    text: str,
+    kind: str,
+    parsing: ParsingProfile | None = None,
+) -> bool:
+    """Return true when OCR saw a numeric value plus an unrecognized unit token.
+
+    This is deliberately narrower than unit alias expansion. It only flags
+    measurement text that already contains a number, has no recognized unit,
+    and includes a short non-ASCII unit-like token such as Cyrillic ``М``.
+    """
+
+    kind_parsing = _resolve_kind_parsing(kind, parsing)
+    numeric_tokens = _extract_numeric_tokens(
+        text,
+        unit_suffix_tokens=_field_kind_unit_suffix_tokens(kind_parsing),
+    )
+    if not numeric_tokens:
+        return False
+    if _detect_unit_matches(text, kind=kind, parsing=parsing):
+        return False
+    return any(
+        _is_unrecognized_unit_like_token(token)
+        for token in _unit_like_tokens(normalize_text(text))
+    )
+
+
+def _is_unrecognized_unit_like_token(token: str) -> bool:
+    if len(token.replace("/", "")) > 4:
+        return False
+    return any(char.isalpha() and not ("A" <= char <= "Z") for char in token)
 
 
 def _detect_unit_matches(

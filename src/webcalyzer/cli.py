@@ -8,6 +8,7 @@ from pathlib import Path
 from webcalyzer.calibration import launch_calibration_ui
 from webcalyzer.config import load_profile
 from webcalyzer.quantities import (
+    default_quantity_library_dir,
     delete_quantity,
     is_default_quantity_id,
     load_quantity_library,
@@ -51,10 +52,18 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_parser = subparsers.add_parser("calibrate", help="Launch interactive calibration.")
     _add_video_config_args(calibrate_parser)
     calibrate_parser.add_argument("--output", required=True, help="Path to write the calibrated YAML profile.")
-    calibrate_parser.add_argument("--templates-dir", default="configs", help="Directory containing custom_quantities.yaml.")
+    calibrate_parser.add_argument(
+        "--templates-dir",
+        default="configs",
+        help="Directory containing YAML templates. The quantity library defaults to sibling lib for configs.",
+    )
 
     quantities_parser = subparsers.add_parser("quantities", help="Manage the custom telemetry quantity library.")
-    quantities_parser.add_argument("--templates-dir", default="configs", help="Directory containing custom_quantities.yaml.")
+    quantities_parser.add_argument(
+        "--templates-dir",
+        default="configs",
+        help="Directory containing YAML templates to update. The quantity library defaults to sibling lib for configs.",
+    )
     quantities_sub = quantities_parser.add_subparsers(dest="quantities_command", required=True)
     quantities_sub.add_parser("list", help="List telemetry quantities.")
     quantities_add = quantities_sub.add_parser("add", help="Add a custom telemetry quantity.")
@@ -497,7 +506,8 @@ def _validate_runnable_profile(profile: ProfileConfig) -> None:
 
 def _run_quantities(args: argparse.Namespace) -> None:
     templates_dir = Path(args.templates_dir)
-    quantities = load_quantity_library(templates_dir)
+    library_dir = default_quantity_library_dir(templates_dir)
+    quantities = load_quantity_library(library_dir)
     command = args.quantities_command
     if command == "list":
         if not quantities:
@@ -520,7 +530,7 @@ def _run_quantities(args: argparse.Namespace) -> None:
             }
         )
         quantities = upsert_quantity(quantities, quantity)
-        save_quantity_library(templates_dir, quantities)
+        save_quantity_library(library_dir, quantities)
         print(f"Added {quantity.id}: {quantity.name}")
         return
     if command == "edit":
@@ -542,7 +552,7 @@ def _run_quantities(args: argparse.Namespace) -> None:
             }
         )
         quantities = upsert_quantity(quantities, quantity)
-        save_quantity_library(templates_dir, quantities)
+        save_quantity_library(library_dir, quantities)
         template_count = update_quantity_snapshots(templates_dir, quantity)
         print(f"Updated {quantity.id}: {quantity.name} ({template_count} templates updated)")
         return
@@ -550,7 +560,7 @@ def _run_quantities(args: argparse.Namespace) -> None:
         if is_default_quantity_id(args.id):
             raise SystemExit("Default quantities cannot be deleted.")
         quantities = delete_quantity(quantities, args.id)
-        save_quantity_library(templates_dir, quantities)
+        save_quantity_library(library_dir, quantities)
         template_count = remove_quantity_from_templates(templates_dir, args.id)
         print(f"Deleted {args.id} ({template_count} templates updated)")
         return
@@ -768,6 +778,8 @@ def _run_serve(args: argparse.Namespace) -> None:
         else cwd / "configs"
     )
     templates_dir.mkdir(parents=True, exist_ok=True)
+    library_dir = default_quantity_library_dir(templates_dir).expanduser().resolve()
+    library_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dist_dir:
         dist_dir: Path | None = Path(args.dist_dir).expanduser().resolve()
@@ -783,6 +795,7 @@ def _run_serve(args: argparse.Namespace) -> None:
     config = ServeConfig(
         roots=roots,
         templates_dir=templates_dir,
+        library_dir=library_dir,
         dist_dir=dist_dir,
         cors_origins=cors_origins,
     )
@@ -790,6 +803,7 @@ def _run_serve(args: argparse.Namespace) -> None:
 
     print(f"[webcalyzer] serving on http://{args.host}:{args.port}")
     print(f"[webcalyzer] templates dir: {templates_dir}")
+    print(f"[webcalyzer] quantity library dir: {library_dir}")
     print("[webcalyzer] browsable roots:")
     for root in roots:
         print(f"  - {root.path}")

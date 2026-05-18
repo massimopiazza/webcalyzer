@@ -329,9 +329,20 @@ _DEFAULT_VELOCITY_UNITS: tuple[UnitAlias, ...] = (
     UnitAlias(name="MPS", aliases=("M/S", "MPS", "MS"), unit_expression="meter/second"),
     UnitAlias(name="KPS", aliases=("KM/S", "KPS"), unit_expression="kilometer/second"),
 )
+_DEFAULT_MILE_ALTITUDE_ALIASES: tuple[str, ...] = (
+    "MI",
+    "ML",
+    "M1",
+    "MIL",
+    "MII",
+)
 _DEFAULT_ALTITUDE_UNITS: tuple[UnitAlias, ...] = (
     UnitAlias(name="FT", aliases=("FT", "F7", "FI", "ET", "E7", "EI"), unit_expression="foot"),
-    UnitAlias(name="MI", aliases=("MI", "ML", "M1"), unit_expression="mile"),
+    UnitAlias(
+        name="MI",
+        aliases=_DEFAULT_MILE_ALTITUDE_ALIASES,
+        unit_expression="mile",
+    ),
     UnitAlias(name="KM", aliases=("KM",), unit_expression="kilometer"),
     UnitAlias(name="M", aliases=("M",), unit_expression="meter"),
 )

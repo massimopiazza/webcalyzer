@@ -138,6 +138,10 @@
     @apply absolute right-2 top-2 z-10 rounded-md border border-border/70 bg-background/95 p-1.5 shadow-sm backdrop-blur transition-opacity duration-150;
   }
 
+  .hover-reveal-actions {
+    @apply flex items-center justify-end gap-2 transition-opacity duration-150;
+  }
+
   @media (hover: hover) and (pointer: fine) {
     .docs-mermaid-toolbar {
       @apply pointer-events-none opacity-0;
@@ -145,6 +149,15 @@
 
     .docs-mermaid:hover .docs-mermaid-toolbar,
     .docs-mermaid:focus-within .docs-mermaid-toolbar {
+      @apply pointer-events-auto opacity-100;
+    }
+
+    .hover-reveal-actions {
+      @apply pointer-events-none opacity-0;
+    }
+
+    .group:hover .hover-reveal-actions,
+    .group:focus-within .hover-reveal-actions {
       @apply pointer-events-auto opacity-100;
     }
   }

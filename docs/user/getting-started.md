@@ -102,7 +102,7 @@ A healthy setup has these visible checks:
 
 - `webcalyzer --help` prints the subcommand list
 - `webcalyzer serve --root "$PWD" --templates-dir "$PWD/configs"` starts without import errors
-- <http://127.0.0.1:8765/api/meta> returns JSON with roots, templates directory, and parser defaults
+- <http://127.0.0.1:8765/api/meta> returns JSON with roots, templates directory, quantity library directory, and parser defaults
 - The **Run** page can load an existing template and enable **Run pipeline** after valid paths are selected
 
 Use the web UI when you want visual [calibration](calibration.md), safe local file browsing, inline validation, and live logs. Use the CLI when you want scripted runs, batch processing, or a specific downstream stage such as `rescue`, `reject-outliers`, or `render-overlay`; see [CLI reference](cli-reference.md).

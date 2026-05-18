@@ -14,7 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-/lib/
+/lib/*
+!/lib/custom_quantities.yaml
 /lib64/
 parts/
 sdist/

@@ -90,6 +90,8 @@ parsing:
         - MI
         - ML
         - M1
+        - MIL
+        - MII
         unit: mile
       KM:
         aliases:
@@ -137,6 +139,8 @@ parsing:
   - MI
   - ML
   - M1
+  - MIL
+  - MII
   - KM
   - M
 custom_telemetry_quantities:

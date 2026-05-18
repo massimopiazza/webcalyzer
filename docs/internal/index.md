@@ -24,7 +24,7 @@ Note: The YAML profile shape is the cross-surface contract. If a configuration f
 
 **Profile DTO.** TypeScript mirror of `ProfileModel` used by the web frontend. Zod performs inline validation before the server validates again.
 
-**Quantity library.** `custom_quantities.yaml` in the templates directory. It stores reusable telemetry definitions and seeds canonical defaults. Profiles embed snapshots for custom fields.
+**Quantity library.** `lib/custom_quantities.yaml` by default. It stores reusable telemetry definitions and seeds canonical defaults. Profiles embed snapshots for custom fields.
 
 **Run job.** In-memory background execution record created by `JobManager`. One job may be active at a time.
 

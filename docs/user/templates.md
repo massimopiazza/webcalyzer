@@ -1,8 +1,8 @@
 # Templates
 
-Templates are YAML profiles stored under the server templates directory. The **Templates** page lets you inspect the available profiles, import new YAML, download existing YAML, and remove profiles that are no longer needed. Templates are the bridge between visual web editing and repeatable CLI runs.
+Templates are YAML profiles stored under the server templates directory. The **Templates** page lets you inspect the available profiles, import new YAML, duplicate existing profiles, download YAML, and remove profiles that are no longer needed. Templates are the bridge between visual web editing and repeatable CLI runs.
 
-The quantity library file `custom_quantities.yaml` also lives in the templates directory, but it is managed from **Quantities** and is not listed as a profile template.
+The quantity library file `lib/custom_quantities.yaml` is managed from **Quantities** and is not listed as a profile template.
 
 ## Template Concepts
 
@@ -54,6 +54,12 @@ Note: The import flow writes only under the configured templates directory. It r
 Click **YAML** next to a template. The browser downloads the current file contents from the server.
 
 Use this when you want to compare a saved profile with **Preview YAML** on the **Run** page or keep a copy outside the templates directory.
+
+### Duplicate a template
+
+Click **Duplicate** next to a template. The dialog suggests the same filename with ` copy` appended before `.yaml`, saves only in the same folder, and lets you choose another filename.
+
+Use this when you want to branch a profile without changing the original.
 
 ### Delete a template
 

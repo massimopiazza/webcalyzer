@@ -26,7 +26,7 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 
 **Field slot.** One telemetry region in a segment. Canonical slots are `met`, `stage1_velocity`, `stage1_altitude`, `stage2_velocity`, and `stage2_altitude`. Custom slots use `custom_<slug>` names from the quantity library. Enabled slots have a fixed type, optional stage, and normalized bounding box.
 
-**Quantity.** A reusable telemetry definition with dimensionality, display unit, optional aliases, and an optional description. Quantities live in `custom_quantities.yaml`; enabled custom quantities are copied into profile templates.
+**Quantity.** A reusable telemetry definition with dimensionality, display unit, optional aliases, and an optional description. Quantities live in `lib/custom_quantities.yaml`; enabled custom quantities are copied into profile templates.
 
 **Mission elapsed time.** The extracted time axis from the video overlay. Webcalyzer uses mission elapsed time to align readings across frames and to build trajectory outputs.
 

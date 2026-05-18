@@ -104,7 +104,7 @@ Skip-detection mode can be faster, but it removes detection fallback behavior. U
 
 Phase B is sequential because it uses temporal context. It reads Phase A results in time order, parses mission elapsed time, resolves each canonical and custom measurement series with unit context and continuity checks, applies stage activation, and writes raw rows.
 
-Unit inference only happens inside the parsing layer. Unit conversion is Pint-backed, unit recovery uses exact aliases before RapidFuzz fallback matches, and the series resolver can use a dominant explicit unit to recover isolated OCR mistakes. Canonical velocity and altitude columns are normalized to the parsing output units, while custom quantity columns are normalized to each quantity's display unit. Downstream stages should consume normalized columns. The user-facing unit model is documented in [trajectory reconstruction](../user/trajectory-reconstruction.md#convert-ocr-readings-into-physical-units).
+Unit inference only happens inside the parsing layer. Unit conversion is Pint-backed, unit recovery uses exact aliases before RapidFuzz fallback matches, and the series resolver can use a dominant explicit unit to recover isolated OCR mistakes. If strip OCR returns a numeric measurement with an unrecognized unit-like token, Phase A reruns OCR on the calibrated field crop before Phase B infers a unit. Canonical velocity and altitude columns are normalized to the parsing output units, while custom quantity columns are normalized to each quantity's display unit. Downstream stages should consume normalized columns. The user-facing unit model is documented in [trajectory reconstruction](../user/trajectory-reconstruction.md#convert-ocr-readings-into-physical-units).
 
 ### Clean rebuild and outliers
 

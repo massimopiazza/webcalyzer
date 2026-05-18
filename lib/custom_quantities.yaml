@@ -38,6 +38,8 @@ quantities:
     KM: kilometer
     M: meter
     MI: mile
+    MIL: mile
+    MII: mile
 - id: q_stage2_velocity
   name: stage2_velocity
   slug: stage2_velocity
@@ -64,6 +66,8 @@ quantities:
     KM: kilometer
     M: meter
     MI: mile
+    MIL: mile
+    MII: mile
 - id: q_64806b6f1053
   name: pressure
   slug: pressure
