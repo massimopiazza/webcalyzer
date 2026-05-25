@@ -338,6 +338,11 @@ def create_app(config: ServeConfig) -> FastAPI:
             )
         return results
 
+    @app.get("/api/templates/{name:path}/yaml")
+    def template_yaml(name: str) -> Response:
+        target = _resolve_template_path(config, name, must_exist=True)
+        return FileResponse(target, media_type="text/yaml", filename=target.name)
+
     @app.get("/api/templates/{name:path}")
     def get_template(name: str) -> dict[str, Any]:
         target = _resolve_template_path(config, name, must_exist=True)
@@ -407,11 +412,6 @@ def create_app(config: ServeConfig) -> FastAPI:
             target.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"name": name, "profile": model.model_dump(mode="json")}
-
-    @app.get("/api/templates/{name:path}/yaml")
-    def template_yaml(name: str) -> Response:
-        target = _resolve_template_path(config, name, must_exist=True)
-        return FileResponse(target, media_type="text/yaml", filename=target.name)
 
     @app.post("/api/profile/validate-draft")
     def validate_profile_draft(profile: dict[str, Any] = Body(...)) -> dict[str, Any]:

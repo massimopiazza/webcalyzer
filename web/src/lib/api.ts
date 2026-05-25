@@ -291,6 +291,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, yaml: yamlText }),
     }),
+  templateYaml: async (name: string) => {
+    const response = await fetch(`/api/templates/${encodeURI(name)}/yaml`);
+    if (!response.ok) {
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        try {
+          body = await response.text();
+        } catch {
+          /* ignore */
+        }
+      }
+      const message =
+        typeof body === "object" && body !== null && "detail" in body
+          ? typeof (body as { detail: unknown }).detail === "string"
+            ? ((body as { detail: string }).detail)
+            : `HTTP ${response.status}`
+          : `HTTP ${response.status}`;
+      throw new ApiError(response.status, message, body);
+    }
+    return await response.text();
+  },
   templateYamlUrl: (name: string) => `/api/templates/${encodeURI(name)}/yaml`,
   quantities: () => request<{ path: string; quantities: QuantityDTO[] }>("/api/quantities"),
   createQuantity: (quantity: Partial<QuantityDTO>) =>

@@ -188,6 +188,10 @@ export function CalibratePage({
     }
     return current !== calibrationSignature(calibrationFromProfile(emptyProfile()));
   }, [calibrationBaseline, state.profile]);
+  const runnableSummary = useMemo(
+    () => summarizeRunnableErrors(state.profile, state.runnableErrors),
+    [state.profile, state.runnableErrors],
+  );
 
   useEffect(() => {
     if (activeVisibleSlots.length === 0 || activeVisibleSlots.includes(activeSlot)) return;
@@ -591,43 +595,48 @@ export function CalibratePage({
     setQuantityDialogOpen(true);
   };
 
-  const addQuantityToAllSegments = (quantity: QuantityOption) => {
+  const addQuantityToCurrentSegment = (quantity: QuantityOption) => {
+    const targetSegment = state.profile.segments[activeSegmentIndex];
+    if (!targetSegment) return;
+
     const fieldName = fieldNameForQuantity(quantity);
     const isCanonical = isCanonicalFieldName(fieldName);
-    setVisibleFieldSlotsBySegment((previous) =>
-      state.profile.segments.map((segment, index) =>
-        addVisibleSlot(
-          normalizeVisibleSlotsForSegment(previous[index], segment, state.profile),
-          fieldName,
-          state.profile.custom_telemetry_quantities,
-        ),
+    const profileQuantity = toProfileQuantity(quantity);
+    const nextCustomQuantities =
+      isCanonical || state.profile.custom_telemetry_quantities.some((current) => current.id === quantity.id)
+        ? state.profile.custom_telemetry_quantities
+        : [...state.profile.custom_telemetry_quantities, profileQuantity];
+    const profileWithQuantity = { ...state.profile, custom_telemetry_quantities: nextCustomQuantities };
+    const resolvedQuantity =
+      nextCustomQuantities.find((current) => current.id === quantity.id) ?? profileQuantity;
+    const nextSegment = cloneSegment(targetSegment);
+
+    nextSegment.visible_fields = addVisibleSlot(
+      normalizeVisibleSlotsForSegment(
+        visibleFieldSlotsBySegment[activeSegmentIndex],
+        targetSegment,
+        state.profile,
       ),
+      fieldName,
+      nextCustomQuantities,
     );
-    state.setProfile((prev) => {
-      const alreadyInProfile = prev.custom_telemetry_quantities.some(
-        (current) => current.id === quantity.id,
-      );
-      const profileQuantity = toProfileQuantity(quantity);
-      return {
-        ...prev,
-        custom_telemetry_quantities: isCanonical || alreadyInProfile
-          ? prev.custom_telemetry_quantities
-          : [...prev.custom_telemetry_quantities, profileQuantity],
-        segments: prev.segments.map((segment) => ({
-          ...segment,
-          visible_fields: addVisibleSlot(
-            normalizeVisibleSlotsForSegment(segment.visible_fields, segment, prev),
-            fieldName,
-            prev.custom_telemetry_quantities,
-          ),
-          fields: {
-            ...segment.fields,
-            [fieldName]: segment.fields[fieldName] ?? (
-              isCanonical ? fieldFor(fieldName, prev) : customFieldValue(profileQuantity)
-            ),
-          },
-        })),
-      };
+    nextSegment.fields[fieldName] =
+      nextSegment.fields[fieldName] ??
+      (isCanonical ? fieldFor(fieldName, profileWithQuantity) : customFieldValue(resolvedQuantity));
+
+    setVisibleFieldSlotsBySegment((previous) =>
+      state.profile.segments.map((segment, index) => {
+        const currentSlots = normalizeVisibleSlotsForSegment(previous[index], segment, state.profile);
+        return index === activeSegmentIndex
+          ? addVisibleSlot(currentSlots, fieldName, nextCustomQuantities)
+          : currentSlots;
+      }),
+    );
+    state.setProfile({
+      ...profileWithQuantity,
+      segments: state.profile.segments.map((segment, index) =>
+        index === activeSegmentIndex ? nextSegment : segment,
+      ),
     });
     setActiveSlot(fieldName);
     setQuantityDialogOpen(false);
@@ -932,14 +941,47 @@ export function CalibratePage({
             <CardHeader className="pb-2">
               <CardTitle>Readiness</CardTitle>
             </CardHeader>
-            <CardContent className="text-sm">
+            <CardContent className="space-y-3 text-sm">
               {state.isRunnable ? (
                 <span className="text-success">Runnable profile</span>
               ) : (
-                <span className="text-destructive">
-                  Template saving is allowed for drafts. Run is blocked until every segment has a
-                  valid time box.
-                </span>
+                <>
+                  <p className="text-destructive">
+                    Template saving is allowed for drafts. Run is blocked by{" "}
+                    {runnableSummary.issueCount} issue
+                    {runnableSummary.issueCount === 1 ? "" : "s"} across{" "}
+                    {runnableSummary.affectedSegmentCount} segment
+                    {runnableSummary.affectedSegmentCount === 1 ? "" : "s"}.
+                  </p>
+                  {runnableSummary.segmentIssues.length > 0 && (
+                    <ul className="space-y-2">
+                      {runnableSummary.segmentIssues.map((segmentIssue) => (
+                        <li
+                          key={segmentIssue.segmentId}
+                          className="rounded-md border border-border/70 bg-muted/15 px-3 py-2"
+                        >
+                          <span className="font-mono text-foreground">{segmentIssue.segmentId}</span>
+                          :{" "}
+                          <span className="text-muted-foreground">
+                            {segmentIssue.issues.join(" · ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {runnableSummary.generalIssues.length > 0 && (
+                    <ul className="space-y-2">
+                      {runnableSummary.generalIssues.map((issue) => (
+                        <li
+                          key={issue}
+                          className="rounded-md border border-border/70 bg-muted/15 px-3 py-2 text-muted-foreground"
+                        >
+                          {issue}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -953,8 +995,9 @@ export function CalibratePage({
         search={quantitySearch}
         onSearchChange={setQuantitySearch}
         profile={state.profile}
+        activeSegmentIndex={activeSegmentIndex}
         visibleFieldSlotsBySegment={visibleFieldSlotsBySegment}
-        onSelect={addQuantityToAllSegments}
+        onSelect={addQuantityToCurrentSegment}
       />
     </>
   );
@@ -968,6 +1011,7 @@ function AddQuantityDialog({
   search,
   onSearchChange,
   profile,
+  activeSegmentIndex,
   visibleFieldSlotsBySegment,
   onSelect,
 }: {
@@ -978,10 +1022,12 @@ function AddQuantityDialog({
   search: string;
   onSearchChange: (value: string) => void;
   profile: Profile;
+  activeSegmentIndex: number;
   visibleFieldSlotsBySegment: VisibleFieldSlotsBySegment;
   onSelect: (quantity: QuantityOption) => void;
 }) {
   const filtered = useMemo(() => filterQuantities(quantities, search), [quantities, search]);
+  const activeSegment = profile.segments[activeSegmentIndex];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -989,7 +1035,8 @@ function AddQuantityDialog({
         <DialogHeader className="px-6 pb-4 pt-6">
           <DialogTitle>Add quantity</DialogTitle>
           <DialogDescription>
-            Choose a quantity to enable across every calibration segment.
+            Choose a quantity to enable in the current segment. Any later split created from this
+            segment inherits the same visible quantities by default.
           </DialogDescription>
         </DialogHeader>
         <div className="border-y border-border/70 bg-muted/10 px-6 py-4">
@@ -1020,6 +1067,13 @@ function AddQuantityDialog({
             <div className="space-y-2">
               {filtered.map((quantity) => {
                 const fieldName = fieldNameForQuantity(quantity);
+                const visibleInCurrentSegment = activeSegment
+                  ? normalizeVisibleSlotsForSegment(
+                      visibleFieldSlotsBySegment[activeSegmentIndex],
+                      activeSegment,
+                      profile,
+                    ).includes(fieldName)
+                  : false;
                 const visibleSegments = profile.segments.filter((segment, index) =>
                   normalizeVisibleSlotsForSegment(
                     visibleFieldSlotsBySegment[index],
@@ -1027,17 +1081,15 @@ function AddQuantityDialog({
                     profile,
                   ).includes(fieldName),
                 ).length;
-                const visibleEverywhere =
-                  profile.segments.length > 0 && visibleSegments === profile.segments.length;
                 return (
                   <button
                     type="button"
                     key={quantity.id}
-                    disabled={visibleEverywhere}
+                    disabled={visibleInCurrentSegment}
                     onClick={() => onSelect(quantity)}
                     className={cn(
                       "group w-full rounded-lg border p-4 text-left transition-colors",
-                      visibleEverywhere
+                      visibleInCurrentSegment
                         ? "cursor-default border-border/50 bg-muted/10 opacity-70"
                         : "border-border/70 bg-muted/20 hover:border-primary/60 hover:bg-primary/10",
                     )}
@@ -1060,8 +1112,8 @@ function AddQuantityDialog({
                         </div>
                       </div>
                       <Badge variant="outline" className="shrink-0 normal-case tracking-normal">
-                        {visibleEverywhere
-                          ? "visible in all"
+                        {visibleInCurrentSegment
+                          ? `already in ${activeSegment?.id ?? "current segment"}`
                           : visibleSegments > 0
                             ? `${visibleSegments}/${profile.segments.length} segments`
                             : "not visible"}
@@ -1711,6 +1763,73 @@ function orderFieldSlots(
   return [...ordered, ...names.filter((name) => !included.has(name))].filter(
     (name, index, array) => array.indexOf(name) === index,
   );
+}
+
+function summarizeRunnableErrors(
+  profile: Profile,
+  runnableErrors: Record<string, string>,
+): {
+  issueCount: number;
+  affectedSegmentCount: number;
+  segmentIssues: { segmentId: string; issues: string[] }[];
+  generalIssues: string[];
+} {
+  const segmentIssues = new Map<number, Set<string>>();
+  const generalIssues = new Set<string>();
+
+  for (const [key, message] of Object.entries(runnableErrors)) {
+    const path = key.split(".");
+    if (path[0] !== "segments" || path[1] === undefined) {
+      generalIssues.add(message);
+      continue;
+    }
+    const segmentIndex = Number(path[1]);
+    if (!Number.isInteger(segmentIndex)) {
+      generalIssues.add(message);
+      continue;
+    }
+    const segment = profile.segments[segmentIndex];
+    if (!segment) {
+      generalIssues.add(message);
+      continue;
+    }
+    const summary = describeRunnableIssue(profile, path.slice(2), message);
+    const issues = segmentIssues.get(segmentIndex) ?? new Set<string>();
+    issues.add(summary);
+    segmentIssues.set(segmentIndex, issues);
+  }
+
+  const orderedSegmentIssues = Array.from(segmentIssues.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([segmentIndex, issues]) => ({
+      segmentId: profile.segments[segmentIndex]?.id ?? `segment_${segmentIndex + 1}`,
+      issues: Array.from(issues),
+    }));
+
+  return {
+    issueCount: Object.keys(runnableErrors).length,
+    affectedSegmentCount: orderedSegmentIssues.length,
+    segmentIssues: orderedSegmentIssues,
+    generalIssues: Array.from(generalIssues),
+  };
+}
+
+function describeRunnableIssue(profile: Profile, path: string[], message: string): string {
+  if (path[0] === "fields" && path[1]) {
+    return `${labelForField(path[1], profile.custom_telemetry_quantities)}: ${message}`;
+  }
+  if (
+    path[0] === "start_frame_index" ||
+    path[0] === "end_frame_index" ||
+    path[0] === "start_time_s" ||
+    path[0] === "end_time_s"
+  ) {
+    return `segment range: ${message}`;
+  }
+  if (path[0] === "visible_fields") {
+    return `visible fields: ${message}`;
+  }
+  return message;
 }
 
 function colorForField(name: FieldSlotName): string {

@@ -4,6 +4,7 @@ import { ApiError, TemplateSummary, api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { TemplateYamlButton } from "@/components/TemplatePicker";
 import { Input, Textarea } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -153,11 +154,11 @@ export function TemplatesPage() {
                     <Button size="sm" variant="outline" onClick={() => openDuplicateDialog(tpl)}>
                       <Copy className="mr-1 h-3 w-3" /> Duplicate
                     </Button>
-                    <Button asChild size="sm" variant="outline">
-                      <a href={api.templateYamlUrl(tpl.name)} target="_blank" rel="noreferrer">
-                        <Download className="mr-1 h-3 w-3" /> YAML
-                      </a>
-                    </Button>
+                    <TemplateYamlButton
+                      name={tpl.name}
+                      label="YAML"
+                      icon={<Download className="mr-1 h-3 w-3" />}
+                    />
                     <Button
                       size="sm"
                       variant="outline"

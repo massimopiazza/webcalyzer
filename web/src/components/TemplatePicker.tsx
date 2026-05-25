@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { HelpTip } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
@@ -114,11 +115,7 @@ export function TemplatePicker({
           </Button>
         </HelpTip>
         {selected && (
-          <Button variant="outline" size="sm" asChild>
-            <a href={api.templateYamlUrl(selected)} target="_blank" rel="noreferrer">
-              <FolderOpen className="mr-1 h-3 w-3" /> Open YAML
-            </a>
-          </Button>
+          <TemplateYamlButton name={selected} label="Open YAML" icon={<FolderOpen className="mr-1 h-3 w-3" />} />
         )}
       </div>
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -137,6 +134,74 @@ export function TemplatePicker({
               Discard and start blank
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+type TemplateYamlButtonProps = {
+  name: string;
+  label: string;
+  icon?: ReactNode;
+  variant?: "default" | "outline" | "ghost" | "secondary";
+  size?: "default" | "sm" | "lg" | "icon";
+};
+
+export function TemplateYamlButton({
+  name,
+  label,
+  icon,
+  variant = "outline",
+  size = "sm",
+}: TemplateYamlButtonProps) {
+  const [open, setOpen] = useState(false);
+  const [yaml, setYaml] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+
+    const loadYaml = async () => {
+      try {
+        setLoading(true);
+        setYaml("");
+        const nextYaml = await api.templateYaml(name);
+        if (!cancelled) setYaml(nextYaml);
+      } catch (err) {
+        if (!cancelled) {
+          toast.error((err as ApiError).message);
+          setOpen(false);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadYaml();
+    return () => {
+      cancelled = true;
+    };
+  }, [name, open]);
+
+  return (
+    <>
+      <Button variant={variant} size={size} type="button" onClick={() => setOpen(true)}>
+        {icon}
+        {label}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{name}</DialogTitle>
+            <DialogDescription>Raw YAML for the selected template.</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[65vh] rounded-md border border-border/70 bg-black/40">
+            <pre className="p-4 whitespace-pre-wrap font-mono text-xs leading-relaxed">
+              {loading ? "Loading YAML..." : yaml}
+            </pre>
+          </ScrollArea>
         </DialogContent>
       </Dialog>
     </>
