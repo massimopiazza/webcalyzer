@@ -138,17 +138,24 @@
     @apply absolute right-2 top-2 z-10 rounded-md border border-border/70 bg-background/95 p-1.5 shadow-sm backdrop-blur transition-opacity duration-150;
   }
 
+  .calibration-video-toolbar {
+    @apply absolute right-2 top-2 z-10 transition-opacity duration-150;
+  }
+
   .hover-reveal-actions {
     @apply flex items-center justify-end gap-2 transition-opacity duration-150;
   }
 
   @media (hover: hover) and (pointer: fine) {
-    .docs-mermaid-toolbar {
+    .docs-mermaid-toolbar,
+    .calibration-video-toolbar {
       @apply pointer-events-none opacity-0;
     }
 
     .docs-mermaid:hover .docs-mermaid-toolbar,
-    .docs-mermaid:focus-within .docs-mermaid-toolbar {
+    .docs-mermaid:focus-within .docs-mermaid-toolbar,
+    .calibration-video:hover .calibration-video-toolbar,
+    .calibration-video:focus-within .calibration-video-toolbar {
       @apply pointer-events-auto opacity-100;
     }
 

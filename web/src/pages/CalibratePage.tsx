@@ -11,6 +11,8 @@ import {
   Scissors,
   Search,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { ApiError, ProfileDTO, QuantityDTO, VideoMetadata, api } from "@/lib/api";
 import { useProfileForm } from "@/lib/profileForm";
@@ -43,6 +45,7 @@ import { SaveAsTemplateButton, TemplatePicker } from "@/components/TemplatePicke
 import { PathPicker } from "@/components/PathPicker";
 import { PageHeader } from "@/components/PageHeader";
 import { Switch } from "@/components/ui/switch";
+import { HelpTip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -57,6 +60,10 @@ const FRAME_PREVIEW_CADENCE_MS = 120;
 const FRAME_LOADING_DELAY_MS = 500;
 const FIELD_BOX_FILL_ALPHA = 0.13;
 const FIELD_DRAFT_FILL_ALPHA = 0.2;
+const CALIBRATION_VIDEO_DEFAULT_ZOOM = 1;
+const CALIBRATION_VIDEO_MIN_ZOOM = 1;
+const CALIBRATION_VIDEO_MAX_ZOOM = 4;
+const CALIBRATION_VIDEO_ZOOM_STEP = 0.25;
 
 const FIELD_COLORS: Record<CanonicalFieldName, string> = {
   met: "#5cc4ff",
@@ -769,7 +776,7 @@ export function CalibratePage({
               currentName={templateName}
               onSaved={onSavedTemplate}
               variant="default"
-              label="Save calibration as template"
+              label="Save as template"
               title="Save this calibration into a YAML template. Loaded templates keep their other settings unless you changed them."
               dialogTitle="Save calibration as template"
               dialogDescription={
@@ -808,15 +815,15 @@ export function CalibratePage({
 
         {metadata && activeSegment && (
           <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-              <div>
+            <CardHeader className="flex flex-col gap-3 space-y-0 pb-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
                 <CardTitle>{activeSegment.id}</CardTitle>
                 <p className="mt-1 text-xs text-muted-foreground">
                   frame {frameIndex} · {timeForFrame(frameIndex, metadata.fps).toFixed(3)}s ·
                   range [{activeSegment.start_frame_index}, {activeSegment.end_frame_index})
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                 <Button size="sm" variant="outline" onClick={setCropStart}>
                   <Scissors className="mr-1 h-4 w-4" /> Crop start
                 </Button>
@@ -833,18 +840,92 @@ export function CalibratePage({
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
-                <div ref={videoPanelRef} className="rounded-md border border-border/70 bg-black/40">
-                  <CalibrationCanvas
-                    videoPath={videoPath}
-                    frameIndex={previewFrameIndex}
-                    fields={activeSegment.fields}
-                    visibleSlots={activeVisibleSlots}
-                    activeSlot={activeSlot}
-                    customQuantities={state.profile.custom_telemetry_quantities}
-                    drawing={drawing}
-                    onDrawing={setDrawing}
-                    onCommit={updateActiveBbox}
-                  />
+                <div className="min-w-0 space-y-3">
+                  <div ref={videoPanelRef} className="rounded-md border border-border/70 bg-black/40">
+                    <CalibrationCanvas
+                      videoPath={videoPath}
+                      frameIndex={previewFrameIndex}
+                      fields={activeSegment.fields}
+                      visibleSlots={activeVisibleSlots}
+                      activeSlot={activeSlot}
+                      customQuantities={state.profile.custom_telemetry_quantities}
+                      drawing={drawing}
+                      onDrawing={setDrawing}
+                      onCommit={updateActiveBbox}
+                    />
+                  </div>
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        startFrameHold(-1);
+                      }}
+                      onPointerUp={stopFrameHold}
+                      onPointerCancel={stopFrameHold}
+                      onPointerLeave={stopFrameHold}
+                      aria-label="Previous frame"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="min-w-0 space-y-2">
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(0, metadata.frame_count - 1)}
+                        value={frameIndex}
+                        onPointerDown={() => {
+                          sliderDraggingRef.current = true;
+                          stopFrameHold();
+                        }}
+                        onInput={(event) =>
+                          setSelectedFrameIndex(
+                            Number(event.currentTarget.value),
+                            sliderDraggingRef.current ? "cadence" : "immediate",
+                          )
+                        }
+                        onChange={(event) =>
+                          setSelectedFrameIndex(
+                            Number(event.currentTarget.value),
+                            sliderDraggingRef.current ? "cadence" : "immediate",
+                          )
+                        }
+                        onPointerUp={(event) => {
+                          sliderDraggingRef.current = false;
+                          setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
+                        }}
+                        onPointerCancel={(event) => {
+                          sliderDraggingRef.current = false;
+                          setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
+                        }}
+                        onTouchEnd={(event) => {
+                          sliderDraggingRef.current = false;
+                          setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
+                        }}
+                        className="w-full"
+                      />
+                      <SegmentRail
+                        segments={state.profile.segments}
+                        frameCount={metadata.frame_count}
+                        onMergeSplit={mergeSplitAtBoundary}
+                      />
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      onPointerDown={(event) => {
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        startFrameHold(1);
+                      }}
+                      onPointerUp={stopFrameHold}
+                      onPointerCancel={stopFrameHold}
+                      onPointerLeave={stopFrameHold}
+                      aria-label="Next frame"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
                 <SlotPanel
                   segment={activeSegment}
@@ -857,80 +938,6 @@ export function CalibratePage({
                   onRemoveFromCurrentSegment={removeQuantityFromCurrentSegment}
                   onRemoveFromAllSegments={removeQuantityFromAllSegments}
                 />
-              </div>
-              <div className="space-y-3">
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    onPointerDown={(event) => {
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                      startFrameHold(-1);
-                    }}
-                    onPointerUp={stopFrameHold}
-                    onPointerCancel={stopFrameHold}
-                    onPointerLeave={stopFrameHold}
-                    aria-label="Previous frame"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <div className="min-w-0 space-y-2">
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(0, metadata.frame_count - 1)}
-                      value={frameIndex}
-                      onPointerDown={() => {
-                        sliderDraggingRef.current = true;
-                        stopFrameHold();
-                      }}
-                      onInput={(event) =>
-                        setSelectedFrameIndex(
-                          Number(event.currentTarget.value),
-                          sliderDraggingRef.current ? "cadence" : "immediate",
-                        )
-                      }
-                      onChange={(event) =>
-                        setSelectedFrameIndex(
-                          Number(event.currentTarget.value),
-                          sliderDraggingRef.current ? "cadence" : "immediate",
-                        )
-                      }
-                      onPointerUp={(event) => {
-                        sliderDraggingRef.current = false;
-                        setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
-                      }}
-                      onPointerCancel={(event) => {
-                        sliderDraggingRef.current = false;
-                        setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
-                      }}
-                      onTouchEnd={(event) => {
-                        sliderDraggingRef.current = false;
-                        setSelectedFrameIndex(Number(event.currentTarget.value), "immediate");
-                      }}
-                      className="w-full"
-                    />
-                    <SegmentRail
-                      segments={state.profile.segments}
-                      frameCount={metadata.frame_count}
-                      onMergeSplit={mergeSplitAtBoundary}
-                    />
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    onPointerDown={(event) => {
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                      startFrameHold(1);
-                    }}
-                    onPointerUp={stopFrameHold}
-                    onPointerCancel={stopFrameHold}
-                    onPointerLeave={stopFrameHold}
-                    aria-label="Next frame"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
               </div>
             </CardContent>
           </Card>
@@ -1159,10 +1166,27 @@ function CalibrationCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [isSlowLoading, setIsSlowLoading] = useState(false);
+  const [zoom, setZoom] = useState(CALIBRATION_VIDEO_DEFAULT_ZOOM);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const captureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null);
   const pendingLoadStartedAtRef = useRef<number | null>(null);
   const activeEnabled = Boolean(fields[activeSlot]);
+
+  const clampVideoZoom = (value: number) => {
+    const clamped = Math.min(CALIBRATION_VIDEO_MAX_ZOOM, Math.max(CALIBRATION_VIDEO_MIN_ZOOM, value));
+    return Math.round(clamped * 100) / 100;
+  };
+
+  const shiftVideoZoom = (delta: number) => {
+    setZoom((currentZoom) => clampVideoZoom(currentZoom + delta));
+  };
+
+  const resetVideoZoom = () => {
+    setZoom(CALIBRATION_VIDEO_DEFAULT_ZOOM);
+  };
+
+  const zoomButtonClassName =
+    "h-8 w-8 border border-border/70 bg-background/65 text-muted-foreground shadow-sm backdrop-blur-md backdrop-saturate-150 hover:bg-accent/20 hover:text-foreground supports-[backdrop-filter]:bg-background/55";
 
   const cancelDrawing = useCallback(() => {
     const capture = captureRef.current;
@@ -1184,6 +1208,10 @@ function CalibrationCanvas({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [cancelDrawing, drawing]);
+
+  useEffect(() => {
+    setZoom(CALIBRATION_VIDEO_DEFAULT_ZOOM);
+  }, [videoPath]);
 
   useEffect(() => {
     if (!videoPath) {
@@ -1265,81 +1293,129 @@ function CalibrationCanvas({
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="relative aspect-video w-full select-none"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={cancelDrawing}
-    >
-      {imgUrl && (
-        <img
-          src={imgUrl}
-          key={imgUrl}
-          alt={`Frame ${frameIndex}`}
-          className={cn(
-            "pointer-events-none absolute inset-0 h-full w-full object-contain transition-opacity duration-150",
-            isSlowLoading && "opacity-35 grayscale",
+    <div className="calibration-video relative aspect-video w-full select-none overflow-hidden">
+      <div className="calibration-video-toolbar">
+        <div className="flex items-center gap-1" role="group" aria-label="Video zoom controls">
+          <HelpTip text="Zoom out video">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={zoomButtonClassName}
+              onClick={() => shiftVideoZoom(-CALIBRATION_VIDEO_ZOOM_STEP)}
+              disabled={zoom <= CALIBRATION_VIDEO_MIN_ZOOM}
+            >
+              <ZoomOut className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Zoom out video</span>
+            </Button>
+          </HelpTip>
+          <HelpTip text="Reset video zoom">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={zoomButtonClassName}
+              onClick={resetVideoZoom}
+              disabled={Math.abs(zoom - CALIBRATION_VIDEO_DEFAULT_ZOOM) < 0.01}
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Reset video zoom</span>
+            </Button>
+          </HelpTip>
+          <HelpTip text="Zoom in video">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={zoomButtonClassName}
+              onClick={() => shiftVideoZoom(CALIBRATION_VIDEO_ZOOM_STEP)}
+              disabled={zoom >= CALIBRATION_VIDEO_MAX_ZOOM}
+            >
+              <ZoomIn className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Zoom in video</span>
+            </Button>
+          </HelpTip>
+        </div>
+      </div>
+      <div className="h-full w-full overflow-auto">
+        <div
+          ref={containerRef}
+          className="relative aspect-video min-w-full"
+          style={{ width: `${zoom * 100}%` }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={cancelDrawing}
+        >
+          {imgUrl && (
+            <img
+              src={imgUrl}
+              key={imgUrl}
+              alt={`Frame ${frameIndex}`}
+              className={cn(
+                "pointer-events-none absolute inset-0 h-full w-full object-contain transition-opacity duration-150",
+                isSlowLoading && "opacity-35 grayscale",
+              )}
+              draggable={false}
+            />
           )}
-          draggable={false}
-        />
-      )}
-      {isSlowLoading && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-muted/35">
-          <LoaderCircle className="h-8 w-8 animate-spin text-primary drop-shadow" />
-        </div>
-      )}
-      <svg className="pointer-events-none absolute inset-0 h-full w-full">
-        {visibleSlots.map((name) => {
-          const field = fields[name];
-          const box = field?.bbox_x1y1x2y2;
-          if (!box) return null;
-          const [x0, y0, x1, y1] = box;
-          const color = colorForField(name);
-          const active = name === activeSlot;
-          return (
-            <g key={name} opacity={active ? 1 : 0.72}>
+          {isSlowLoading && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-muted/35">
+              <LoaderCircle className="h-8 w-8 animate-spin text-primary drop-shadow" />
+            </div>
+          )}
+          <svg className="pointer-events-none absolute inset-0 h-full w-full">
+            {visibleSlots.map((name) => {
+              const field = fields[name];
+              const box = field?.bbox_x1y1x2y2;
+              if (!box) return null;
+              const [x0, y0, x1, y1] = box;
+              const color = colorForField(name);
+              const active = name === activeSlot;
+              return (
+                <g key={name} opacity={active ? 1 : 0.72}>
+                  <rect
+                    x={`${x0 * 100}%`}
+                    y={`${y0 * 100}%`}
+                    width={`${(x1 - x0) * 100}%`}
+                    height={`${(y1 - y0) * 100}%`}
+                    fill={colorWithAlpha(color, FIELD_BOX_FILL_ALPHA)}
+                    stroke={color}
+                    strokeWidth={active ? 2 : 1.25}
+                  />
+                  <text
+                    x={`${x0 * 100}%`}
+                    y={`${y0 * 100}%`}
+                    dy={-4}
+                    fontSize={11}
+                    fill={color}
+                    style={{ paintOrder: "stroke", stroke: "#000", strokeWidth: 3 }}
+                  >
+                    {labelForField(name, customQuantities)}
+                  </text>
+                </g>
+              );
+            })}
+            {drawing && (
               <rect
-                x={`${x0 * 100}%`}
-                y={`${y0 * 100}%`}
-                width={`${(x1 - x0) * 100}%`}
-                height={`${(y1 - y0) * 100}%`}
-                fill={colorWithAlpha(color, FIELD_BOX_FILL_ALPHA)}
-                stroke={color}
-                strokeWidth={active ? 2 : 1.25}
+                x={`${Math.min(drawing[0], drawing[2]) * 100}%`}
+                y={`${Math.min(drawing[1], drawing[3]) * 100}%`}
+                width={`${Math.abs(drawing[2] - drawing[0]) * 100}%`}
+                height={`${Math.abs(drawing[3] - drawing[1]) * 100}%`}
+                fill={colorWithAlpha(colorForField(activeSlot), FIELD_DRAFT_FILL_ALPHA)}
+                stroke={colorForField(activeSlot)}
+                strokeWidth={2}
+                strokeDasharray="4 2"
               />
-              <text
-                x={`${x0 * 100}%`}
-                y={`${y0 * 100}%`}
-                dy={-4}
-                fontSize={11}
-                fill={color}
-                style={{ paintOrder: "stroke", stroke: "#000", strokeWidth: 3 }}
-              >
-                {labelForField(name, customQuantities)}
-              </text>
-            </g>
-          );
-        })}
-        {drawing && (
-          <rect
-            x={`${Math.min(drawing[0], drawing[2]) * 100}%`}
-            y={`${Math.min(drawing[1], drawing[3]) * 100}%`}
-            width={`${Math.abs(drawing[2] - drawing[0]) * 100}%`}
-            height={`${Math.abs(drawing[3] - drawing[1]) * 100}%`}
-            fill={colorWithAlpha(colorForField(activeSlot), FIELD_DRAFT_FILL_ALPHA)}
-            stroke={colorForField(activeSlot)}
-            strokeWidth={2}
-            strokeDasharray="4 2"
-          />
-        )}
-      </svg>
-      {!activeEnabled && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-sm text-muted-foreground">
-          Enable the active slot before drawing
+            )}
+          </svg>
+          {!activeEnabled && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-sm text-muted-foreground">
+              Enable the active slot before drawing
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
