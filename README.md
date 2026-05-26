@@ -316,8 +316,14 @@ RapidFuzz fallback matching second, and Pint-backed unit conversion into SI
 units. Measurement fields are resolved over the whole time series instead
 of one sample at a time, so a dominant explicit unit can recover isolated
 OCR unit mistakes such as `166 M` inside a run of `166 KM` readings. When
-the time-series evidence is weak or every interpretation would create an
-implausible jump, the parser leaves a gap rather than forcing a value.
+matching unit tokens, Phase B normalizes common OCR homoglyphs such as
+Cyrillic `К`, `М`, and `Н`, so a unit like `КM/H` is resolved as `KM/H`
+instead of accidentally matching the shorter `M/H` alias. It also keeps
+plain-digit readings as written while offering missing-decimal alternatives
+to the time-series resolver, allowing `17` to resolve as `1.7` when that is
+the smooth interpretation. When the time-series evidence is weak or every
+interpretation would create an implausible jump, the parser leaves a gap
+rather than forcing a value.
 
 The `skip_full_frame_ocr_fallback` profile setting and
 `--ocr-skip-detection` CLI flag enable an alternative Phase A path that
@@ -524,6 +530,13 @@ The row is rejected for that field when $D_i^2$ is greater than
 because the score is squared. The adaptive parts are the local robust
 variance and the cadence-scaled neighbor requirements, not an automatically
 selected sigma threshold.
+
+After the point-wise Mahalanobis pass, the filter runs a second two-sided
+block check. It looks for short or medium groups of samples that are smooth
+inside the group but inconsistent with both the preceding and following
+context. This catches OCR bursts such as repeated missing-decimal readings
+that can otherwise look locally self-consistent. Hardcoded anchor points
+remain protected and are not removed by either pass.
 
 ```bash
 webcalyzer reject-outliers --output outputs/ng3 --chi2 9 --window-s 40
@@ -745,6 +758,9 @@ compatible Pint unit and is mandatory. Unit aliases are optional mappings
 from OCR text to Pint unit expressions. When extraction sees explicit units,
 it converts to `display_unit`; when the feed omits a unit, it uses the recent
 explicit unit or the display unit so the output stream remains continuous.
+Built-in telemetry aliases include `G`/`GEE` for `standard_gravity`, so custom
+acceleration fields can parse values written as multiples of standard gravity
+without profile-specific aliases.
 Custom quantities are written to CSV and to `custom_telemetry.pdf`; they are
 not rendered into the overlay video.
 

@@ -62,6 +62,7 @@ _TELEMETRY_ALIASES: dict[str, str] = {
     "MPN": "mile/hour",
     "MРН": "mile/hour",
     "MPI": "mile/hour",
+    "G": "standard_gravity",
     "GEE": "standard_gravity",
     "GEES": "standard_gravity",
     "G'S": "standard_gravity",
@@ -199,6 +200,18 @@ def resolve_unit_alias(text: str, aliases: dict[str, str] | None = None) -> str 
         return None
     all_aliases = {**_TELEMETRY_ALIASES, **_normalized_aliases(aliases or {})}
     return all_aliases.get(normalized)
+
+
+def aliases_for_unit_expression(unit_expression: str, aliases: dict[str, str] | None = None) -> tuple[str, ...]:
+    target = _normalize_unit_expression(unit_expression).casefold()
+    all_aliases = {**_TELEMETRY_ALIASES, **_normalized_aliases(aliases or {})}
+    return tuple(
+        sorted(
+            alias
+            for alias, expression in all_aliases.items()
+            if _normalize_unit_expression(expression).casefold() == target
+        )
+    )
 
 
 @lru_cache(maxsize=1)

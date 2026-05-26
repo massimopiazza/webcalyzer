@@ -1,4 +1,4 @@
-from webcalyzer.units import unit_suggestions, validate_unit_compatible_with_dimension
+from webcalyzer.units import resolve_unit_alias, unit_suggestions, validate_unit_compatible_with_dimension
 
 
 def test_unit_suggestions_search_pint_registry_case_insensitively() -> None:
@@ -31,3 +31,7 @@ def test_prefixed_units_validate_against_dimensions() -> None:
     validate_unit_compatible_with_dimension("mW", "M*L^2/T^3")
     validate_unit_compatible_with_dimension("km", "L")
     validate_unit_compatible_with_dimension("μm", "L")
+
+
+def test_standard_gravity_short_alias_resolves() -> None:
+    assert resolve_unit_alias("G") == "standard_gravity"

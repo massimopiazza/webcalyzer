@@ -8,7 +8,7 @@ from typing import Callable
 from rapidfuzz import fuzz, process
 
 from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, TelemetryQuantityDefinition, UnitAlias
-from webcalyzer.units import converter_for, converter_for_quantity, resolve_unit_alias
+from webcalyzer.units import aliases_for_unit_expression, converter_for, converter_for_quantity, resolve_unit_alias
 
 
 # Legacy hard-coded conversions; kept for backward compatibility with call
@@ -31,6 +31,32 @@ TEXT_TRANSLATION = str.maketrans(
     }
 )
 
+UNIT_TEXT_TRANSLATION = str.maketrans(
+    {
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "Х": "X",
+        "Α": "A",
+        "Β": "B",
+        "Ε": "E",
+        "Η": "H",
+        "Κ": "K",
+        "Μ": "M",
+        "Ο": "O",
+        "Ρ": "P",
+        "Τ": "T",
+        "Χ": "X",
+    }
+)
+
 
 @dataclass(slots=True)
 class MeasurementOption:
@@ -45,6 +71,7 @@ class MeasurementOption:
     unit_match_text: str | None = None
     unit_match_score: float | None = None
     parse_confidence: float = 0.0
+    numeric_source: str = "literal"
 
 
 @dataclass(slots=True)
@@ -69,6 +96,13 @@ class UnitMatch:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class NumericToken:
+    token: str
+    source_token: str
+    source: str = "literal"
+
+
 OptionFilter = Callable[[MeasurementOption, float | None], bool]
 
 
@@ -79,6 +113,10 @@ def normalize_text(text: str) -> str:
 def normalize_numeric_token(token: str) -> str:
     token = normalize_text(token)
     return token.translate(TEXT_TRANSLATION)
+
+
+def _normalize_unit_text(text: str) -> str:
+    return normalize_text(text).translate(UNIT_TEXT_TRANSLATION)
 
 
 def _default_velocity_units() -> tuple[UnitAlias, ...]:
@@ -180,7 +218,7 @@ def measurement_text_needs_unit_fallback(
         return False
     return any(
         _is_unrecognized_unit_like_token(token)
-        for token in _unit_like_tokens(normalize_text(text))
+        for token in _raw_unit_like_tokens(normalize_text(text))
     )
 
 
@@ -197,30 +235,39 @@ def _detect_unit_matches(
     *,
     include_fuzzy: bool = True,
 ) -> list[UnitMatch]:
-    upper = normalize_text(text)
+    raw_upper = normalize_text(text)
+    upper = _normalize_unit_text(text)
     kind_parsing = _resolve_kind_parsing(kind, parsing)
-    exact_matches = _exact_unit_matches(upper, kind_parsing)
+    exact_matches = _exact_unit_matches(upper, raw_upper, kind_parsing)
     if exact_matches or not include_fuzzy:
         return exact_matches
     return _fuzzy_unit_matches(upper, kind_parsing)
 
 
-def _exact_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[UnitMatch]:
+def _exact_unit_matches(upper: str, raw_upper: str, kind_parsing: FieldKindParsing) -> list[UnitMatch]:
     matches: list[UnitMatch] = []
     seen: set[str] = set()
     alias_rows = sorted(
         (
-            (unit.name, alias)
+            (unit.name, alias, _normalize_unit_text(alias), normalize_text(alias))
             for unit in kind_parsing.units
             for alias in unit.aliases
             if alias
         ),
-        key=lambda item: len(item[1]),
+        key=lambda item: len(item[2]),
         reverse=True,
     )
-    for unit_name, alias in alias_rows:
-        pattern = rf"(?<![A-Z0-9]){re.escape(normalize_text(alias))}(?![A-Z0-9])"
-        if re.search(pattern, upper) and unit_name not in seen:
+    for unit_name, alias, normalized_alias, raw_alias in alias_rows:
+        if _unit_alias_is_single_symbol(normalized_alias):
+            search_text = raw_upper
+            search_alias = raw_alias
+            boundary_class = r"A-ZА-Я0-9/"
+        else:
+            search_text = upper
+            search_alias = normalized_alias
+            boundary_class = r"A-Z0-9/"
+        pattern = rf"(?<![{boundary_class}]){re.escape(search_alias)}(?![{boundary_class}])"
+        if re.search(pattern, search_text) and unit_name not in seen:
             matches.append(
                 UnitMatch(
                     unit_name=unit_name,
@@ -233,6 +280,10 @@ def _exact_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[Unit
     return matches
 
 
+def _unit_alias_is_single_symbol(alias: str) -> bool:
+    return len(re.sub(r"[^A-Z0-9]", "", alias)) <= 1
+
+
 def _fuzzy_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[UnitMatch]:
     tokens = _unit_like_tokens(upper)
     if not tokens:
@@ -240,7 +291,7 @@ def _fuzzy_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[Unit
     choices: dict[str, tuple[str, str]] = {}
     for unit in kind_parsing.units:
         for alias in unit.aliases:
-            normalized_alias = normalize_text(alias)
+            normalized_alias = _normalize_unit_text(alias)
             if len(normalized_alias.replace("/", "")) < 2:
                 continue
             choices[normalized_alias] = (unit.name, alias)
@@ -250,6 +301,8 @@ def _fuzzy_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[Unit
     matches: list[UnitMatch] = []
     seen: set[str] = set()
     for token in tokens:
+        if len(token.replace("/", "")) < 2:
+            continue
         match = process.extractOne(
             token,
             list(choices.keys()),
@@ -276,6 +329,11 @@ def _fuzzy_unit_matches(upper: str, kind_parsing: FieldKindParsing) -> list[Unit
 
 
 def _unit_like_tokens(upper: str) -> list[str]:
+    upper = _normalize_unit_text(upper)
+    return _raw_unit_like_tokens(upper)
+
+
+def _raw_unit_like_tokens(upper: str) -> list[str]:
     raw_tokens = re.findall(r"[A-ZА-Я]{1,8}(?:/[A-ZА-Я]{1,8})?", upper)
     stop_words = {
         "ALT",
@@ -336,15 +394,25 @@ def parse_met(text: str, parsing: ParsingProfile | None = None) -> float | None:
 
 
 def _extract_numeric_tokens(text: str, unit_suffix_tokens: tuple[str, ...] = ()) -> list[str]:
+    return [token.token for token in _extract_numeric_token_options(text, unit_suffix_tokens=unit_suffix_tokens)]
+
+
+def _extract_numeric_token_options(text: str, unit_suffix_tokens: tuple[str, ...] = ()) -> list[NumericToken]:
     upper = normalize_text(text)
     split_decimal_tokens = _extract_split_decimal_tokens(upper, unit_suffix_tokens=unit_suffix_tokens)
     raw_tokens = re.findall(
         r"[+-]?(?:[0-9OQDILSBG|]{1,3}(?:[,][0-9OQDILSBG|]{3})+(?:\.[0-9OQDILSBG|]+)?|[0-9OQDILSBG|]+(?:\.[0-9OQDILSBG|]+)?|\.[0-9OQDILSBG|]+)(?:[Ee][+-]?[0-9]+)?",
         upper,
     )
-    tokens: list[str] = []
-    seen: set[str] = set()
-    for token in [*split_decimal_tokens, *raw_tokens]:
+    tokens: list[NumericToken] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in split_decimal_tokens:
+        key = (candidate.token, candidate.source_token)
+        if key in seen:
+            continue
+        tokens.append(candidate)
+        seen.add(key)
+    for token in raw_tokens:
         digit_count = len(re.findall(r"[0-9]", token))
         has_separator = any(separator in token for separator in ",.:")
         has_ocr_letters = bool(re.search(r"[OQDILSBG|]", token))
@@ -353,27 +421,55 @@ def _extract_numeric_tokens(text: str, unit_suffix_tokens: tuple[str, ...] = ())
         if has_ocr_letters and not has_separator and digit_count < 3:
             continue
         normalized = normalize_numeric_token(token)
-        if normalized in seen:
-            continue
-        tokens.append(normalized)
-        seen.add(normalized)
+        for candidate in _numeric_token_candidates(normalized, source_token=token):
+            key = (candidate.token, candidate.source_token)
+            if key in seen:
+                continue
+            tokens.append(candidate)
+            seen.add(key)
     return tokens
 
 
-def _extract_split_decimal_tokens(upper: str, unit_suffix_tokens: tuple[str, ...]) -> list[str]:
+def _numeric_token_candidates(normalized: str, *, source_token: str) -> list[NumericToken]:
+    candidates = [NumericToken(token=normalized, source_token=source_token)]
+    if _plain_digits_can_have_missing_decimal(normalized):
+        candidates.append(
+            NumericToken(
+                token=f"{normalized[:-1]}.{normalized[-1]}",
+                source_token=source_token,
+                source="inferred_decimal",
+            )
+        )
+    return candidates
+
+
+def _plain_digits_can_have_missing_decimal(token: str) -> bool:
+    if not re.fullmatch(r"[+-]?[0-9]{2,3}", token):
+        return False
+    unsigned = token[1:] if token[0] in "+-" else token
+    return not unsigned.startswith("0")
+
+
+def _extract_split_decimal_tokens(upper: str, unit_suffix_tokens: tuple[str, ...]) -> list[NumericToken]:
     """Recover decimals when OCR inserts a word break around the point."""
 
-    tokens: list[str] = []
+    tokens: list[NumericToken] = []
     suffix_pattern = _unit_suffix_lookahead(unit_suffix_tokens)
-    patterns = [
-        r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\s+\.\s*([0-9OQDILSBG|]+)(?![A-Z0-9OQDILSBG|.])",
+    patterns: list[tuple[str, bool]] = [
+        (
+            r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\s+\.\s*([0-9OQDILSBG|]+)(?![A-Z0-9OQDILSBG|.])",
+            False,
+        ),
     ]
     if suffix_pattern:
         patterns.append(
-            r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\s+([0-9OQDILSBG|])\.?"
-            + suffix_pattern
+            (
+                r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\s+([0-9])\.?"
+                + suffix_pattern,
+                True,
+            )
         )
-    for pattern in patterns:
+    for pattern, allow_transposed in patterns:
         for match in re.finditer(pattern, upper):
             integer = normalize_numeric_token(match.group(1))
             fraction = normalize_numeric_token(match.group(2))
@@ -381,14 +477,35 @@ def _extract_split_decimal_tokens(upper: str, unit_suffix_tokens: tuple[str, ...
                 continue
             if not re.search(r"[0-9]", integer) or not re.search(r"[0-9]", fraction):
                 continue
-            tokens.append(f"{integer}.{fraction}")
+            source_token = match.group(0).strip()
+            tokens.append(NumericToken(token=f"{integer}.{fraction}", source_token=source_token))
+            transposed = _transposed_split_decimal_token(integer=integer, fraction=fraction)
+            if allow_transposed and transposed is not None:
+                tokens.append(
+                    NumericToken(
+                        token=transposed,
+                        source_token=source_token,
+                        source="inferred_transposed_decimal",
+                    )
+                )
     return tokens
+
+
+def _transposed_split_decimal_token(*, integer: str, fraction: str) -> str | None:
+    sign = ""
+    unsigned = integer
+    if integer.startswith(("+", "-")):
+        sign = integer[0]
+        unsigned = integer[1:]
+    if len(unsigned) != 1 or len(fraction) != 1:
+        return None
+    return f"{sign}{fraction}.{unsigned}"
 
 
 def _unit_suffix_lookahead(unit_suffix_tokens: tuple[str, ...]) -> str:
     escaped = [
         re.escape(token)
-        for token in sorted(set(unit_suffix_tokens), key=lambda item: (-len(item), item))
+        for token in sorted({_normalize_unit_text(token) for token in unit_suffix_tokens}, key=lambda item: (-len(item), item))
         if token
     ]
     if not escaped:
@@ -401,12 +518,16 @@ def _field_kind_unit_suffix_tokens(kind_parsing: FieldKindParsing) -> tuple[str,
     for unit in kind_parsing.units:
         tokens.append(unit.name)
         tokens.extend(unit.aliases)
-    return tuple(normalize_text(token) for token in tokens if normalize_text(token))
+    return tuple(_normalize_unit_text(token) for token in tokens if _normalize_unit_text(token))
 
 
 def _custom_unit_suffix_tokens(quantity: TelemetryQuantityDefinition) -> tuple[str, ...]:
-    tokens = [quantity.display_unit, *quantity.unit_aliases.keys()]
-    return tuple(normalize_text(token) for token in tokens if normalize_text(token))
+    tokens = [
+        quantity.display_unit,
+        *quantity.unit_aliases.keys(),
+        *aliases_for_unit_expression(quantity.display_unit, aliases=quantity.unit_aliases),
+    ]
+    return tuple(_normalize_unit_text(token) for token in tokens if _normalize_unit_text(token))
 
 
 def parse_measurement_options(
@@ -418,17 +539,17 @@ def parse_measurement_options(
     dominant_unit: str | None = None,
 ) -> list[MeasurementOption]:
     kind_parsing = _resolve_kind_parsing(kind, parsing)
-    tokens = _extract_numeric_tokens(text, unit_suffix_tokens=_field_kind_unit_suffix_tokens(kind_parsing))
+    tokens = _extract_numeric_token_options(text, unit_suffix_tokens=_field_kind_unit_suffix_tokens(kind_parsing))
     if not tokens:
         return []
 
     unit_matches = _detect_unit_matches(text, kind=kind, parsing=parsing)
     converter = converter_for(kind, kind_parsing)
     options: list[MeasurementOption] = []
-    for token in tokens:
+    for numeric_token in tokens:
         unit_candidates = _unit_candidates_for_token(
             kind_parsing=kind_parsing,
-            token=token,
+            token=numeric_token.token,
             unit_matches=unit_matches,
             preferred_unit=preferred_unit,
             dominant_unit=dominant_unit,
@@ -437,16 +558,20 @@ def parse_measurement_options(
             unit = _lookup_unit(kind_parsing, unit_name)
             if unit is None:
                 continue
-            raw_value = _parse_token_to_number(token=token, unit=unit, kind=kind)
+            raw_value = _parse_token_to_number(token=numeric_token.token, unit=unit, kind=kind)
             if raw_value is None:
                 continue
             value_si = converter.convert_to_output(float(raw_value), unit.name)
             if value_si is None:
                 continue
+            parse_confidence = _adjust_parse_confidence_for_numeric_source(
+                _parse_confidence(unit_source, match_score),
+                numeric_token.source,
+            )
             options.append(
                 MeasurementOption(
                     raw_text=text,
-                    raw_token=token,
+                    raw_token=numeric_token.token,
                     raw_value=raw_value,
                     unit=unit.name,
                     value_si=value_si,
@@ -455,7 +580,8 @@ def parse_measurement_options(
                     unit_source=unit_source,
                     unit_match_text=match_text,
                     unit_match_score=match_score,
-                    parse_confidence=_parse_confidence(unit_source, match_score),
+                    parse_confidence=parse_confidence,
+                    numeric_source=numeric_token.source,
                 )
             )
     options.sort(key=lambda item: len(item.raw_token), reverse=True)
@@ -515,6 +641,12 @@ def _parse_confidence(unit_source: str, match_score: float | None) -> float:
     return 0.0
 
 
+def _adjust_parse_confidence_for_numeric_source(confidence: float, numeric_source: str) -> float:
+    if numeric_source in {"inferred_decimal", "inferred_transposed_decimal"}:
+        return max(0.0, confidence - 0.18)
+    return confidence
+
+
 def _lookup_unit(kind_parsing: FieldKindParsing, unit_name: str) -> UnitAlias | None:
     target = unit_name.upper()
     for unit in kind_parsing.units:
@@ -571,18 +703,23 @@ def parse_custom_measurement_options(
     *,
     dominant_unit: str | None = None,
 ) -> list[MeasurementOption]:
-    tokens = _extract_numeric_tokens(text, unit_suffix_tokens=_custom_unit_suffix_tokens(quantity))
+    tokens = _extract_numeric_token_options(text, unit_suffix_tokens=_custom_unit_suffix_tokens(quantity))
     if not tokens:
         return []
     converter = converter_for_quantity(quantity)
     options: list[MeasurementOption] = []
-    for token in tokens:
-        raw_value = _parse_custom_token_to_number(token)
+    first_source_token: str | None = None
+    for numeric_token in tokens:
+        if first_source_token is None:
+            first_source_token = numeric_token.source_token
+        elif numeric_token.source_token != first_source_token:
+            break
+        raw_value = _parse_custom_token_to_number(numeric_token.token)
         if raw_value is None:
             continue
         unit_candidates = _custom_unit_candidates(
             text=text,
-            token=token,
+            source_token=numeric_token.source_token,
             quantity=quantity,
             dominant_unit=dominant_unit,
         )
@@ -590,10 +727,14 @@ def parse_custom_measurement_options(
             normalized = converter.convert_expression_to_output(raw_value, unit_expression)
             if normalized is None:
                 continue
+            parse_confidence = _adjust_parse_confidence_for_numeric_source(
+                _parse_confidence(unit_source, 100.0),
+                numeric_token.source,
+            )
             options.append(
                 MeasurementOption(
                     raw_text=text,
-                    raw_token=token,
+                    raw_token=numeric_token.token,
                     raw_value=raw_value,
                     unit=unit_expression,
                     value_si=normalized,
@@ -602,10 +743,10 @@ def parse_custom_measurement_options(
                     unit_source=unit_source,
                     unit_match_text=match_text,
                     unit_match_score=100.0 if unit_source in {"exact", "alias"} else None,
-                    parse_confidence=_parse_confidence(unit_source, 100.0),
+                    parse_confidence=parse_confidence,
+                    numeric_source=numeric_token.source,
                 )
             )
-        break
     return _dedupe_options(options)
 
 
@@ -653,11 +794,11 @@ def _parse_custom_token_to_number(token: str) -> float | None:
 def _custom_unit_candidates(
     *,
     text: str,
-    token: str,
+    source_token: str,
     quantity: TelemetryQuantityDefinition,
     dominant_unit: str | None,
 ) -> list[tuple[str, str, str | None]]:
-    explicit = _unit_suffix_after_token(text, token)
+    explicit = _unit_suffix_after_token(text, source_token)
     candidates: list[tuple[str, str, str | None]] = []
     seen: set[str] = set()
 
@@ -679,7 +820,7 @@ def _custom_unit_candidates(
 
 
 def _unit_suffix_after_token(text: str, token: str) -> str | None:
-    normalized_text = normalize_text(text)
+    normalized_text = _normalize_unit_text(text)
     normalized_token = normalize_numeric_token(token)
     index = normalized_text.find(normalized_token)
     if index < 0:
@@ -702,10 +843,10 @@ def _dominant_custom_explicit_unit(
     for candidates in raw_candidates_by_sample:
         seen_this_sample: set[str] = set()
         for text, _variant in candidates:
-            tokens = _extract_numeric_tokens(text, unit_suffix_tokens=unit_suffix_tokens)
+            tokens = _extract_numeric_token_options(text, unit_suffix_tokens=unit_suffix_tokens)
             if not tokens:
                 continue
-            suffix = _unit_suffix_after_token(text, tokens[0])
+            suffix = _unit_suffix_after_token(text, tokens[0].source_token)
             if not suffix:
                 continue
             seen_this_sample.add(resolve_unit_alias(suffix, aliases=quantity.unit_aliases) or suffix)
@@ -751,7 +892,9 @@ def choose_best_measurement(
         elif preferred_unit and option.unit == preferred_unit.upper():
             score += 1.5
         score += option.parse_confidence
-        if option.raw_token.count(",") or option.raw_token.count(".") or option.raw_token.count(":"):
+        if option.numeric_source in {"inferred_decimal", "inferred_transposed_decimal"}:
+            score -= 0.35
+        elif option.raw_token.count(",") or option.raw_token.count(".") or option.raw_token.count(":"):
             score += 0.5
 
         if previous_value_si is not None and previous_met_s is not None and current_met_s is not None and current_met_s != previous_met_s:
@@ -880,6 +1023,7 @@ def _viterbi_resolve(
     if not options_by_sample:
         return []
 
+    effective_met_values = _effective_monotonic_met_values(met_values)
     states_by_sample: list[list[MeasurementOption | None]] = [
         [None] + options for options in options_by_sample
     ]
@@ -907,8 +1051,8 @@ def _viterbi_resolve(
                     prev_state,
                     state,
                     kind=kind,
-                    previous_met_s=met_values[index - 1],
-                    current_met_s=met_values[index],
+                    previous_met_s=effective_met_values[index - 1],
+                    current_met_s=effective_met_values[index],
                 )
                 total_cost = costs[index - 1][prev_index] + local_cost + transition_cost
                 if total_cost < best_cost:
@@ -930,6 +1074,41 @@ def _viterbi_resolve(
     return selected
 
 
+def _effective_monotonic_met_values(met_values: list[float | None]) -> list[float | None]:
+    finite_values = [
+        float(value)
+        for value in met_values
+        if value is not None and math.isfinite(float(value))
+    ]
+    if len(finite_values) < 2:
+        return met_values
+    span_step = (
+        (finite_values[-1] - finite_values[0]) / max(len(finite_values) - 1, 1)
+        if finite_values[-1] > finite_values[0]
+        else 0.0
+    )
+    positive_diffs = [
+        right - left
+        for left, right in zip(finite_values, finite_values[1:])
+        if right > left
+    ]
+    positive_step = min(positive_diffs) if positive_diffs else 0.0
+    step = min(value for value in (span_step, positive_step) if value > 0.0) if span_step > 0.0 or positive_step > 0.0 else 1.0
+
+    effective: list[float | None] = []
+    previous: float | None = None
+    for value in met_values:
+        if value is None or not math.isfinite(float(value)):
+            next_value = None if previous is None else previous + step
+        else:
+            raw_value = float(value)
+            next_value = raw_value if previous is None or raw_value > previous else previous + step
+        effective.append(next_value)
+        if next_value is not None:
+            previous = next_value
+    return effective
+
+
 def _state_local_cost(option: MeasurementOption | None, *, dominant_unit: str | None) -> float:
     if option is None:
         return 2.8
@@ -947,6 +1126,8 @@ def _local_option_cost(option: MeasurementOption, *, dominant_unit: str | None) 
     }.get(option.unit_source, 2.5)
     if dominant_unit and option.unit != dominant_unit.upper():
         source_cost += 0.45
+    if option.numeric_source in {"inferred_decimal", "inferred_transposed_decimal"}:
+        source_cost += 0.25
     return source_cost
 
 

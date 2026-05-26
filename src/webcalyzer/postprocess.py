@@ -238,6 +238,8 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
             continue
         values = pd.to_numeric(df[column], errors="coerce").to_numpy(dtype=float)
         adaptive_min_variance = _adaptive_min_variance(values)
+        column_min_variance = min_variance_by_kind.get(kind, adaptive_min_variance)
+        protected_indices = protected_by_column.get(column, set()) if protected_by_column else set()
         _reject_column_outliers(
             df=df,
             rejected_df=rejected_df,
@@ -247,9 +249,20 @@ def apply_mahalanobis_outlier_rejection_with_rejected(
             window_s=window_s,
             min_neighbors=resolved_neighbors,
             min_side_neighbors=resolved_side_neighbors,
-            min_variance=min_variance_by_kind.get(kind, adaptive_min_variance),
+            min_variance=column_min_variance,
             passes=passes,
-            protected_indices=protected_by_column.get(column, set()) if protected_by_column else set(),
+            protected_indices=protected_indices,
+        )
+        _reject_bracketed_block_outliers(
+            df=df,
+            rejected_df=rejected_df,
+            met=met,
+            column=column,
+            chi2_threshold=chi2_threshold,
+            window_s=window_s,
+            min_side_neighbors=resolved_side_neighbors,
+            min_variance=column_min_variance,
+            protected_indices=protected_indices,
         )
     return df, rejected_df
 
@@ -369,12 +382,205 @@ def _reject_column_outliers(
             return
 
         for idx in flagged:
-            row_label = df.index[idx]
-            rejected_df.at[row_label, "frame_index"] = df.at[row_label, "frame_index"]
-            rejected_df.at[row_label, "sample_time_s"] = df.at[row_label, "sample_time_s"]
-            rejected_df.at[row_label, "mission_elapsed_time_s"] = df.at[row_label, "mission_elapsed_time_s"]
-            rejected_df.at[row_label, column] = df.at[row_label, column]
-            df.at[row_label, column] = np.nan
+            _record_rejection(df=df, rejected_df=rejected_df, column=column, row_position=idx)
+
+
+def _reject_bracketed_block_outliers(
+    df: pd.DataFrame,
+    rejected_df: pd.DataFrame,
+    met: np.ndarray,
+    column: str,
+    chi2_threshold: float,
+    window_s: float,
+    min_side_neighbors: int,
+    min_variance: float,
+    protected_indices: set[int],
+) -> None:
+    values = df[column].to_numpy(dtype=float).copy()
+    row_positions = np.arange(len(df))
+    protected_mask = np.array([idx in protected_indices for idx in row_positions], dtype=bool)
+    mask = np.isfinite(values) & np.isfinite(met) & ~protected_mask
+    finite_idx = np.where(mask)[0]
+    if finite_idx.size < (2 * min_side_neighbors) + 2:
+        return
+
+    sample_step_s = _estimate_sample_step_s(met[finite_idx])
+    guard_s = max(2.0 * sample_step_s, min(8.0, 0.25 * window_s))
+    flagged: list[int] = []
+    for idx in finite_idx:
+        t0 = met[idx]
+        left_idx = finite_idx[(met[finite_idx] >= t0 - window_s) & (met[finite_idx] <= t0 - guard_s)]
+        right_idx = finite_idx[(met[finite_idx] >= t0 + guard_s) & (met[finite_idx] <= t0 + window_s)]
+        if left_idx.size < min_side_neighbors or right_idx.size < min_side_neighbors:
+            continue
+        context_idx = np.concatenate([left_idx, right_idx])
+        predicted, variance = _fit_context_prediction(
+            met=met,
+            values=values,
+            context_idx=context_idx,
+            target_times=np.array([t0], dtype=float),
+            min_variance=min_variance,
+        )
+        if predicted.size == 0:
+            continue
+        delta = values[idx] - float(predicted[0])
+        if (delta * delta) / variance > chi2_threshold:
+            flagged.append(idx)
+
+    if not flagged:
+        return
+
+    max_merge_gap_s = max(3.0 * sample_step_s, guard_s)
+    for block_idx in _flagged_blocks(flagged=flagged, finite_idx=finite_idx, met=met, max_gap_s=max_merge_gap_s):
+        if block_idx.size < 2:
+            continue
+        rejected_positions = _score_bracketed_block(
+            met=met,
+            values=values,
+            finite_idx=finite_idx,
+            block_idx=block_idx,
+            chi2_threshold=chi2_threshold,
+            window_s=window_s,
+            min_side_neighbors=min_side_neighbors,
+            min_variance=min_variance,
+        )
+        for idx in rejected_positions:
+            if idx in protected_indices:
+                continue
+            _record_rejection(df=df, rejected_df=rejected_df, column=column, row_position=int(idx))
+            values[idx] = np.nan
+
+
+def _flagged_blocks(
+    *,
+    flagged: list[int],
+    finite_idx: np.ndarray,
+    met: np.ndarray,
+    max_gap_s: float,
+) -> list[np.ndarray]:
+    flagged = sorted(set(flagged), key=lambda idx: met[idx])
+    groups: list[list[int]] = []
+    current: list[int] = []
+    previous: int | None = None
+    for idx in flagged:
+        if previous is None or met[idx] - met[previous] <= max_gap_s:
+            current.append(idx)
+        else:
+            groups.append(current)
+            current = [idx]
+        previous = idx
+    if current:
+        groups.append(current)
+
+    blocks: list[np.ndarray] = []
+    for group in groups:
+        start = group[0]
+        end = group[-1]
+        block = finite_idx[(finite_idx >= start) & (finite_idx <= end)]
+        if block.size:
+            blocks.append(block)
+    return blocks
+
+
+def _score_bracketed_block(
+    *,
+    met: np.ndarray,
+    values: np.ndarray,
+    finite_idx: np.ndarray,
+    block_idx: np.ndarray,
+    chi2_threshold: float,
+    window_s: float,
+    min_side_neighbors: int,
+    min_variance: float,
+) -> np.ndarray:
+    start_t = float(met[block_idx[0]])
+    end_t = float(met[block_idx[-1]])
+    left_idx = finite_idx[(met[finite_idx] >= start_t - window_s) & (met[finite_idx] < start_t)]
+    right_idx = finite_idx[(met[finite_idx] > end_t) & (met[finite_idx] <= end_t + window_s)]
+    if left_idx.size < min_side_neighbors or right_idx.size < min_side_neighbors:
+        return np.array([], dtype=int)
+
+    context_idx = np.concatenate([left_idx, right_idx])
+    predicted, variance = _fit_context_prediction(
+        met=met,
+        values=values,
+        context_idx=context_idx,
+        target_times=met[block_idx],
+        min_variance=min_variance,
+    )
+    if predicted.size != block_idx.size:
+        return np.array([], dtype=int)
+
+    residuals = values[block_idx] - predicted
+    scores = (residuals * residuals) / variance
+    finite_scores = scores[np.isfinite(scores)]
+    if finite_scores.size == 0 or float(np.median(finite_scores)) <= chi2_threshold:
+        return np.array([], dtype=int)
+
+    finite_residuals = residuals[np.isfinite(residuals)]
+    if finite_residuals.size == 0:
+        return np.array([], dtype=int)
+    median_residual = float(np.median(finite_residuals))
+    if median_residual == 0.0 or not np.isfinite(median_residual):
+        return np.array([], dtype=int)
+    majority_sign = 1.0 if median_residual > 0.0 else -1.0
+    same_side = np.sign(residuals) == majority_sign
+    if float(np.mean(same_side)) < 0.65:
+        return np.array([], dtype=int)
+
+    reject_threshold = max(4.0, 0.25 * chi2_threshold)
+    return block_idx[(scores > reject_threshold) & same_side]
+
+
+def _fit_context_prediction(
+    *,
+    met: np.ndarray,
+    values: np.ndarray,
+    context_idx: np.ndarray,
+    target_times: np.ndarray,
+    min_variance: float,
+) -> tuple[np.ndarray, float]:
+    if context_idx.size < 2:
+        return np.array([], dtype=float), min_variance
+    t_context = met[context_idx]
+    y_context = values[context_idx]
+    try:
+        coefficients = np.polyfit(t_context, y_context, 1)
+    except (np.linalg.LinAlgError, ValueError):
+        return np.array([], dtype=float), min_variance
+    predicted_context = np.polyval(coefficients, t_context)
+    residuals = y_context - predicted_context
+    variance = _robust_residual_variance(residuals, min_variance=min_variance)
+    predicted_targets = np.array(np.polyval(coefficients, target_times), dtype=float)
+    return predicted_targets, variance
+
+
+def _estimate_sample_step_s(times: np.ndarray) -> float:
+    finite = np.sort(times[np.isfinite(times)])
+    if finite.size < 2:
+        return 1.0
+    diffs = np.diff(finite)
+    positive = diffs[diffs > 1e-9]
+    if positive.size == 0:
+        return 1.0
+    return max(float(np.median(positive)), 1e-6)
+
+
+def _record_rejection(
+    *,
+    df: pd.DataFrame,
+    rejected_df: pd.DataFrame,
+    column: str,
+    row_position: int,
+) -> None:
+    row_label = df.index[row_position]
+    if pd.isna(df.at[row_label, column]):
+        return
+    rejected_df.at[row_label, "frame_index"] = df.at[row_label, "frame_index"]
+    rejected_df.at[row_label, "sample_time_s"] = df.at[row_label, "sample_time_s"]
+    rejected_df.at[row_label, "mission_elapsed_time_s"] = df.at[row_label, "mission_elapsed_time_s"]
+    rejected_df.at[row_label, column] = df.at[row_label, column]
+    df.at[row_label, column] = np.nan
 
 
 

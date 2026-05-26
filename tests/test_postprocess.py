@@ -163,6 +163,30 @@ def test_outlier_rejection_catches_split_decimal_altitude_without_rejecting_land
     assert cleaned.loc[cleaned["mission_elapsed_time_s"].eq(521.0), "stage1_altitude_m"].iloc[0] == 700.0
 
 
+def test_outlier_rejection_catches_bracketed_custom_decimal_loss_block() -> None:
+    times = np.arange(0.0, 80.0, 1.0)
+    acceleration = np.linspace(1.5, 1.9, times.size)
+    acceleration[35:43] = 17.0
+    clean_df = pd.DataFrame(
+        {
+            "frame_index": np.arange(times.size),
+            "sample_time_s": times,
+            "mission_elapsed_time_s": times,
+            "stage1_velocity_mps": np.nan,
+            "stage1_altitude_m": np.nan,
+            "stage2_velocity_mps": np.nan,
+            "stage2_altitude_m": np.nan,
+            "custom_acceleration": acceleration,
+        }
+    )
+
+    cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(clean_df, window_s=30.0)
+
+    assert cleaned.loc[35:42, "custom_acceleration"].isna().all()
+    assert rejected["custom_acceleration"].notna().sum() == 8
+    assert rejected.loc[35:42, "custom_acceleration"].tolist() == [17.0] * 8
+
+
 def test_output_dir_outlier_rejection_is_repeatable_from_raw(tmp_path) -> None:
     times = np.arange(0, 42, 2, dtype=float)
     rows = []

@@ -1,11 +1,13 @@
 from webcalyzer.config import default_parsing_profile
-from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, UnitAlias
+from webcalyzer.models import FieldKindParsing, MetParsing, ParsingProfile, TelemetryQuantityDefinition, UnitAlias
 from webcalyzer.sanitize import (
     choose_best_measurement,
     detect_unit,
     measurement_text_needs_unit_fallback,
+    parse_custom_measurement_options,
     parse_measurement_options,
     parse_met,
+    resolve_custom_measurement_series,
     resolve_measurement_series,
 )
 
@@ -64,7 +66,7 @@ def test_unrecognized_non_ascii_unit_token_requests_ocr_fallback() -> None:
     profile = default_parsing_profile()
 
     assert measurement_text_needs_unit_fallback("000,063 М", kind="altitude", parsing=profile)
-    assert measurement_text_needs_unit_fallback("000,064 МI", kind="altitude", parsing=profile)
+    assert not measurement_text_needs_unit_fallback("000,064 МI", kind="altitude", parsing=profile)
     assert not measurement_text_needs_unit_fallback("000,064 MI", kind="altitude", parsing=profile)
     assert not measurement_text_needs_unit_fallback("ALTITUDE 000,064", kind="altitude", parsing=profile)
 
@@ -266,6 +268,90 @@ def test_series_resolver_recovers_missing_k_in_km_unit() -> None:
     ]
     assert results[2].chosen is not None
     assert results[2].chosen.unit_source == "inferred_dominant"
+
+
+def test_velocity_unit_matching_normalizes_confusable_cyrillic_kmh() -> None:
+    profile = default_parsing_profile()
+
+    options = parse_measurement_options(
+        "VELOCITY 3067 КM/H",
+        kind="velocity",
+        variant="raw",
+        parsing=profile,
+    )
+
+    assert options
+    assert options[0].unit == "KPH"
+    assert options[0].unit_source == "exact"
+    assert round(options[0].value_si, 3) == 851.944
+    assert all(option.unit != "MPH" for option in options)
+
+
+def test_series_resolver_keeps_mixed_confusable_kph_text_smooth() -> None:
+    profile = default_parsing_profile()
+
+    results = resolve_measurement_series(
+        [
+            [("VELOCITY 3067 KM/H", "raw")],
+            [("VELOCITY 3016 КM/H", "raw")],
+            [("VELOCITY 2961 КМ/H", "raw")],
+            [("VELOCITY 2910 KM/H", "raw")],
+        ],
+        kind="velocity",
+        parsing=profile,
+        met_values=[355.0, 356.0, 357.0, 358.0],
+    )
+
+    assert [result.chosen.unit if result.chosen else None for result in results] == ["KPH", "KPH", "KPH", "KPH"]
+    assert [round(result.chosen.value_si, 3) if result.chosen else None for result in results] == [
+        851.944,
+        837.778,
+        822.5,
+        808.333,
+    ]
+
+
+def test_custom_series_resolver_recovers_missing_decimal_point() -> None:
+    quantity = TelemetryQuantityDefinition(
+        id="q_acceleration",
+        name="Acceleration",
+        slug="acceleration",
+        dimensionality="L/T^2",
+        display_unit="standard_gravity",
+    )
+
+    results = resolve_custom_measurement_series(
+        [
+            [("1.6", "raw")],
+            [("17", "raw")],
+            [("7 1 G", "raw")],
+            [("1.8", "raw")],
+        ],
+        quantity=quantity,
+        met_values=[10.0, 11.0, 12.0, 13.0],
+    )
+
+    assert [result.chosen.value_si if result.chosen else None for result in results] == [1.6, 1.7, 1.7, 1.8]
+    assert results[1].chosen is not None
+    assert results[1].chosen.numeric_source == "inferred_decimal"
+    assert results[2].chosen is not None
+    assert results[2].chosen.numeric_source == "inferred_transposed_decimal"
+
+
+def test_custom_parser_treats_trailing_g_as_unit_not_decimal_digit() -> None:
+    quantity = TelemetryQuantityDefinition(
+        id="q_acceleration",
+        name="Acceleration",
+        slug="acceleration",
+        dimensionality="L/T^2",
+        display_unit="standard_gravity",
+    )
+
+    options = parse_custom_measurement_options("17 G", quantity, "raw")
+
+    assert options
+    assert {option.raw_token for option in options} == {"17", "1.7"}
+    assert all(option.unit == "standard_gravity" for option in options)
 
 
 def test_series_resolver_prefers_gap_when_exact_and_context_units_both_jump() -> None:
