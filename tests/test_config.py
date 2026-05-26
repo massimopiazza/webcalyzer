@@ -7,19 +7,21 @@ from webcalyzer.web.schema import (
     validate_runnable_profile_model,
 )
 
+NEW_GLENN_PROFILE = "configs/new_glenn_ng3.yaml"
+
 
 def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> None:
-    profile = load_profile("configs/blue_origin/new_glenn_ng3.yaml")
+    profile = load_profile(NEW_GLENN_PROFILE)
 
     assert profile.fixture_frame_count == 20
-    assert profile.default_ocr_workers == 0
+    assert profile.default_ocr_workers == 4
     assert profile.ocr_backend == "auto"
     assert profile.ocr_recognition_level == "accurate"
     assert profile.skip_full_frame_ocr_fallback is False
     assert profile.fixture_time_range_s == (0.0, 840.0)
     assert profile.calibration_video.frame_count == 53179
     assert profile.segments[0].id == "segment_1"
-    assert profile.segments[0].end_frame_index == 50349
+    assert profile.segments[0].end_frame_index == 27960
     assert len(profile.segments[0].fields["stage1_velocity"].box.normalized_tuple()) == 4
     assert profile.video_overlay.width_fraction == 0.5
     assert profile.video_overlay.height_fraction == 0.65
@@ -53,7 +55,7 @@ def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> 
     saved_path = save_profile(profile, tmp_path / "profile.yaml")
     saved_text = saved_path.read_text()
     assert "fixture_time_range_s: [0.0, 840.0]" in saved_text
-    assert "default_ocr_workers: 0" in saved_text
+    assert "default_ocr_workers: 4" in saved_text
     assert "ocr_backend: auto" in saved_text
     assert "ocr_recognition_level: accurate" in saved_text
     assert "skip_full_frame_ocr_fallback: false" in saved_text
@@ -73,7 +75,7 @@ def test_profile_uses_explicit_bbox_and_fixture_range_schema(tmp_path: Path) -> 
 
 
 def test_draft_profile_can_omit_met_but_runnable_rejects_it() -> None:
-    profile = load_profile("configs/blue_origin/new_glenn_ng3.yaml")
+    profile = load_profile(NEW_GLENN_PROFILE)
     del profile.segments[0].fields["met"]
 
     model = profile_dataclass_to_model(profile)
@@ -82,15 +84,17 @@ def test_draft_profile_can_omit_met_but_runnable_rejects_it() -> None:
     try:
         validate_runnable_profile_model(model)
     except ValueError as exc:
-        assert "met field is required" in str(exc)
+        assert "time field is required" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Runnable validation should reject missing MET")
 
 
 def test_split_frame_belongs_to_next_segment() -> None:
-    profile = load_profile("configs/blue_origin/new_glenn_ng3.yaml")
+    profile = load_profile(NEW_GLENN_PROFILE)
     original = profile.segments[0]
     fields = dict(original.fields)
+    original.start_frame_index = 0
+    original.start_time_s = 0.0
     original.end_frame_index = 100
     original.end_time_s = 10.0
     profile.segments.append(

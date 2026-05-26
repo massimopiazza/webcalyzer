@@ -325,17 +325,20 @@ def test_custom_series_resolver_recovers_missing_decimal_point() -> None:
             [("1.6", "raw")],
             [("17", "raw")],
             [("7 1 G", "raw")],
+            [("1. 7 G", "raw")],
             [("1.8", "raw")],
         ],
         quantity=quantity,
-        met_values=[10.0, 11.0, 12.0, 13.0],
+        met_values=[10.0, 11.0, 12.0, 13.0, 14.0],
     )
 
-    assert [result.chosen.value_si if result.chosen else None for result in results] == [1.6, 1.7, 1.7, 1.8]
+    assert [result.chosen.value_si if result.chosen else None for result in results] == [1.6, 1.7, 1.7, 1.7, 1.8]
     assert results[1].chosen is not None
     assert results[1].chosen.numeric_source == "inferred_decimal"
     assert results[2].chosen is not None
     assert results[2].chosen.numeric_source == "inferred_transposed_decimal"
+    assert results[3].chosen is not None
+    assert results[3].chosen.raw_token == "1.7"
 
 
 def test_custom_parser_treats_trailing_g_as_unit_not_decimal_digit() -> None:

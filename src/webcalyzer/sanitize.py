@@ -460,6 +460,10 @@ def _extract_split_decimal_tokens(upper: str, unit_suffix_tokens: tuple[str, ...
             r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\s+\.\s*([0-9OQDILSBG|]+)(?![A-Z0-9OQDILSBG|.])",
             False,
         ),
+        (
+            r"(?<![A-Z0-9OQDILSBG|.])([+-]?[0-9OQDILSBG|]{1,3})\.\s+([0-9OQDILSBG|]+)(?![A-Z0-9OQDILSBG|.])",
+            False,
+        ),
     ]
     if suffix_pattern:
         patterns.append(
