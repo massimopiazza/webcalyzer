@@ -1,25 +1,43 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useSearchParams } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronRight, Cpu, Menu, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  Cpu,
+  Menu,
+  RotateCcw,
+  Search,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { renderToString } from "katex";
 import "katex/dist/katex.min.css";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { HelpTip, TooltipProvider } from "@/components/ui/tooltip";
 import { DOC_GROUPS, type DocsGroup, type DocsPage } from "@/lib/docsNav";
+import {
+  buildDocsSearchResults,
+  buildTocTree,
+  extractHeadings,
+  slugify,
+  tokenizeSearchQuery,
+  type DocsSearchResult,
+} from "@/lib/docsSearch";
 import { cn } from "@/lib/utils";
-
-type Heading = {
-  level: 2 | 3;
-  text: string;
-  id: string;
-};
-
-type TocNode = {
-  heading: Heading;
-  children: Heading[];
-};
 
 const MERMAID_CONFIG = {
   startOnLoad: false,
@@ -56,14 +74,6 @@ const MERMAID_DEFAULT_ZOOM = 0.7;
 const MERMAID_MIN_ZOOM = 0.4;
 const MERMAID_MAX_ZOOM = 1.8;
 const MERMAID_ZOOM_STEP = 0.1;
-
-function slugify(text: string): string {
-  return text
-    .replace(/<[^>]*>/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
 
 function clampMermaidZoom(zoom: number): number {
   const clamped = Math.min(MERMAID_MAX_ZOOM, Math.max(MERMAID_MIN_ZOOM, zoom));
@@ -201,31 +211,6 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function extractHeadings(markdown: string): Heading[] {
-  const headings: Heading[] = [];
-  for (const line of markdown.split("\n")) {
-    const h2 = line.match(/^##\s+(.+)$/);
-    const h3 = line.match(/^###\s+(.+)$/);
-    if (h2) headings.push({ level: 2, text: h2[1].trim(), id: slugify(h2[1]) });
-    if (h3) headings.push({ level: 3, text: h3[1].trim(), id: slugify(h3[1]) });
-  }
-  return headings;
-}
-
-function buildTocTree(headings: Heading[]): TocNode[] {
-  const tree: TocNode[] = [];
-  let current: TocNode | null = null;
-  for (const heading of headings) {
-    if (heading.level === 2) {
-      current = { heading, children: [] };
-      tree.push(current);
-    } else if (current) {
-      current.children.push(heading);
-    }
-  }
-  return tree;
 }
 
 function renderLatex(source: string, displayMode: boolean): string {
@@ -448,6 +433,165 @@ export function renderMarkdown(markdown: string): string {
   return html.join("\n");
 }
 
+function highlightText(text: string, terms: string[]): ReactNode {
+  if (terms.length === 0) return text;
+
+  const nodes: ReactNode[] = [];
+  const lower = text.toLowerCase();
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const match = terms.find((term) => lower.startsWith(term, cursor));
+    if (!match) {
+      const nextMatch = terms
+        .map((term) => lower.indexOf(term, cursor + 1))
+        .filter((index) => index >= 0)
+        .sort((left, right) => left - right)[0];
+      const end = nextMatch ?? text.length;
+      nodes.push(text.slice(cursor, end));
+      cursor = end;
+      continue;
+    }
+
+    nodes.push(
+      <mark key={`${cursor}-${match}`} className="rounded bg-primary/20 px-0.5 text-foreground">
+        {text.slice(cursor, cursor + match.length)}
+      </mark>,
+    );
+    cursor += match.length;
+  }
+
+  return nodes;
+}
+
+function DocsSearchBox({
+  groupLabel,
+  query,
+  inputRef,
+  onQueryChange,
+  onClear,
+  onSubmit,
+}: {
+  groupLabel: string;
+  query: string;
+  inputRef: (node: HTMLInputElement | null) => void;
+  onQueryChange: (value: string) => void;
+  onClear: () => void;
+  onSubmit: () => void;
+}) {
+  const hasQuery = query.trim().length > 0;
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onSubmit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onClear();
+      event.currentTarget.blur();
+    }
+  };
+
+  return (
+    <div className="shrink-0">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={inputRef}
+          data-testid="docs-search-input"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={`Search ${groupLabel.toLowerCase()}`}
+          aria-label={`Search ${groupLabel} documentation`}
+          className="h-9 pl-9 pr-9"
+        />
+        {hasQuery && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            onClick={onClear}
+            aria-label="Clear documentation search"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DocsSearchResults({
+  group,
+  query,
+  results,
+  terms,
+  onSelectResult,
+}: {
+  group: DocsGroup;
+  query: string;
+  results: DocsSearchResult[];
+  terms: string[];
+  onSelectResult: (result: DocsSearchResult) => void;
+}) {
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) return null;
+
+  const resultLabel =
+    results.length === 1
+      ? "1 result"
+      : results.length >= 24
+        ? "Top 24 results"
+        : `${results.length} results`;
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground/70">
+        <span>{resultLabel}</span>
+        <span className="truncate">{group.label}</span>
+      </div>
+      {results.length === 0 ? (
+        <div className="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+          No matches in {group.label}.
+        </div>
+      ) : (
+        <div className="space-y-2" role="list" aria-label={`${group.label} search results`}>
+          {results.map((result) => (
+            <div key={`${result.pageId}-${result.anchor ?? "top"}`} role="listitem">
+              <button
+                type="button"
+                data-testid="docs-search-result"
+                data-page-id={result.pageId}
+                data-anchor={result.anchor ?? ""}
+                className="block w-full rounded-md border border-border/70 bg-card/40 px-3 py-2.5 text-left shadow-sm transition-colors hover:border-primary/45 hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                onClick={() => onSelectResult(result)}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                    {highlightText(result.pageTitle, terms)}
+                  </span>
+                </span>
+                {result.heading && (
+                  <span className="mt-0.5 block truncate text-xs font-medium text-primary">
+                    {highlightText(result.heading, terms)}
+                  </span>
+                )}
+                {result.snippet && (
+                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                    {highlightText(result.snippet, terms)}
+                  </span>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocsNav({
   group,
   currentPage,
@@ -547,6 +691,97 @@ function DocsNav({
   );
 }
 
+function DocsSidebar({
+  group,
+  currentPage,
+  activeAnchor,
+  expandedPageIds,
+  searchQuery,
+  searchTerms,
+  searchResults,
+  searchInputRef,
+  onSelectGroup,
+  onSelectPage,
+  onTogglePage,
+  onSelectAnchor,
+  onSearchChange,
+  onClearSearch,
+  onSubmitTopSearchResult,
+  onSelectSearchResult,
+}: {
+  group: DocsGroup;
+  currentPage: DocsPage;
+  activeAnchor: string | null;
+  expandedPageIds: Set<string>;
+  searchQuery: string;
+  searchTerms: string[];
+  searchResults: DocsSearchResult[];
+  searchInputRef: (node: HTMLInputElement | null) => void;
+  onSelectGroup: (groupId: DocsGroup["id"]) => void;
+  onSelectPage: (pageId: string) => void;
+  onTogglePage: (pageId: string) => void;
+  onSelectAnchor: (pageId: string, anchor: string) => void;
+  onSearchChange: (value: string) => void;
+  onClearSearch: () => void;
+  onSubmitTopSearchResult: () => void;
+  onSelectSearchResult: (result: DocsSearchResult) => void;
+}) {
+  const hasSearch = searchQuery.trim().length > 0;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      <div className="grid shrink-0 grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+        {DOC_GROUPS.map((candidate) => (
+          <button
+            key={candidate.id}
+            className={cn(
+              "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+              candidate.id === group.id
+                ? "bg-card text-primary shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => onSelectGroup(candidate.id)}
+          >
+            {candidate.id === "user" ? (
+              <BookOpen className="h-3.5 w-3.5" />
+            ) : (
+              <Cpu className="h-3.5 w-3.5" />
+            )}
+            {candidate.label}
+          </button>
+        ))}
+      </div>
+      <DocsSearchBox
+        groupLabel={group.label}
+        query={searchQuery}
+        inputRef={searchInputRef}
+        onQueryChange={onSearchChange}
+        onClear={onClearSearch}
+        onSubmit={onSubmitTopSearchResult}
+      />
+      {hasSearch ? (
+        <DocsSearchResults
+          group={group}
+          query={searchQuery}
+          results={searchResults}
+          terms={searchTerms}
+          onSelectResult={onSelectSearchResult}
+        />
+      ) : (
+        <DocsNav
+          group={group}
+          currentPage={currentPage}
+          activeAnchor={activeAnchor}
+          expandedPageIds={expandedPageIds}
+          onSelectPage={onSelectPage}
+          onTogglePage={onTogglePage}
+          onSelectAnchor={onSelectAnchor}
+        />
+      )}
+    </div>
+  );
+}
+
 export function DocumentationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -556,13 +791,21 @@ export function DocumentationPage() {
     internal: ["index"],
   });
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const desktopSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const groupId = searchParams.get("group") === "internal" ? "internal" : "user";
   const currentGroup = DOC_GROUPS.find((group) => group.id === groupId) ?? DOC_GROUPS[0];
   const pageId = searchParams.get("page") ?? "index";
   const currentPage =
     currentGroup.pages.find((page) => page.id === pageId) ?? currentGroup.pages[0];
+  const searchQuery = searchParams.get("q") ?? "";
   const renderedHtml = useMemo(() => renderMarkdown(currentPage.content), [currentPage.content]);
+  const searchTerms = useMemo(() => tokenizeSearchQuery(searchQuery), [searchQuery]);
+  const searchResults = useMemo(
+    () => buildDocsSearchResults(currentGroup, searchQuery),
+    [currentGroup, searchQuery],
+  );
   const expandedPageIds = useMemo(
     () => new Set([...(expandedPagesByGroup[groupId] ?? []), currentPage.id]),
     [currentPage.id, expandedPagesByGroup, groupId],
@@ -636,6 +879,24 @@ export function DocumentationPage() {
     });
   };
 
+  const setDocumentationParams = useCallback(
+    (
+      newGroup: DocsGroup["id"],
+      newPage: string,
+      nextQuery = searchQuery,
+      options?: { replace?: boolean },
+    ) => {
+      const params = new URLSearchParams();
+      params.set("group", newGroup);
+      params.set("page", newPage);
+      if (nextQuery.trim()) {
+        params.set("q", nextQuery);
+      }
+      setSearchParams(params, { replace: options?.replace ?? false });
+    },
+    [searchQuery, setSearchParams],
+  );
+
   const navigate = useCallback(
     (newGroup: DocsGroup["id"], newPage: string) => {
       setExpandedPagesByGroup((prev) => {
@@ -643,13 +904,49 @@ export function DocumentationPage() {
         expanded.add(newPage);
         return { ...prev, [newGroup]: Array.from(expanded) };
       });
-      setSearchParams({ group: newGroup, page: newPage });
+      setDocumentationParams(newGroup, newPage);
       setActiveAnchor(null);
       setMobileNavOpen(false);
       scrollToTop();
     },
-    [setSearchParams],
+    [setDocumentationParams],
   );
+
+  const updateSearchQuery = useCallback(
+    (value: string) => {
+      setDocumentationParams(groupId, currentPage.id, value, { replace: true });
+    },
+    [currentPage.id, groupId, setDocumentationParams],
+  );
+
+  const clearSearch = useCallback(() => {
+    updateSearchQuery("");
+  }, [updateSearchQuery]);
+
+  const visibleSearchInput = useCallback(() => {
+    const candidates = [mobileSearchInputRef.current, desktopSearchInputRef.current];
+    return (
+      candidates.find((node) => node && node.offsetParent !== null) ??
+      desktopSearchInputRef.current ??
+      mobileSearchInputRef.current
+    );
+  }, []);
+
+  const focusSearchInput = useCallback(() => {
+    const input = visibleSearchInput();
+    if (input) {
+      input.focus();
+      input.select();
+      return;
+    }
+
+    setMobileNavOpen(true);
+    requestAnimationFrame(() => {
+      const mobileInput = mobileSearchInputRef.current;
+      mobileInput?.focus();
+      mobileInput?.select();
+    });
+  }, [visibleSearchInput]);
 
   const scrollToAnchor = useCallback((anchor: string) => {
     setActiveAnchor(anchor);
@@ -685,7 +982,7 @@ export function DocumentationPage() {
         return { ...prev, [targetGroupId]: Array.from(expanded) };
       });
       if (targetGroupId !== groupId || targetPageId !== currentPage.id) {
-        setSearchParams({ group: targetGroupId, page: targetPageId });
+        setDocumentationParams(targetGroupId, targetPageId);
         setActiveAnchor(anchor);
         setMobileNavOpen(false);
         setTimeout(() => scrollToAnchor(anchor), 80);
@@ -693,8 +990,51 @@ export function DocumentationPage() {
       }
       scrollToAnchor(anchor);
     },
-    [currentPage.id, groupId, scrollToAnchor, setSearchParams],
+    [currentPage.id, groupId, scrollToAnchor, setDocumentationParams],
   );
+
+  const selectSearchResult = useCallback(
+    (result: DocsSearchResult) => {
+      if (result.anchor) {
+        selectAnchor(groupId, result.pageId, result.anchor);
+      } else {
+        navigate(groupId, result.pageId);
+      }
+    },
+    [groupId, navigate, selectAnchor],
+  );
+
+  const submitTopSearchResult = useCallback(() => {
+    if (searchResults[0]) {
+      selectSearchResult(searchResults[0]);
+    }
+  }, [searchResults, selectSearchResult]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName.toLowerCase();
+      const isEditing =
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select" ||
+        target?.isContentEditable;
+
+      if (event.key === "/" && !isEditing) {
+        event.preventDefault();
+        focusSearchInput();
+      } else if (event.key === "Escape" && searchQuery.trim()) {
+        event.preventDefault();
+        clearSearch();
+        visibleSearchInput()?.blur();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [clearSearch, focusSearchInput, searchQuery, visibleSearchInput]);
 
   const handleContentClick = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
@@ -721,37 +1061,6 @@ export function DocumentationPage() {
     [groupId, navigate, scrollToAnchor, selectAnchor],
   );
 
-  const sidebar = (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="grid shrink-0 grid-cols-2 gap-1 rounded-lg bg-muted p-1">
-        {DOC_GROUPS.map((group) => (
-          <button
-            key={group.id}
-            className={cn(
-              "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
-              group.id === groupId
-                ? "bg-card text-primary shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => navigate(group.id, "index")}
-          >
-            {group.id === "user" ? <BookOpen className="h-3.5 w-3.5" /> : <Cpu className="h-3.5 w-3.5" />}
-            {group.label}
-          </button>
-        ))}
-      </div>
-      <DocsNav
-        group={currentGroup}
-        currentPage={currentPage}
-        activeAnchor={activeAnchor}
-        expandedPageIds={expandedPageIds}
-        onSelectPage={(id) => navigate(groupId, id)}
-        onTogglePage={togglePage}
-        onSelectAnchor={(pageId, anchor) => selectAnchor(groupId, pageId, anchor)}
-      />
-    </div>
-  );
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <PageHeader
@@ -761,38 +1070,77 @@ export function DocumentationPage() {
       />
 
       <div className="min-h-0 flex-1 overflow-hidden p-4 sm:p-6">
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col gap-5 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="hidden h-full min-h-0 overflow-hidden rounded-lg border border-border/70 bg-sidebar p-3 lg:block">
-          {sidebar}
-        </aside>
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col gap-5 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="hidden h-full min-h-0 overflow-hidden rounded-lg border border-border/70 bg-sidebar p-3 lg:block">
+            <DocsSidebar
+              group={currentGroup}
+              currentPage={currentPage}
+              activeAnchor={activeAnchor}
+              expandedPageIds={expandedPageIds}
+              searchQuery={searchQuery}
+              searchTerms={searchTerms}
+              searchResults={searchResults}
+              searchInputRef={(node) => {
+                desktopSearchInputRef.current = node;
+              }}
+              onSelectGroup={(id) => navigate(id, "index")}
+              onSelectPage={(id) => navigate(groupId, id)}
+              onTogglePage={togglePage}
+              onSelectAnchor={(pageId, anchor) => selectAnchor(groupId, pageId, anchor)}
+              onSearchChange={updateSearchQuery}
+              onClearSearch={clearSearch}
+              onSubmitTopSearchResult={submitTopSearchResult}
+              onSelectSearchResult={selectSearchResult}
+            />
+          </aside>
 
-        <div className="shrink-0 lg:hidden">
-          <Button
-            variant="outline"
-            className="w-full justify-start"
-            onClick={() => setMobileNavOpen((open) => !open)}
+          <div className="shrink-0 lg:hidden">
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              {mobileNavOpen ? (
+                <X className="mr-2 h-4 w-4" />
+              ) : (
+                <Menu className="mr-2 h-4 w-4" />
+              )}
+              {mobileNavOpen ? "Close documentation navigation" : "Open documentation navigation"}
+            </Button>
+            {mobileNavOpen && (
+              <div className="mt-3 max-h-[45vh] overflow-y-auto rounded-lg border border-border/70 bg-sidebar p-3">
+                <DocsSidebar
+                  group={currentGroup}
+                  currentPage={currentPage}
+                  activeAnchor={activeAnchor}
+                  expandedPageIds={expandedPageIds}
+                  searchQuery={searchQuery}
+                  searchTerms={searchTerms}
+                  searchResults={searchResults}
+                  searchInputRef={(node) => {
+                    mobileSearchInputRef.current = node;
+                  }}
+                  onSelectGroup={(id) => navigate(id, "index")}
+                  onSelectPage={(id) => navigate(groupId, id)}
+                  onTogglePage={togglePage}
+                  onSelectAnchor={(pageId, anchor) => selectAnchor(groupId, pageId, anchor)}
+                  onSearchChange={updateSearchQuery}
+                  onClearSearch={clearSearch}
+                  onSubmitTopSearchResult={submitTopSearchResult}
+                  onSelectSearchResult={selectSearchResult}
+                />
+              </div>
+            )}
+          </div>
+
+          <main
+            ref={contentRef}
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg border border-border/70 bg-card/40 px-5 py-6 sm:px-8 lg:h-full"
+            onClick={handleContentClick}
           >
-            {mobileNavOpen ? <X className="mr-2 h-4 w-4" /> : <Menu className="mr-2 h-4 w-4" />}
-            {mobileNavOpen ? "Close documentation navigation" : "Open documentation navigation"}
-          </Button>
-          {mobileNavOpen && (
-            <div className="mt-3 max-h-[45vh] overflow-y-auto rounded-lg border border-border/70 bg-sidebar p-3">
-              {sidebar}
-            </div>
-          )}
+            <article className="docs-prose" dangerouslySetInnerHTML={{ __html: renderedHtml }} />
+          </main>
         </div>
-
-        <main
-          ref={contentRef}
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg border border-border/70 bg-card/40 px-5 py-6 sm:px-8 lg:h-full"
-          onClick={handleContentClick}
-        >
-          <article
-            className="docs-prose"
-            dangerouslySetInnerHTML={{ __html: renderedHtml }}
-          />
-        </main>
-      </div>
       </div>
     </div>
   );

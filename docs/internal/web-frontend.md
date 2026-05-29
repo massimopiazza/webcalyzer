@@ -109,6 +109,8 @@ The dimensionality and display-unit inputs provide local suggestions from `/api/
 
 `DocumentationPage` imports Markdown files with Vite `?raw`, groups them through `DOC_GROUPS`, extracts H2 and H3 headings for a local table of contents, renders Markdown to trusted HTML, and intercepts local `.md` links so navigation stays inside the page.
 
+The documentation search index is client-side and scoped to the active docs group. It searches page titles, H2/H3 headings, and body text from the current User guide or Internal tab, then navigates results through the same page and heading handlers as the sidebar.
+
 The sidebar uses separate controls for disclosure and navigation. The chevron button only expands or collapses that page's section list. The title button only navigates to the page. Expanded pages are independent, so opening one page does not collapse another.
 
 Supported Markdown features are:
@@ -123,6 +125,8 @@ Supported Markdown features are:
 | blockquotes | styled as documentation callouts |
 | `Note:` and `Remark:` | styled marker blocks |
 | `$...$` and `$$...$$` | rendered with KaTeX as inline or display math |
+
+Search state uses the optional `q` URL parameter alongside `group` and `page`, so filtered documentation views can be refreshed or shared without adding backend endpoints.
 
 The docs source of truth remains the top-level `docs/` directory. The UI is a reader, not an editor. Writing rules live in [WEBAPP-DOCS-STYLE.md](../WEBAPP-DOCS-STYLE.md).
 

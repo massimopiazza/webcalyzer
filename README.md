@@ -135,8 +135,8 @@ Then open <http://localhost:8765>. The UI exposes five pages:
   showing affected templates.
 - **Templates**: list, import (paste YAML), duplicate, download, and delete
   templates in `--templates-dir`.
-- **Documentation**: read the bundled user guide and internal reference
-  docs with the same navigation used by the built frontend.
+- **Documentation**: read and search the bundled user guide and internal
+  reference docs with the same navigation used by the built frontend.
 
 For development with hot-reload, start the API with
 `--reload --cors-origin http://localhost:5173` and run `npm run dev` in
@@ -157,8 +157,9 @@ Detailed docs live under `docs/` and are also available from the web UI's
   used by both documentation tiers.
 
 The documentation reader renders Markdown tables, local cross-links,
-KaTeX math, and Mermaid diagrams. Sidebar chevrons expand and collapse
-section lists independently from page-title navigation.
+KaTeX math, and Mermaid diagrams. Its search box is scoped to the
+currently selected User guide or Internal tab. Sidebar chevrons expand and
+collapse section lists independently from page-title navigation.
 
 ## Argument reference
 
