@@ -114,6 +114,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `schema.ts` | Zod profile schema, empty profile defaults, and frontend validation. |
 | `profileForm.ts` | Shared profile form state hook and nested path patching. |
 | `docsNav.ts` | Documentation Markdown imports and group/page registry. |
+| `docsSearch.ts` | Documentation heading extraction, table-of-contents helpers, and global ranked search. |
 | `explanations.ts` | Tooltip and select help copy. |
 | `errors.ts` | Error formatting helpers. |
 | `meta.ts` | Metadata loading helpers. |

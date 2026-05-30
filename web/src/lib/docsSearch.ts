@@ -12,6 +12,8 @@ export type TocNode = {
 };
 
 export type DocsSearchResult = {
+  groupId: DocsGroup["id"];
+  groupLabel: string;
   pageId: string;
   pageTitle: string;
   heading: string | null;
@@ -74,7 +76,8 @@ export function tokenizeSearchQuery(query: string): string[] {
 }
 
 export function buildDocsSearchResults(
-  group: DocsGroup,
+  groups: DocsGroup[],
+  preferredGroupId: DocsGroup["id"],
   query: string,
   limit = MAX_SEARCH_RESULTS,
 ): DocsSearchResult[] {
@@ -82,33 +85,58 @@ export function buildDocsSearchResults(
   if (terms.length === 0) return [];
 
   const phrase = query.trim().toLowerCase();
-  const results: Array<DocsSearchResult & { pageIndex: number; sectionIndex: number }> = [];
+  const results: Array<
+    DocsSearchResult & {
+      groupIndex: number;
+      groupPriority: number;
+      pageIndex: number;
+      sectionIndex: number;
+    }
+  > = [];
 
-  group.pages.forEach((page, pageIndex) => {
-    buildPageSections(page, pageIndex).forEach((section) => {
-      const score = scoreSection(section, terms, phrase);
-      if (score <= 0) return;
-      results.push({
-        pageId: page.id,
-        pageTitle: page.title,
-        heading: section.heading,
-        anchor: section.anchor,
-        snippet: createSnippet(section.text || page.content, terms),
-        score,
-        pageIndex,
-        sectionIndex: section.sectionIndex,
+  groups.forEach((group, groupIndex) => {
+    group.pages.forEach((page, pageIndex) => {
+      buildPageSections(page, pageIndex).forEach((section) => {
+        const score = scoreSection(section, terms, phrase);
+        if (score <= 0) return;
+        results.push({
+          groupId: group.id,
+          groupLabel: group.label,
+          pageId: page.id,
+          pageTitle: page.title,
+          heading: section.heading,
+          anchor: section.anchor,
+          snippet: createSnippet(section.text || page.content, terms),
+          score,
+          groupIndex,
+          groupPriority: group.id === preferredGroupId ? 0 : 1,
+          pageIndex,
+          sectionIndex: section.sectionIndex,
+        });
       });
     });
   });
 
   return results
     .sort((left, right) => {
+      if (left.groupPriority !== right.groupPriority) {
+        return left.groupPriority - right.groupPriority;
+      }
       if (right.score !== left.score) return right.score - left.score;
+      if (left.groupIndex !== right.groupIndex) return left.groupIndex - right.groupIndex;
       if (left.pageIndex !== right.pageIndex) return left.pageIndex - right.pageIndex;
       return left.sectionIndex - right.sectionIndex;
     })
     .slice(0, limit)
-    .map(({ pageIndex: _pageIndex, sectionIndex: _sectionIndex, ...result }) => result);
+    .map(
+      ({
+        groupIndex: _groupIndex,
+        groupPriority: _groupPriority,
+        pageIndex: _pageIndex,
+        sectionIndex: _sectionIndex,
+        ...result
+      }) => result,
+    );
 }
 
 function buildPageSections(page: DocsPage, pageIndex: number): SearchSection[] {

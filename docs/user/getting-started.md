@@ -66,6 +66,8 @@ webcalyzer serve --root "$PWD" --templates-dir "$PWD/configs"
 
 Open <http://127.0.0.1:8765>. The sidebar shows the configured templates directory, the allowed roots, and the app version. Primary pages are **Run**, **Calibrate**, **Quantities**, **Templates**, and **Documentation**.
 
+The **Documentation** page has a top-bar search field. Search covers both the User guide and Internal docs, while results from the selected tab are listed first. Use the arrow keys to move through results, **Enter** to open the selected result, and **Escape** to dismiss the result overlay.
+
 Fill in:
 
 - **Root:** directories the file browser may access

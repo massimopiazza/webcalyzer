@@ -157,9 +157,10 @@ Detailed docs live under `docs/` and are also available from the web UI's
   used by both documentation tiers.
 
 The documentation reader renders Markdown tables, local cross-links,
-KaTeX math, and Mermaid diagrams. Its search box is scoped to the
-currently selected User guide or Internal tab. Sidebar chevrons expand and
-collapse section lists independently from page-title navigation.
+KaTeX math, and Mermaid diagrams. Its top-bar search box searches both
+the User guide and Internal docs, prioritizes the currently selected tab,
+and opens a blurred overlay with ranked results. Sidebar chevrons expand
+and collapse section lists independently from page-title navigation.
 
 ## Argument reference
 

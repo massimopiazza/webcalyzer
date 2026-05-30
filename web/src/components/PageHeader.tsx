@@ -9,10 +9,20 @@ type Props = {
   description?: React.ReactNode;
   badges?: React.ReactNode;
   actions?: React.ReactNode;
+  actionsClassName?: string;
   className?: string;
+  compactActions?: boolean;
 };
 
-export function PageHeader({ title, description, badges, actions, className }: Props) {
+export function PageHeader({
+  title,
+  description,
+  badges,
+  actions,
+  actionsClassName,
+  className,
+  compactActions = false,
+}: Props) {
   const { collapsed, toggle } = useSidebar();
   return (
     <div
@@ -21,7 +31,14 @@ export function PageHeader({ title, description, badges, actions, className }: P
         className,
       )}
     >
-      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-start md:justify-between">
+      <div
+        className={cn(
+          "gap-3 px-4 py-3 sm:px-6",
+          compactActions
+            ? "flex flex-row items-start justify-between"
+            : "flex flex-col md:flex-row md:items-start md:justify-between",
+        )}
+      >
         <div className="flex min-w-0 items-start gap-2">
           {collapsed && (
             <Button
@@ -38,13 +55,27 @@ export function PageHeader({ title, description, badges, actions, className }: P
           <div className="min-w-0">
             <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
             {description && (
-              <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+              <p
+                className={cn(
+                  "mt-0.5 text-sm text-muted-foreground",
+                  compactActions && "hidden sm:block",
+                )}
+              >
+                {description}
+              </p>
             )}
             {badges && <div className="mt-2 flex flex-wrap items-center gap-2">{badges}</div>}
           </div>
         </div>
         {actions && (
-          <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+          <div
+            className={cn(
+              compactActions
+                ? "flex shrink-0 items-center justify-end gap-2"
+                : "flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end",
+              actionsClassName,
+            )}
+          >
             {actions}
           </div>
         )}

@@ -131,3 +131,5 @@ This index lists the functions, classes, and frontend exports that most often ma
 | `profileSchema` | `web/src/lib/schema.ts` | Zod validation mirror for `ProfileModel`. |
 | `api` | `web/src/lib/api.ts` | Typed fetch wrapper for backend endpoints. |
 | `DOC_GROUPS` | `web/src/lib/docsNav.ts` | Documentation page registry and raw Markdown imports. |
+| `buildDocsSearchResults(...)` | `web/src/lib/docsSearch.ts` | Client-side documentation search across User guide and Internal docs with active-group prioritization. |
+| `extractHeadings(...)` | `web/src/lib/docsSearch.ts` | H2/H3 extraction shared by the documentation sidebar and search index. |

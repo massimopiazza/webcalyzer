@@ -1,11 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -17,7 +19,6 @@ import {
   Cpu,
   Menu,
   RotateCcw,
-  Search,
   X,
   ZoomIn,
   ZoomOut,
@@ -464,47 +465,100 @@ function highlightText(text: string, terms: string[]): ReactNode {
   return nodes;
 }
 
-function DocsSearchBox({
-  groupLabel,
+function searchResultDomId(listboxId: string, index: number): string {
+  return `${listboxId}-result-${index}`;
+}
+
+function DocsSearchControl({
+  group,
   query,
+  results,
+  terms,
+  activeResultIndex,
+  open,
+  rootRef,
   inputRef,
   onQueryChange,
   onClear,
-  onSubmit,
+  onDismiss,
+  onFocus,
+  onMoveActiveResult,
+  onSelectResult,
+  onSetActiveResult,
 }: {
-  groupLabel: string;
+  group: DocsGroup;
   query: string;
-  inputRef: (node: HTMLInputElement | null) => void;
+  results: DocsSearchResult[];
+  terms: string[];
+  activeResultIndex: number;
+  open: boolean;
+  rootRef: RefObject<HTMLDivElement>;
+  inputRef: RefObject<HTMLInputElement>;
   onQueryChange: (value: string) => void;
   onClear: () => void;
-  onSubmit: () => void;
+  onDismiss: () => void;
+  onFocus: () => void;
+  onMoveActiveResult: (delta: 1 | -1) => void;
+  onSelectResult: (result: DocsSearchResult) => void;
+  onSetActiveResult: (index: number) => void;
 }) {
-  const hasQuery = query.trim().length > 0;
+  const listboxId = useId();
+  const trimmedQuery = query.trim();
+  const hasQuery = trimmedQuery.length > 0;
+  const showOverlay = open && hasQuery;
+  const activeResult = activeResultIndex >= 0 ? results[activeResultIndex] : null;
+  const activeDescendant = activeResult ? searchResultDomId(listboxId, activeResultIndex) : undefined;
+  const resultLabel =
+    results.length === 1
+      ? "1 result"
+      : results.length >= 24
+        ? "Top 24 results"
+        : `${results.length} results`;
+
+  useEffect(() => {
+    if (!open || !activeDescendant) return;
+    document.getElementById(activeDescendant)?.scrollIntoView({ block: "nearest" });
+  }, [activeDescendant, open]);
+
+  const selectActiveResult = () => {
+    const result = activeResult ?? results[0];
+    if (result) onSelectResult(result);
+  };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
+    if (event.key === "ArrowDown") {
       event.preventDefault();
-      onSubmit();
+      onMoveActiveResult(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      onMoveActiveResult(-1);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      selectActiveResult();
     } else if (event.key === "Escape") {
       event.preventDefault();
-      onClear();
-      event.currentTarget.blur();
+      onDismiss();
     }
   };
 
   return (
-    <div className="shrink-0">
+    <div ref={rootRef} className="relative">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           ref={inputRef}
           data-testid="docs-search-input"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
+          onFocus={onFocus}
           onKeyDown={handleKeyDown}
-          placeholder={`Search ${groupLabel.toLowerCase()}`}
-          aria-label={`Search ${groupLabel} documentation`}
-          className="h-9 pl-9 pr-9"
+          placeholder="Search"
+          aria-label="Search documentation"
+          role="combobox"
+          aria-expanded={showOverlay}
+          aria-controls={showOverlay ? listboxId : undefined}
+          aria-activedescendant={activeDescendant}
+          aria-autocomplete="list"
+          className="h-9 w-[min(13rem,44vw)] bg-background/60 pr-9 sm:w-72 md:w-80"
         />
         {hasQuery && (
           <Button
@@ -519,73 +573,78 @@ function DocsSearchBox({
           </Button>
         )}
       </div>
-    </div>
-  );
-}
 
-function DocsSearchResults({
-  group,
-  query,
-  results,
-  terms,
-  onSelectResult,
-}: {
-  group: DocsGroup;
-  query: string;
-  results: DocsSearchResult[];
-  terms: string[];
-  onSelectResult: (result: DocsSearchResult) => void;
-}) {
-  const trimmedQuery = query.trim();
-  if (!trimmedQuery) return null;
-
-  const resultLabel =
-    results.length === 1
-      ? "1 result"
-      : results.length >= 24
-        ? "Top 24 results"
-        : `${results.length} results`;
-
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-      <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] uppercase tracking-wide text-muted-foreground/70">
-        <span>{resultLabel}</span>
-        <span className="truncate">{group.label}</span>
-      </div>
-      {results.length === 0 ? (
-        <div className="rounded-md border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-          No matches in {group.label}.
-        </div>
-      ) : (
-        <div className="space-y-2" role="list" aria-label={`${group.label} search results`}>
-          {results.map((result) => (
-            <div key={`${result.pageId}-${result.anchor ?? "top"}`} role="listitem">
-              <button
-                type="button"
-                data-testid="docs-search-result"
-                data-page-id={result.pageId}
-                data-anchor={result.anchor ?? ""}
-                className="block w-full rounded-md border border-border/70 bg-card/40 px-3 py-2.5 text-left shadow-sm transition-colors hover:border-primary/45 hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                onClick={() => onSelectResult(result)}
-              >
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                    {highlightText(result.pageTitle, terms)}
-                  </span>
-                </span>
-                {result.heading && (
-                  <span className="mt-0.5 block truncate text-xs font-medium text-primary">
-                    {highlightText(result.heading, terms)}
-                  </span>
-                )}
-                {result.snippet && (
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                    {highlightText(result.snippet, terms)}
-                  </span>
-                )}
-              </button>
+      {showOverlay && (
+        <div
+          className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-2xl ring-1 ring-border/40 backdrop-blur-md backdrop-saturate-150 sm:w-[32rem] md:w-[42rem] lg:w-[48rem]"
+          data-testid="docs-search-overlay"
+        >
+          <div className="border-b border-border/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-muted-foreground/80">
+              <span>{resultLabel}</span>
+              <span className="truncate">Prioritizing {group.label}</span>
             </div>
-          ))}
+          </div>
+          {results.length === 0 ? (
+            <div className="p-4">
+              <div className="rounded-md border border-border/70 bg-background/95 p-4 text-sm text-muted-foreground">
+                No matches in User guide or Internal.
+              </div>
+            </div>
+          ) : (
+            <div
+              id={listboxId}
+              className="max-h-[min(66vh,34rem)] space-y-2 overflow-y-auto p-3"
+              role="listbox"
+              aria-label={`Documentation search results, prioritizing ${group.label}`}
+            >
+              {results.map((result, index) => {
+                const isActive = index === activeResultIndex;
+                return (
+                  <button
+                    key={`${result.groupId}-${result.pageId}-${result.anchor ?? "top"}-${index}`}
+                    id={searchResultDomId(listboxId, index)}
+                    type="button"
+                    role="option"
+                    aria-selected={isActive}
+                    data-testid="docs-search-result"
+                    data-group-id={result.groupId}
+                    data-page-id={result.pageId}
+                    data-anchor={result.anchor ?? ""}
+                    className={cn(
+                      "block w-full rounded-md border px-4 py-3 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                      isActive
+                        ? "border-primary/60 bg-primary/15"
+                        : "border-border/70 bg-background/95 hover:border-primary/40 hover:bg-sidebar-accent",
+                    )}
+                    onMouseEnter={() => onSetActiveResult(index)}
+                    onClick={() => onSelectResult(result)}
+                  >
+                    <span className="flex min-w-0 items-start justify-between gap-4">
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-foreground">
+                          {highlightText(result.pageTitle, terms)}
+                        </span>
+                        {result.heading && (
+                          <span className="mt-0.5 block truncate text-xs font-medium text-primary">
+                            {highlightText(result.heading, terms)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 rounded border border-border/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {result.groupLabel}
+                      </span>
+                    </span>
+                    {result.snippet && (
+                      <span className="mt-2 block text-xs leading-5 text-muted-foreground">
+                        {highlightText(result.snippet, terms)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -696,38 +755,20 @@ function DocsSidebar({
   currentPage,
   activeAnchor,
   expandedPageIds,
-  searchQuery,
-  searchTerms,
-  searchResults,
-  searchInputRef,
   onSelectGroup,
   onSelectPage,
   onTogglePage,
   onSelectAnchor,
-  onSearchChange,
-  onClearSearch,
-  onSubmitTopSearchResult,
-  onSelectSearchResult,
 }: {
   group: DocsGroup;
   currentPage: DocsPage;
   activeAnchor: string | null;
   expandedPageIds: Set<string>;
-  searchQuery: string;
-  searchTerms: string[];
-  searchResults: DocsSearchResult[];
-  searchInputRef: (node: HTMLInputElement | null) => void;
   onSelectGroup: (groupId: DocsGroup["id"]) => void;
   onSelectPage: (pageId: string) => void;
   onTogglePage: (pageId: string) => void;
   onSelectAnchor: (pageId: string, anchor: string) => void;
-  onSearchChange: (value: string) => void;
-  onClearSearch: () => void;
-  onSubmitTopSearchResult: () => void;
-  onSelectSearchResult: (result: DocsSearchResult) => void;
 }) {
-  const hasSearch = searchQuery.trim().length > 0;
-
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="grid shrink-0 grid-cols-2 gap-1 rounded-lg bg-muted p-1">
@@ -751,33 +792,15 @@ function DocsSidebar({
           </button>
         ))}
       </div>
-      <DocsSearchBox
-        groupLabel={group.label}
-        query={searchQuery}
-        inputRef={searchInputRef}
-        onQueryChange={onSearchChange}
-        onClear={onClearSearch}
-        onSubmit={onSubmitTopSearchResult}
+      <DocsNav
+        group={group}
+        currentPage={currentPage}
+        activeAnchor={activeAnchor}
+        expandedPageIds={expandedPageIds}
+        onSelectPage={onSelectPage}
+        onTogglePage={onTogglePage}
+        onSelectAnchor={onSelectAnchor}
       />
-      {hasSearch ? (
-        <DocsSearchResults
-          group={group}
-          query={searchQuery}
-          results={searchResults}
-          terms={searchTerms}
-          onSelectResult={onSelectSearchResult}
-        />
-      ) : (
-        <DocsNav
-          group={group}
-          currentPage={currentPage}
-          activeAnchor={activeAnchor}
-          expandedPageIds={expandedPageIds}
-          onSelectPage={onSelectPage}
-          onTogglePage={onTogglePage}
-          onSelectAnchor={onSelectAnchor}
-        />
-      )}
     </div>
   );
 }
@@ -786,13 +809,15 @@ export function DocumentationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(() => Boolean(searchParams.get("q")?.trim()));
+  const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(-1);
   const [expandedPagesByGroup, setExpandedPagesByGroup] = useState<Record<string, string[]>>({
     user: ["index"],
     internal: ["index"],
   });
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const desktopSearchInputRef = useRef<HTMLInputElement | null>(null);
-  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const searchRootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const groupId = searchParams.get("group") === "internal" ? "internal" : "user";
   const currentGroup = DOC_GROUPS.find((group) => group.id === groupId) ?? DOC_GROUPS[0];
@@ -803,13 +828,30 @@ export function DocumentationPage() {
   const renderedHtml = useMemo(() => renderMarkdown(currentPage.content), [currentPage.content]);
   const searchTerms = useMemo(() => tokenizeSearchQuery(searchQuery), [searchQuery]);
   const searchResults = useMemo(
-    () => buildDocsSearchResults(currentGroup, searchQuery),
-    [currentGroup, searchQuery],
+    () => buildDocsSearchResults(DOC_GROUPS, groupId, searchQuery),
+    [groupId, searchQuery],
   );
   const expandedPageIds = useMemo(
     () => new Set([...(expandedPagesByGroup[groupId] ?? []), currentPage.id]),
     [currentPage.id, expandedPagesByGroup, groupId],
   );
+
+  useEffect(() => {
+    setActiveSearchResultIndex(searchResults.length > 0 ? 0 : -1);
+  }, [groupId, searchQuery, searchResults.length]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && searchRootRef.current?.contains(target)) return;
+      setSearchOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [searchOpen]);
 
   useEffect(() => {
     const root = contentRef.current;
@@ -915,38 +957,43 @@ export function DocumentationPage() {
   const updateSearchQuery = useCallback(
     (value: string) => {
       setDocumentationParams(groupId, currentPage.id, value, { replace: true });
+      setSearchOpen(value.trim().length > 0);
     },
     [currentPage.id, groupId, setDocumentationParams],
   );
 
   const clearSearch = useCallback(() => {
     updateSearchQuery("");
+    setSearchOpen(false);
+    setActiveSearchResultIndex(-1);
   }, [updateSearchQuery]);
 
-  const visibleSearchInput = useCallback(() => {
-    const candidates = [mobileSearchInputRef.current, desktopSearchInputRef.current];
-    return (
-      candidates.find((node) => node && node.offsetParent !== null) ??
-      desktopSearchInputRef.current ??
-      mobileSearchInputRef.current
-    );
+  const dismissSearch = useCallback(() => {
+    setSearchOpen(false);
+    setActiveSearchResultIndex(-1);
+    searchInputRef.current?.blur();
   }, []);
 
   const focusSearchInput = useCallback(() => {
-    const input = visibleSearchInput();
-    if (input) {
-      input.focus();
-      input.select();
-      return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+    if (searchQuery.trim()) {
+      setSearchOpen(true);
     }
+  }, [searchQuery]);
 
-    setMobileNavOpen(true);
-    requestAnimationFrame(() => {
-      const mobileInput = mobileSearchInputRef.current;
-      mobileInput?.focus();
-      mobileInput?.select();
-    });
-  }, [visibleSearchInput]);
+  const moveActiveSearchResult = useCallback(
+    (delta: 1 | -1) => {
+      if (searchResults.length === 0) return;
+      setSearchOpen(true);
+      setActiveSearchResultIndex((current) => {
+        const start = current >= 0 ? current : 0;
+        const next = start + delta;
+        return Math.min(searchResults.length - 1, Math.max(0, next));
+      });
+    },
+    [searchResults.length],
+  );
 
   const scrollToAnchor = useCallback((anchor: string) => {
     setActiveAnchor(anchor);
@@ -995,20 +1042,16 @@ export function DocumentationPage() {
 
   const selectSearchResult = useCallback(
     (result: DocsSearchResult) => {
+      setSearchOpen(false);
+      searchInputRef.current?.blur();
       if (result.anchor) {
-        selectAnchor(groupId, result.pageId, result.anchor);
+        selectAnchor(result.groupId, result.pageId, result.anchor);
       } else {
-        navigate(groupId, result.pageId);
+        navigate(result.groupId, result.pageId);
       }
     },
-    [groupId, navigate, selectAnchor],
+    [navigate, selectAnchor],
   );
-
-  const submitTopSearchResult = useCallback(() => {
-    if (searchResults[0]) {
-      selectSearchResult(searchResults[0]);
-    }
-  }, [searchResults, selectSearchResult]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1025,16 +1068,15 @@ export function DocumentationPage() {
       if (event.key === "/" && !isEditing) {
         event.preventDefault();
         focusSearchInput();
-      } else if (event.key === "Escape" && searchQuery.trim()) {
+      } else if (event.key === "Escape" && searchOpen) {
         event.preventDefault();
-        clearSearch();
-        visibleSearchInput()?.blur();
+        dismissSearch();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clearSearch, focusSearchInput, searchQuery, visibleSearchInput]);
+  }, [dismissSearch, focusSearchInput, searchOpen]);
 
   const handleContentClick = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
@@ -1067,6 +1109,28 @@ export function DocumentationPage() {
         className="shrink-0"
         title="Documentation"
         description="User guide and internal architecture reference for webcalyzer."
+        compactActions
+        actions={
+          <DocsSearchControl
+            group={currentGroup}
+            query={searchQuery}
+            results={searchResults}
+            terms={searchTerms}
+            activeResultIndex={activeSearchResultIndex}
+            open={searchOpen}
+            rootRef={searchRootRef}
+            inputRef={searchInputRef}
+            onQueryChange={updateSearchQuery}
+            onClear={clearSearch}
+            onDismiss={dismissSearch}
+            onFocus={() => {
+              if (searchQuery.trim()) setSearchOpen(true);
+            }}
+            onMoveActiveResult={moveActiveSearchResult}
+            onSelectResult={selectSearchResult}
+            onSetActiveResult={setActiveSearchResultIndex}
+          />
+        }
       />
 
       <div className="min-h-0 flex-1 overflow-hidden p-4 sm:p-6">
@@ -1077,20 +1141,10 @@ export function DocumentationPage() {
               currentPage={currentPage}
               activeAnchor={activeAnchor}
               expandedPageIds={expandedPageIds}
-              searchQuery={searchQuery}
-              searchTerms={searchTerms}
-              searchResults={searchResults}
-              searchInputRef={(node) => {
-                desktopSearchInputRef.current = node;
-              }}
               onSelectGroup={(id) => navigate(id, "index")}
               onSelectPage={(id) => navigate(groupId, id)}
               onTogglePage={togglePage}
               onSelectAnchor={(pageId, anchor) => selectAnchor(groupId, pageId, anchor)}
-              onSearchChange={updateSearchQuery}
-              onClearSearch={clearSearch}
-              onSubmitTopSearchResult={submitTopSearchResult}
-              onSelectSearchResult={selectSearchResult}
             />
           </aside>
 
@@ -1114,20 +1168,10 @@ export function DocumentationPage() {
                   currentPage={currentPage}
                   activeAnchor={activeAnchor}
                   expandedPageIds={expandedPageIds}
-                  searchQuery={searchQuery}
-                  searchTerms={searchTerms}
-                  searchResults={searchResults}
-                  searchInputRef={(node) => {
-                    mobileSearchInputRef.current = node;
-                  }}
                   onSelectGroup={(id) => navigate(id, "index")}
                   onSelectPage={(id) => navigate(groupId, id)}
                   onTogglePage={togglePage}
                   onSelectAnchor={(pageId, anchor) => selectAnchor(groupId, pageId, anchor)}
-                  onSearchChange={updateSearchQuery}
-                  onClearSearch={clearSearch}
-                  onSubmitTopSearchResult={submitTopSearchResult}
-                  onSelectSearchResult={selectSearchResult}
                 />
               </div>
             )}

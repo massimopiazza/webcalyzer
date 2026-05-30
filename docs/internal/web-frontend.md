@@ -109,7 +109,9 @@ The dimensionality and display-unit inputs provide local suggestions from `/api/
 
 `DocumentationPage` imports Markdown files with Vite `?raw`, groups them through `DOC_GROUPS`, extracts H2 and H3 headings for a local table of contents, renders Markdown to trusted HTML, and intercepts local `.md` links so navigation stays inside the page.
 
-The documentation search index is client-side and scoped to the active docs group. It searches page titles, H2/H3 headings, and body text from the current User guide or Internal tab, then navigates results through the same page and heading handlers as the sidebar.
+The documentation search index is client-side and global across both documentation groups. It searches page titles, H2/H3 headings, and body text from the User guide and Internal docs, then sorts the selected group first before applying score and source-order ranking. Switching between User guide and Internal recomputes the same query so the active group receives priority immediately.
+
+Search results appear in a top-bar overlay using the same dark popover tokens and backdrop blur pattern as the rest of the UI. Result selection navigates through the same page and heading handlers as the sidebar. Keyboard handling supports arrow movement with clamped first and last items, Enter selection, and Escape dismissal.
 
 The sidebar uses separate controls for disclosure and navigation. The chevron button only expands or collapses that page's section list. The title button only navigates to the page. Expanded pages are independent, so opening one page does not collapse another.
 
