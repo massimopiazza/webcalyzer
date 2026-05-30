@@ -511,8 +511,8 @@ function DocsSearchControl({
   const resultLabel =
     results.length === 1
       ? "1 result"
-      : results.length >= 24
-        ? "Top 24 results"
+      : results.length >= 64
+        ? "Top 64 results"
         : `${results.length} results`;
 
   useEffect(() => {
@@ -580,9 +580,8 @@ function DocsSearchControl({
           data-testid="docs-search-overlay"
         >
           <div className="border-b border-border/70 px-4 py-3">
-            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-muted-foreground/80">
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
               <span>{resultLabel}</span>
-              <span className="truncate">Prioritizing {group.label}</span>
             </div>
           </div>
           {results.length === 0 ? (
@@ -1108,7 +1107,6 @@ export function DocumentationPage() {
       <PageHeader
         className="shrink-0"
         title="Documentation"
-        description="User guide and internal architecture reference for webcalyzer."
         compactActions
         actions={
           <DocsSearchControl

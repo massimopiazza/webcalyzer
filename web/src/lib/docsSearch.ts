@@ -31,7 +31,7 @@ type SearchSection = {
   text: string;
 };
 
-const MAX_SEARCH_RESULTS = 24;
+const MAX_SEARCH_RESULTS = 64;
 const SNIPPET_RADIUS = 96;
 
 export function slugify(text: string): string {
