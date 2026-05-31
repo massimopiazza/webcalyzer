@@ -54,6 +54,21 @@ python_imports_ok() {
   "$VENV_PYTHON" -c 'import fastapi, uvicorn, webcalyzer' >/dev/null 2>&1
 }
 
+listening_process_summary() {
+  local port="$1"
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 { printf "%s (PID %s)", $1, $2; exit }'
+}
+
+ensure_port_available() {
+  local owner
+  command -v lsof >/dev/null 2>&1 || return 0
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    owner="$(listening_process_summary "$PORT")"
+    fail "Port $PORT is already in use${owner:+ by $owner}. Stop the existing server first and relaunch. Relaunching against an occupied port can connect the browser to a stale backend."
+  fi
+}
+
 wait_and_open_browser() {
   (
     for _ in $(seq 1 90); do
@@ -122,6 +137,8 @@ if ! cache_matches frontend-build "$BUILD_FP" || [ ! -f "$WEB_DIR/dist/index.htm
 else
   log "Frontend bundle is up to date"
 fi
+
+ensure_port_available
 
 log "Launching webcalyzer at $URL"
 log "Press Control-C in this terminal to stop the server."

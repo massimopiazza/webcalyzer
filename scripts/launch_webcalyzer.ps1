@@ -95,6 +95,24 @@ function Test-PythonImports {
     }
 }
 
+function Get-ListeningProcessSummary {
+    param([int] $PortNumber)
+    try {
+        $Listener = Get-NetTCPConnection -LocalPort $PortNumber -State Listen -ErrorAction Stop | Select-Object -First 1
+    } catch {
+        return $null
+    }
+    if (-not $Listener) {
+        return $null
+    }
+    try {
+        $Process = Get-Process -Id $Listener.OwningProcess -ErrorAction Stop
+        return "$($Process.ProcessName) (PID $($Listener.OwningProcess))"
+    } catch {
+        return "PID $($Listener.OwningProcess)"
+    }
+}
+
 function Get-ModernNodeDir {
     $Candidates = @()
     $NodeCommand = Get-Command node -ErrorAction SilentlyContinue
@@ -192,6 +210,11 @@ if ((-not (Test-CacheMatch "frontend-build" $FrontendBuildFingerprint)) -or (-no
     Write-Cache "frontend-build" $FrontendBuildFingerprint
 } else {
     Write-LauncherLog "Frontend bundle is up to date"
+}
+
+$ListeningProcess = Get-ListeningProcessSummary -PortNumber ([int] $Port)
+if ($ListeningProcess) {
+    Stop-WithMessage "Port $Port is already in use by $ListeningProcess. Stop the existing server first and relaunch. Relaunching against an occupied port can connect the browser to a stale backend."
 }
 
 Write-LauncherLog "Launching webcalyzer at $Url"

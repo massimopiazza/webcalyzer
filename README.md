@@ -96,6 +96,10 @@ and serves with the repository as the only browsable root. After the first
 successful setup it can relaunch offline as long as dependencies and
 `web/dist/` are still current.
 
+If the chosen port is already occupied, the launcher stops with an error
+instead of attaching the browser to the existing server. This avoids a stale
+backend serving an apparently up-to-date UI after the code has changed.
+
 Manual setup is still available:
 
 ```bash
