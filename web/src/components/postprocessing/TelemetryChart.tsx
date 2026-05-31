@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
+  Eye,
   Focus,
   Hand,
-  Info,
   MousePointer2,
   RotateCcw,
   ZoomIn,
@@ -36,12 +36,6 @@ const WIDTH = 1100;
 const HEIGHT = 560;
 const PAD = { left: 76, right: 24, top: 24, bottom: 52 };
 const SHORTCUTS = [
-  ["S", "Select tool"],
-  ["Z", "Zoom-to-rectangle tool"],
-  ["= / +", "Zoom in"],
-  ["-", "Zoom out"],
-  ["P", "Pan tool"],
-  ["I", "Open chart help"],
   ["Click or drag", "Select points"],
   ["Shift + click or drag", "Add points to the selection"],
   ["Option / Alt + click or drag", "Remove points from the selection"],
@@ -120,114 +114,33 @@ export function TelemetryChart({
 
   const zoom = (factor: number) => setBounds((current) => zoomBounds(current, factor));
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isTextEntry(event.target)) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-
-      const key = event.key.toLowerCase();
-      const isToolShortcut = key === "s" || key === "z" || key === "p" || key === "i";
-      if (event.repeat && isToolShortcut) return;
-
-      if (key === "s") {
-        event.preventDefault();
-        setTool("select");
-        return;
-      }
-      if (key === "z") {
-        event.preventDefault();
-        setTool("zoom");
-        return;
-      }
-      if (matchesZoomInShortcut(event)) {
-        event.preventDefault();
-        setBounds((current) => zoomBounds(current, 0.78));
-        return;
-      }
-      if (matchesZoomOutShortcut(event)) {
-        event.preventDefault();
-        setBounds((current) => zoomBounds(current, 1.28));
-        return;
-      }
-      if (key === "p") {
-        event.preventDefault();
-        setTool("pan");
-        return;
-      }
-      if (key === "i") {
-        event.preventDefault();
-        setShortcutsOpen(true);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/45">
-      <div
-        className="flex flex-wrap items-center gap-1 border-b border-border/70 bg-card/70 p-2"
-        role="toolbar"
-        aria-label="Chart tools"
-      >
-        <ToolButton
-          active={tool === "select"}
-          title="Select points"
-          shortcutLabel="S"
-          ariaKeyShortcuts="S"
-          onClick={() => setTool("select")}
-        >
+      <div className="flex flex-wrap items-center gap-1 border-b border-border/70 bg-card/70 p-2">
+        <ToolButton active={tool === "select"} title="Select points" onClick={() => setTool("select")}>
           <MousePointer2 />
         </ToolButton>
-        <ToolButton
-          active={tool === "zoom"}
-          title="Zoom to rectangle once"
-          shortcutLabel="Z"
-          ariaKeyShortcuts="Z"
-          onClick={() => setTool("zoom")}
-        >
+        <ToolButton active={tool === "zoom"} title="Zoom to rectangle once" onClick={() => setTool("zoom")}>
           <Focus />
         </ToolButton>
-        <ToolButton
-          title="Zoom in"
-          shortcutLabel="= / +"
-          ariaKeyShortcuts="="
-          onClick={() => zoom(0.78)}
-        >
+        <ToolButton title="Zoom in" onClick={() => zoom(0.78)}>
           <ZoomIn />
         </ToolButton>
-        <ToolButton
-          title="Zoom out"
-          shortcutLabel="-"
-          ariaKeyShortcuts="-"
-          onClick={() => zoom(1.28)}
-        >
+        <ToolButton title="Zoom out" onClick={() => zoom(1.28)}>
           <ZoomOut />
         </ToolButton>
         <ToolButton title="Reset zoom" onClick={() => setBounds(dataBounds)}>
           <RotateCcw />
         </ToolButton>
-        <ToolButton
-          active={tool === "pan"}
-          title="Pan"
-          shortcutLabel="P"
-          ariaKeyShortcuts="P"
-          onClick={() => setTool("pan")}
-        >
+        <ToolButton active={tool === "pan"} title="Pan" onClick={() => setTool("pan")}>
           <Hand />
         </ToolButton>
         <div className="ml-2 text-xs text-muted-foreground">
           {tool === "zoom" ? "Drag a zoom region" : tool === "pan" ? "Drag to pan" : "Drag to select points"}
         </div>
         <div className="ml-auto">
-          <ToolButton
-            title="Keyboard shortcuts"
-            shortcutLabel="I"
-            ariaKeyShortcuts="I"
-            onClick={() => setShortcutsOpen(true)}
-          >
-            <Info />
+          <ToolButton title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
+            <Eye />
           </ToolButton>
         </div>
       </div>
@@ -310,29 +223,22 @@ export function TelemetryChart({
 function ToolButton({
   active,
   title,
-  shortcutLabel,
-  ariaKeyShortcuts,
   onClick,
   children,
 }: {
   active?: boolean;
   title: string;
-  shortcutLabel?: string;
-  ariaKeyShortcuts?: string;
   onClick: () => void;
   children: React.ReactElement;
 }) {
-  const label = shortcutLabel ? `${title} (${shortcutLabel})` : title;
   return (
     <Button
       type="button"
       variant={active ? "secondary" : "ghost"}
       size="icon"
       className="h-8 w-8"
-      title={label}
-      aria-label={label}
-      aria-keyshortcuts={ariaKeyShortcuts}
-      aria-pressed={active}
+      title={title}
+      aria-label={title}
       onClick={onClick}
     >
       {<span className="[&>svg]:h-4 [&>svg]:w-4">{children}</span>}
@@ -397,7 +303,7 @@ function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Chart, selection, and correction controls for the active telemetry series.</DialogDescription>
+          <DialogDescription>Selection and correction controls for the active telemetry series.</DialogDescription>
         </DialogHeader>
         <div className="divide-y divide-border/70 rounded-md border border-border/70">
           {SHORTCUTS.map(([keys, description]) => (
@@ -476,22 +382,4 @@ function ticks(min: number, max: number, count: number) {
 
 function formatTick(value: number) {
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(Math.abs(value) < 10 ? 2 : 1);
-}
-
-function matchesZoomInShortcut(event: KeyboardEvent) {
-  return event.key === "=" || event.key === "+" || event.key === "Add";
-}
-
-function matchesZoomOutShortcut(event: KeyboardEvent) {
-  return event.key === "-" || event.key === "_" || event.key === "Subtract";
-}
-
-function isTextEntry(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement
-  );
 }

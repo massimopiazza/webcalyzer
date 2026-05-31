@@ -576,7 +576,7 @@ function DocsSearchControl({
 
       {showOverlay && (
         <div
-          className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-2xl ring-1 ring-border/40 backdrop-blur-md backdrop-saturate-150 sm:w-[32rem] md:w-[42rem] lg:w-[48rem]"
+          className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-popover/95 shadow-2xl ring-1 ring-border/40 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-popover/85 sm:w-[32rem] md:w-[42rem] lg:w-[48rem]"
           data-testid="docs-search-overlay"
         >
           <div className="border-b border-border/70 px-4 py-3">
@@ -613,8 +613,8 @@ function DocsSearchControl({
                     className={cn(
                       "block w-full rounded-md border px-4 py-3 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isActive
-                        ? "border-primary/60 bg-primary/15"
-                        : "border-border/70 bg-background/95 hover:border-primary/40 hover:bg-sidebar-accent",
+                        ? "border-primary/60 bg-sidebar-accent/95 backdrop-blur-md backdrop-saturate-150"
+                        : "border-border/70 bg-popover/95 backdrop-blur-md backdrop-saturate-150 hover:border-primary/40 hover:bg-sidebar-accent/95",
                     )}
                     onMouseEnter={() => onSetActiveResult(index)}
                     onClick={() => onSelectResult(result)}

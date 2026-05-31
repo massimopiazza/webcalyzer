@@ -205,8 +205,8 @@ above as a navigation aid and read the code for authoritative bounds.
 
 - `sample-frames`, `calibrate`, `extract`, `run`, `plot`,
   `rebuild-clean`, `rescue`, `reject-outliers`,
-  `reconstruct-trajectory`, `render-overlay`, **`postprocess-regenerate`**, **`quantities`**,
-  **`serve`** (web UI).
+  `reconstruct-trajectory`, `render-overlay`, **`quantities`**,
+  **`postprocess-regenerate`**, **`serve`** (web UI).
 
 **Invariant: the existing CLI must keep working unchanged.** `serve` is
 purely additive. If you must alter an existing subcommand's behavior,

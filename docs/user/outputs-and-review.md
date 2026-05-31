@@ -10,6 +10,7 @@ Each full run writes a self-contained timestamped output directory under the sel
 |---|---|
 | `review/` | Sampled JPEG frames and `contact_sheet.jpg` for visual calibration review. The JPEGs include active segment labels and field bounding boxes. |
 | `telemetry_raw.csv` | Raw OCR observations after parsing, including `segment_id`, parse status, unit diagnostics, confidence, and per-field details. |
+| `postprocessing_manifest.json` | Dependency graph and freshness state for raw telemetry, rebuilt datasets, plots, and overlay media. |
 | `telemetry_clean.csv` | Rebuilt telemetry table after filtering, stage logic, and anchor-point injection. Custom quantity columns use each quantity's display unit. This is the main retained dataset. |
 | `telemetry_rejected.csv` | Points rejected by outlier processing, when available. |
 | `trajectory.csv` | Dense trajectory reconstruction and augmented values, when trajectory is enabled. |
@@ -32,6 +33,10 @@ Note: Review files are written to disk, but they are not listed among the finish
 ### Review raw telemetry
 
 Open `telemetry_raw.csv` when you need to diagnose OCR behavior. It preserves raw text, units, parse status, unit source, confidence, candidate count, reject reason, and field-level observations used to build the clean table.
+
+New extraction outputs also include a stable `sample_id` per row. The
+**Postprocessing** page uses `sample_id` to keep draft corrections attached
+to the same observation across sorting and downstream rebuilds.
 
 Use raw telemetry to answer questions such as:
 
@@ -116,3 +121,18 @@ webcalyzer run --video /path/to/video.mp4 --config /path/to/output/config_resolv
 ```
 
 Note: OCR backend, OCR worker, and overlay encoder choices are saved in `config_resolved.yaml` when they come from the profile. CLI flags that override those values for a single run are recorded in `run_metadata.json`.
+
+## Correct Extracted Data
+
+Open **Postprocessing** from the sidebar to review a compatible previous
+run. Select its output directory, choose one telemetry field, then drag
+across the chart to select observations. Deleted observations stay visible
+as muted points until Save so they can be restored during the current
+session.
+
+The editor keeps a server-side draft until you confirm Save. Save retains
+one rolling backup of `telemetry_raw.csv`, writes the corrected raw data
+atomically, reapplies configured filtering, reconstructs enabled trajectory
+outputs, and regenerates plots. Overlay rendering remains a separate
+action. Legacy runs without `postprocessing_manifest.json` remain usable
+from the CLI but cannot be opened in the visual editor.

@@ -26,17 +26,6 @@ Rectangle zoom is a one-shot action and returns to selection mode after the
 drag completes. Trackpad scrolling pans a zoomed chart. Draft actions clear
 the current point selection without resetting the visible zoom range.
 
-Chart toolbar shortcuts:
-
-- **S** selects points
-- **Z** arms rectangle zoom
-- **=** or **+** zooms in
-- **-** zooms out
-- **P** switches to pan
-- **I** opens the chart help dialog
-
-Reset zoom intentionally has no keyboard shortcut.
-
 Enable **Show outliers** when you want to review points already rejected by
 the configured outlier filter. The toggle is off by default. Rejected points
 are red and never affect the chart's default range.

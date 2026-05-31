@@ -33,6 +33,7 @@ src/webcalyzer/
   units.py               Pint-backed unit conversion
   quantities.py          Global quantity library and template snapshot updates
   postprocess.py         Clean rebuild and outlier rejection
+  postprocessing_editor.py Manifest DAG, stable IDs, drafts, and regeneration
   trajectory.py          Interpolation, integration, downrange reconstruction
   acceleration.py        Velocity smoothing and acceleration derivation
   plotting.py            PDF plot generation

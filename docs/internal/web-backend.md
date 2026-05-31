@@ -161,7 +161,16 @@ Pipeline modules may use `print(...)` or logging. Both should remain visible in 
 
 ### Static serving
 
-When `dist_dir` exists, FastAPI serves frontend assets and falls back to `index.html` for non-API paths. This allows React Router to own `/`, `/calibrate`, `/quantities`, `/templates`, and `/documentation`.
+When `dist_dir` exists, FastAPI serves frontend assets and falls back to `index.html` for non-API paths. This allows React Router to own `/`, `/calibrate`, `/postprocessing`, `/quantities`, `/templates`, and `/documentation`.
+
+### Post-processing sessions
+
+`/api/postprocessing/...` endpoints open manifest-enabled outputs, manage
+heartbeat locks, persist correction drafts, submit save and retry jobs, and
+submit explicit overlay regeneration. All output directory paths pass
+through configured root checks. The persisted DAG is stored in
+`postprocessing_manifest.json`; temporary operation history lives in
+`.postprocessing_draft.json`.
 
 When `dist_dir` is missing, API endpoints can still run, but the production web UI is unavailable.
 

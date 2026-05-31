@@ -20,6 +20,7 @@ The `webcalyzer` command exposes each major processing stage. Use `run` for the 
 | `reject-outliers` | Apply outlier rejection to an existing clean output. |
 | `reconstruct-trajectory` | Rebuild `trajectory.csv` and trajectory-aware plots. |
 | `render-overlay` | Render or rerender the synchronized overlay video. |
+| `postprocess-regenerate` | Regenerate downstream artifacts from corrected raw telemetry. |
 
 ## Common Runs
 
@@ -185,6 +186,20 @@ webcalyzer render-overlay \
 ```
 
 Note: `render-overlay` reads `telemetry_clean.csv`, optional `telemetry_rejected.csv`, optional `trajectory.csv`, and the profile from `config_resolved.yaml` unless you pass `--config`.
+
+### Retry post-processing regeneration
+
+Use `postprocess-regenerate` after a visual editor save was interrupted or
+when a manifest-enabled raw dataset was corrected:
+
+```bash
+webcalyzer postprocess-regenerate --output outputs/my-run
+```
+
+For manifest-enabled outputs, downstream rebuild commands consume the
+current materialized `telemetry_raw.csv` exactly as saved. Profile anchor
+points are injected during initial extraction and are not reinserted during
+later regeneration.
 
 ## Verification
 

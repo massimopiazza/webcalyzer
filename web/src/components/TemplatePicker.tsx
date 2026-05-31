@@ -115,7 +115,7 @@ export function TemplatePicker({
           </Button>
         </HelpTip>
         {selected && (
-          <TemplateYamlButton name={selected} label="Open YAML" icon={<FolderOpen className="mr-1 h-3 w-3" />} />
+          <TemplateYamlButton name={selected} label="View YAML" icon={<FolderOpen className="mr-1 h-3 w-3" />} />
         )}
       </div>
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>

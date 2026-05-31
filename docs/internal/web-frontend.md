@@ -10,6 +10,7 @@ The frontend is a Vite React app under `web/src/`. It is compiled into `web/dist
 |---|---|---|
 | `/` | `RunPage` | Full extraction configuration and job submission. |
 | `/calibrate` | `CalibratePage` | Frame-scrubber segment calibration with canonical field slots. |
+| `/postprocessing` | `PostprocessingPage` | Plot-first editor for raw telemetry corrections and downstream regeneration. |
 | `/quantities` | `QuantityLibraryPage` | Reusable telemetry quantity library with dimensions, units, aliases, and usage-aware deletion. |
 | `/templates` | `TemplatesPage` | Template list, import, duplicate, download, and delete. |
 | `/documentation` | `DocumentationPage` | In-app reader for `docs/user` and `docs/internal`. |
@@ -88,6 +89,18 @@ The console has two presentation modes:
 | `docked` | user-selected | Card placed at the top of the run page content flow with a focus button to reopen the dialog. |
 
 The controls use lucide icons from the existing app icon set. Review files under `review/` are filtered out of the displayed output links.
+
+### Post-processing editor
+
+`PostprocessingPage` opens compatible output directories through the
+root-scoped picker, acquires one heartbeat-backed draft session, and renders
+one active telemetry field through the code-native SVG chart. Draft
+operations are persisted immediately through `/api/postprocessing/draft`.
+Save and overlay regeneration reuse the shared `RunPanel` SSE console. The
+app records the latest successful extraction output and preselects it when
+the editor is opened. The chart excludes rejected points from its default
+range and reveals them as red observations only when **Show outliers** is
+enabled.
 
 ### Template picker blank reset
 

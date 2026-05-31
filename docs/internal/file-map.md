@@ -39,6 +39,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 | `overlay_ffmpeg.py` | ffmpeg overlay renderer, progress parsing, encoder detection, and command construction. |
 | `plotting.py` | Matplotlib PDF generation for summaries, stage plots, coverage, downrange, and acceleration. |
 | `postprocess.py` | Raw-to-clean rebuild, Mahalanobis outlier rejection, rejected file writing, and profile loading from output dirs. |
+| `postprocessing_editor.py` | Manifest DAG, stable sample IDs, operation drafts, atomic raw writes, and editor regeneration. |
 | `quantities.py` | Custom quantity library loading, validation, default seeding, and template snapshot updates. |
 | `raw_points.py` | Hardcoded raw data point injection and raw dataframe normalization. |
 | `rescue.py` | Multi-variant re-OCR for failed raw samples and output-directory rescue workflow. |
@@ -86,6 +87,7 @@ This map gives maintainers a fast way to locate behavior. It is a reference snap
 |---|---|---|
 | `RunPage.tsx` | `/` | Profile editing, input/output selection, YAML preview, job submission, and validation summary. |
 | `CalibratePage.tsx` | `/calibrate` | Frame-scrubber segment editor, canonical slot boxes, and calibration save workflow. |
+| `PostprocessingPage.tsx` | `/postprocessing` | Plot-first extracted telemetry correction editor. |
 | `QuantityLibraryPage.tsx` | `/quantities` | Quantity library CRUD, dimensionality editor, unit suggestions, and usage-aware deletion. |
 | `TemplatesPage.tsx` | `/templates` | Template inventory, import, duplicate, download, delete, and parse-error reporting. |
 | `DocumentationPage.tsx` | `/documentation` | Markdown documentation reader with page groups, local table of contents, and math styling. |

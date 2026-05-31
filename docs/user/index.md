@@ -14,6 +14,7 @@ Webcalyzer extracts launch telemetry from webcast videos. It samples frames, OCR
 | [Profile Configuration](profile-configuration.md) | General settings, segments, parsing, trajectory, overlay, and anchor points |
 | [Trajectory Reconstruction](trajectory-reconstruction.md) | Unit conversion, mission-time grids, interpolation, integration, downrange, acceleration, and geodesic projection |
 | [Outputs and Review](outputs-and-review.md) | Review frames, CSVs, plots, rejected points, trajectory data, and overlay videos |
+| [Postprocessing](postprocessing.md) | Correct raw telemetry observations and regenerate downstream outputs |
 | [CLI Reference](cli-reference.md) | Command-line workflows and subcommand responsibilities |
 
 ## Core concepts
