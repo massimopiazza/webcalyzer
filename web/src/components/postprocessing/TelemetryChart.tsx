@@ -19,8 +19,16 @@ import {
 import { PostprocessingObservation } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Tool = "select" | "zoom" | "pan";
-type Bounds = { x0: number; x1: number; y0: number; y1: number };
+export type TelemetryChartTool = "select" | "zoom" | "pan";
+export type TelemetryChartBounds = { x0: number; x1: number; y0: number; y1: number };
+export type TelemetryChartViewState = {
+  tool: TelemetryChartTool;
+  bounds: TelemetryChartBounds | null;
+  shortcutsOpen: boolean;
+};
+
+type Tool = TelemetryChartTool;
+type Bounds = TelemetryChartBounds;
 type Point = { observation: PostprocessingObservation; x: number; y: number };
 type Drag = {
   startX: number;
@@ -59,19 +67,25 @@ export function TelemetryChart({
   showOutliers,
   onSelected,
   onEdit,
+  initialViewState,
+  onViewStateChange,
 }: {
   observations: PostprocessingObservation[];
   selected: Set<string>;
   showOutliers: boolean;
   onSelected: (next: Set<string>) => void;
   onEdit: (observation: PostprocessingObservation) => void;
+  initialViewState?: TelemetryChartViewState | null;
+  onViewStateChange?: (next: TelemetryChartViewState) => void;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [tool, setTool] = useState<Tool>("select");
-  const [drag, setDrag] = useState<Drag>(null);
   const dataBounds = useMemo(() => boundsFor(observations), [observations]);
-  const [bounds, setBounds] = useState<Bounds>(dataBounds);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [tool, setTool] = useState<Tool>(initialViewState?.tool ?? "select");
+  const [drag, setDrag] = useState<Drag>(null);
+  const [bounds, setBounds] = useState<Bounds>(
+    initialViewState?.bounds ? clampBoundsToReference(initialViewState.bounds, dataBounds) : dataBounds,
+  );
+  const [shortcutsOpen, setShortcutsOpen] = useState(initialViewState?.shortcutsOpen ?? false);
 
   const points = useMemo(
     () =>
@@ -160,6 +174,10 @@ export function TelemetryChart({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dataBounds]);
+
+  useEffect(() => {
+    onViewStateChange?.({ tool, bounds, shortcutsOpen });
+  }, [bounds, onViewStateChange, shortcutsOpen, tool]);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/45">

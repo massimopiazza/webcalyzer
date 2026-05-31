@@ -16,7 +16,10 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
 import { PathPicker } from "@/components/PathPicker";
 import { RunPanel } from "@/components/RunPanel";
-import { TelemetryChart } from "@/components/postprocessing/TelemetryChart";
+import {
+  TelemetryChart,
+  TelemetryChartViewState,
+} from "@/components/postprocessing/TelemetryChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +64,7 @@ export type PostprocessingPagePersistedState = {
   overrideMode: OverrideMode;
   overrideValue: string;
   overrideUnit: string;
+  chartViewState: (TelemetryChartViewState & { fieldId: string }) | null;
 };
 
 export function createDefaultPostprocessingPageState(
@@ -79,6 +83,7 @@ export function createDefaultPostprocessingPageState(
     overrideMode: null,
     overrideValue: "",
     overrideUnit: "",
+    chartViewState: null,
   };
 }
 
@@ -103,6 +108,7 @@ export function PostprocessingPage({
   const [overrideMode, setOverrideMode] = useState<OverrideMode>(persistedState.overrideMode);
   const [overrideValue, setOverrideValue] = useState(persistedState.overrideValue);
   const [overrideUnit, setOverrideUnit] = useState(persistedState.overrideUnit);
+  const [chartViewState, setChartViewState] = useState(persistedState.chartViewState);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
   const mutationInFlight = useRef(false);
@@ -122,9 +128,11 @@ export function PostprocessingPage({
       overrideMode,
       overrideValue,
       overrideUnit,
+      chartViewState,
     });
   }, [
     activeFieldId,
+    chartViewState,
     discardOpen,
     jobId,
     onPersistedStateChange,
@@ -147,6 +155,14 @@ export function PostprocessingPage({
     () => activeField?.observations.filter((item) => selected.has(item.sample_id)) ?? [],
     [activeField, selected],
   );
+  const activeChartViewState =
+    activeField && chartViewState?.fieldId === activeField.id
+      ? {
+          tool: chartViewState.tool,
+          bounds: chartViewState.bounds,
+          shortcutsOpen: chartViewState.shortcutsOpen,
+        }
+      : null;
   const currentPoint = selectedObservations.length === 1 ? selectedObservations[0] : null;
   const isSaving = Boolean(jobId);
   const applied = workspace?.draft?.applied ?? false;
@@ -374,6 +390,7 @@ export function PostprocessingPage({
       setOverrideMode(null);
       setOverrideValue("");
       setOverrideUnit("");
+      setChartViewState(null);
       toast.success(applied ? "Editor closed with stale derived outputs." : "Draft discarded.");
     } catch (error) {
       toast.error(messageFor(error));
@@ -393,6 +410,7 @@ export function PostprocessingPage({
     setOverrideMode(null);
     setOverrideValue("");
     setOverrideUnit("");
+    setChartViewState(null);
     if (hasEdits) {
       toast.message("Editor closed. Unsaved draft preserved.");
     }
@@ -515,6 +533,10 @@ export function PostprocessingPage({
                     showOutliers={showOutliers}
                     onSelected={(next) => setSelectedSampleIds([...next])}
                     onEdit={openPointEditor}
+                    initialViewState={activeChartViewState}
+                    onViewStateChange={(next) =>
+                      setChartViewState({ fieldId: activeField.id, ...next })
+                    }
                   />
                 </CardContent>
               </Card>
