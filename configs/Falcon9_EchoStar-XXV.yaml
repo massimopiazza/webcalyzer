@@ -1,7 +1,7 @@
 profile_name: new_profile
 description: ''
-default_sample_fps: 1.0
-default_ocr_workers: 4
+default_sample_fps: 3.0
+default_ocr_workers: 6
 ocr_backend: auto
 ocr_recognition_level: accurate
 skip_full_frame_ocr_fallback: true

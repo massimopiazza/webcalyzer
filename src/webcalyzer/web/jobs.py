@@ -327,6 +327,8 @@ class JobManager:
             profile=options.profile,
         )
         self._refresh_output_paths(job, output_path)
+        save_profile(options.profile, output_path / "config_resolved.yaml")
+        self._refresh_output_paths(job, output_path)
         self._check_cancel(job)
 
         if options.profile.video_overlay.enabled:
@@ -355,9 +357,6 @@ class JobManager:
                 job,
                 JobEvent("phase", "Skipping overlay (disabled)", {"phase": "overlay_skipped"}),
             )
-
-        save_profile(options.profile, output_path / "config_resolved.yaml")
-        self._refresh_output_paths(job, output_path)
 
     def _execute_postprocessing(self, job: JobRecord, options: PostprocessingJobOptions) -> None:
         from webcalyzer.postprocessing_editor import apply_draft_to_raw, regenerate_output_dir

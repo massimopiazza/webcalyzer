@@ -8,7 +8,10 @@ import {
 } from "./pages/CalibratePage";
 import { DocumentationPage } from "./pages/DocumentationPage";
 import { QuantityLibraryPage } from "./pages/QuantityLibraryPage";
-import { PostprocessingPage } from "./pages/PostprocessingPage";
+import {
+  createDefaultPostprocessingPageState,
+  PostprocessingPage,
+} from "./pages/PostprocessingPage";
 import { createDefaultRunPageState, RunPage } from "./pages/RunPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
 import { api } from "./lib/api";
@@ -16,13 +19,50 @@ import { api } from "./lib/api";
 const LATEST_RUN_OUTPUT_KEY = "webcalyzer:latest-run-output";
 
 export default function App() {
+  const initialLatestRunOutputDir =
+    window.localStorage.getItem(LATEST_RUN_OUTPUT_KEY) ?? "";
   const [runPageState, setRunPageState] = useState(createDefaultRunPageState);
   const [calibratePageState, setCalibratePageState] = useState(
     createDefaultCalibratePageState,
   );
-  const [latestRunOutputDir, setLatestRunOutputDir] = useState(
-    () => window.localStorage.getItem(LATEST_RUN_OUTPUT_KEY) ?? "",
+  const [postprocessingPageState, setPostprocessingPageState] = useState(() =>
+    createDefaultPostprocessingPageState(initialLatestRunOutputDir),
   );
+  const [latestRunOutputDir, setLatestRunOutputDir] = useState(
+    initialLatestRunOutputDir,
+  );
+
+  useEffect(() => {
+    const workspace = postprocessingPageState.workspace;
+    if (!workspace) return;
+    const timer = window.setInterval(() => {
+      api
+        .postprocessingHeartbeat(workspace.path, workspace.session_token)
+        .then((draft) => {
+          setPostprocessingPageState((current) => {
+            if (
+              !current.workspace ||
+              current.workspace.path !== workspace.path ||
+              current.workspace.session_token !== workspace.session_token
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              workspace: {
+                ...current.workspace,
+                draft,
+              },
+            };
+          });
+        })
+        .catch(() => null);
+    }, 20_000);
+    return () => window.clearInterval(timer);
+  }, [
+    postprocessingPageState.workspace?.path,
+    postprocessingPageState.workspace?.session_token,
+  ]);
 
   useEffect(() => {
     const jobId = runPageState.activeJobId;
@@ -34,9 +74,20 @@ export default function App() {
       try {
         const job = await api.job(jobId);
         if (cancelled) return;
-        if (job.state === "succeeded") {
+        const postprocessingReady =
+          job.state === "succeeded" || job.outputs.includes("config_resolved.yaml");
+        if (postprocessingReady) {
           window.localStorage.setItem(LATEST_RUN_OUTPUT_KEY, job.output_dir);
           setLatestRunOutputDir(job.output_dir);
+          setPostprocessingPageState((current) =>
+            current.workspace
+              ? current
+              : current.outputDir === job.output_dir
+                ? current
+                : { ...current, outputDir: job.output_dir },
+          );
+        }
+        if (job.state === "succeeded") {
           return;
         }
         if (job.state === "failed" || job.state === "cancelled") return;
@@ -79,7 +130,13 @@ export default function App() {
           <Route path="quantities" element={<QuantityLibraryPage />} />
           <Route
             path="postprocessing"
-            element={<PostprocessingPage suggestedOutputDir={latestRunOutputDir} />}
+            element={
+              <PostprocessingPage
+                persistedState={postprocessingPageState}
+                onPersistedStateChange={setPostprocessingPageState}
+                suggestedOutputDir={latestRunOutputDir}
+              />
+            }
           />
           <Route path="documentation" element={<DocumentationPage />} />
         </Route>

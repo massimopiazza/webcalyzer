@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import {
   Edit3,
   Film,
   FolderOpen,
+  LogOut,
   RefreshCw,
   RotateCcw,
   Save,
@@ -47,22 +48,96 @@ import {
 
 type OverrideMode = "point" | "unit" | null;
 
-export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutputDir?: string }) {
-  const [outputDir, setOutputDir] = useState(suggestedOutputDir);
-  const [workspace, setWorkspace] = useState<PostprocessingWorkspace | null>(null);
-  const [openSummary, setOpenSummary] = useState<PostprocessingOpen | null>(null);
-  const [activeFieldId, setActiveFieldId] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [showOutliers, setShowOutliers] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [discardOpen, setDiscardOpen] = useState(false);
-  const [overrideMode, setOverrideMode] = useState<OverrideMode>(null);
-  const [overrideValue, setOverrideValue] = useState("");
-  const [overrideUnit, setOverrideUnit] = useState("");
+export type PostprocessingPagePersistedState = {
+  outputDir: string;
+  workspace: PostprocessingWorkspace | null;
+  openSummary: PostprocessingOpen | null;
+  activeFieldId: string;
+  selectedSampleIds: string[];
+  showOutliers: boolean;
+  jobId: string | null;
+  saveOpen: boolean;
+  discardOpen: boolean;
+  overrideMode: OverrideMode;
+  overrideValue: string;
+  overrideUnit: string;
+};
+
+export function createDefaultPostprocessingPageState(
+  suggestedOutputDir = "",
+): PostprocessingPagePersistedState {
+  return {
+    outputDir: suggestedOutputDir,
+    workspace: null,
+    openSummary: null,
+    activeFieldId: "",
+    selectedSampleIds: [],
+    showOutliers: false,
+    jobId: null,
+    saveOpen: false,
+    discardOpen: false,
+    overrideMode: null,
+    overrideValue: "",
+    overrideUnit: "",
+  };
+}
+
+export function PostprocessingPage({
+  persistedState,
+  onPersistedStateChange,
+  suggestedOutputDir = "",
+}: {
+  persistedState: PostprocessingPagePersistedState;
+  onPersistedStateChange: Dispatch<SetStateAction<PostprocessingPagePersistedState>>;
+  suggestedOutputDir?: string;
+}) {
+  const [outputDir, setOutputDir] = useState(persistedState.outputDir);
+  const [workspace, setWorkspace] = useState<PostprocessingWorkspace | null>(persistedState.workspace);
+  const [openSummary, setOpenSummary] = useState<PostprocessingOpen | null>(persistedState.openSummary);
+  const [activeFieldId, setActiveFieldId] = useState(persistedState.activeFieldId);
+  const [selectedSampleIds, setSelectedSampleIds] = useState(persistedState.selectedSampleIds);
+  const [showOutliers, setShowOutliers] = useState(persistedState.showOutliers);
+  const [jobId, setJobId] = useState<string | null>(persistedState.jobId);
+  const [saveOpen, setSaveOpen] = useState(persistedState.saveOpen);
+  const [discardOpen, setDiscardOpen] = useState(persistedState.discardOpen);
+  const [overrideMode, setOverrideMode] = useState<OverrideMode>(persistedState.overrideMode);
+  const [overrideValue, setOverrideValue] = useState(persistedState.overrideValue);
+  const [overrideUnit, setOverrideUnit] = useState(persistedState.overrideUnit);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
   const mutationInFlight = useRef(false);
+  const selected = useMemo(() => new Set(selectedSampleIds), [selectedSampleIds]);
+
+  useEffect(() => {
+    onPersistedStateChange({
+      outputDir,
+      workspace,
+      openSummary,
+      activeFieldId,
+      selectedSampleIds,
+      showOutliers,
+      jobId,
+      saveOpen,
+      discardOpen,
+      overrideMode,
+      overrideValue,
+      overrideUnit,
+    });
+  }, [
+    activeFieldId,
+    discardOpen,
+    jobId,
+    onPersistedStateChange,
+    openSummary,
+    outputDir,
+    overrideMode,
+    overrideUnit,
+    overrideValue,
+    saveOpen,
+    selectedSampleIds,
+    showOutliers,
+    workspace,
+  ]);
 
   const activeField = useMemo(
     () => workspace?.fields.find((field) => field.id === activeFieldId) ?? workspace?.fields[0] ?? null,
@@ -79,26 +154,20 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
 
   useEffect(() => {
     if (!workspace && suggestedOutputDir) {
-      setOutputDir(suggestedOutputDir);
+      setOutputDir((current) => (current === suggestedOutputDir ? current : suggestedOutputDir));
     }
   }, [suggestedOutputDir, workspace]);
 
   useEffect(() => {
     if (!workspace) return;
-    setActiveFieldId((current) => current || workspace.fields[0]?.id || "");
+    setActiveFieldId((current) =>
+      workspace.fields.some((field) => field.id === current) ? current : workspace.fields[0]?.id || "",
+    );
   }, [workspace]);
 
   useEffect(() => {
-    setSelected(new Set());
+    setSelectedSampleIds([]);
   }, [activeFieldId]);
-
-  useEffect(() => {
-    if (!workspace) return;
-    const timer = window.setInterval(() => {
-      api.postprocessingHeartbeat(workspace.path, workspace.session_token).catch(() => null);
-    }, 20_000);
-    return () => window.clearInterval(timer);
-  }, [workspace]);
 
   useEffect(() => {
     if (!jobId || !workspace) return;
@@ -118,7 +187,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
           const next = await api.postprocessingSession(workspace.path, "resume", token);
           setWorkspace(next);
         }
-        setSelected(new Set());
+        setSelectedSampleIds([]);
         setJobId(null);
       } catch {
         window.clearInterval(timer);
@@ -140,7 +209,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
         event.preventDefault();
         mutate("restore");
       } else if (event.key === "Escape") {
-        setSelected(new Set());
+        setSelectedSampleIds([]);
       } else if (event.key === "Enter" && selected.size === 1) {
         openPointEditor();
       }
@@ -183,7 +252,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
 
   const mutate = async (
     action: "delete" | "restore" | "undo" | "redo",
-    sampleIds: string[] = [...selected],
+    sampleIds: string[] = selectedSampleIds,
   ) => {
     if (!workspace || editingFrozen || mutationInFlight.current) return;
     if ((action === "delete" || action === "restore") && sampleIds.length === 0) return;
@@ -196,7 +265,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
         sample_ids: sampleIds,
       });
       setWorkspace(next);
-      setSelected(new Set());
+      setSelectedSampleIds([]);
     } catch (error) {
       toast.error(messageFor(error));
     } finally {
@@ -207,7 +276,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
 
   const openPointEditor = (observation = currentPoint) => {
     if (!observation || !activeField || editingFrozen) return;
-    setSelected(new Set([observation.sample_id]));
+    setSelectedSampleIds([observation.sample_id]);
     setOverrideValue(String(observation.raw_value ?? ""));
     setOverrideUnit(observation.raw_unit || activeField.units[0]?.name || "");
     setOverrideMode("point");
@@ -251,7 +320,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
         }
       }
       setWorkspace(next);
-      setSelected(new Set());
+      setSelectedSampleIds([]);
       setOverrideMode(null);
     } catch (error) {
       toast.error(messageFor(error));
@@ -294,12 +363,38 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
     try {
       await api.discardPostprocessingDraft(workspace.path, workspace.session_token);
       window.localStorage.removeItem(sessionKey(workspace.path));
+      setOutputDir(workspace.path);
       setWorkspace(null);
-      setSelected(new Set());
+      setOpenSummary(null);
+      setActiveFieldId("");
+      setSelectedSampleIds([]);
+      setShowOutliers(false);
+      setSaveOpen(false);
       setDiscardOpen(false);
+      setOverrideMode(null);
+      setOverrideValue("");
+      setOverrideUnit("");
       toast.success(applied ? "Editor closed with stale derived outputs." : "Draft discarded.");
     } catch (error) {
       toast.error(messageFor(error));
+    }
+  };
+
+  const exitEditor = () => {
+    if (!workspace || isSaving) return;
+    setOutputDir(workspace.path);
+    setWorkspace(null);
+    setOpenSummary(null);
+    setActiveFieldId("");
+    setSelectedSampleIds([]);
+    setShowOutliers(false);
+    setSaveOpen(false);
+    setDiscardOpen(false);
+    setOverrideMode(null);
+    setOverrideValue("");
+    setOverrideUnit("");
+    if (hasEdits) {
+      toast.message("Editor closed. Unsaved draft preserved.");
     }
   };
 
@@ -329,6 +424,9 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
                   <RefreshCw className="mr-2 h-4 w-4" /> Retry regeneration
                 </Button>
               )}
+              <Button variant="outline" onClick={exitEditor} disabled={isSaving}>
+                <LogOut className="mr-2 h-4 w-4" /> Exit
+              </Button>
               <Button variant="outline" onClick={() => setDiscardOpen(true)} disabled={isSaving}>
                 <RotateCcw className="mr-2 h-4 w-4" /> Discard
               </Button>
@@ -415,7 +513,7 @@ export function PostprocessingPage({ suggestedOutputDir = "" }: { suggestedOutpu
                     observations={activeField.observations}
                     selected={selected}
                     showOutliers={showOutliers}
-                    onSelected={setSelected}
+                    onSelected={(next) => setSelectedSampleIds([...next])}
                     onEdit={openPointEditor}
                   />
                 </CardContent>

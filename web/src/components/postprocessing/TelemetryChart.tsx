@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Eye,
   Focus,
   Hand,
+  Info,
   MousePointer2,
   RotateCcw,
   ZoomIn,
@@ -36,6 +36,12 @@ const WIDTH = 1100;
 const HEIGHT = 560;
 const PAD = { left: 76, right: 24, top: 24, bottom: 52 };
 const SHORTCUTS = [
+  ["S", "Select tool"],
+  ["Z", "Zoom-to-rectangle tool"],
+  ["= / +", "Zoom in"],
+  ["-", "Zoom out"],
+  ["P", "Pan tool"],
+  ["I", "Open chart help"],
   ["Click or drag", "Select points"],
   ["Shift + click or drag", "Add points to the selection"],
   ["Option / Alt + click or drag", "Remove points from the selection"],
@@ -88,12 +94,17 @@ export function TelemetryChart({
     const end = svgPoint(event, svgRef.current);
     const rect = normalizedRect(drag.startX, drag.startY, end.x, end.y);
     if (tool === "zoom" && rect.width > 8 && rect.height > 8) {
-      setBounds({
-        x0: xValue(rect.x, bounds),
-        x1: xValue(rect.x + rect.width, bounds),
-        y0: yValue(rect.y + rect.height, bounds),
-        y1: yValue(rect.y, bounds),
-      });
+      setBounds(
+        clampBoundsToReference(
+          {
+            x0: xValue(rect.x, bounds),
+            x1: xValue(rect.x + rect.width, bounds),
+            y0: yValue(rect.y + rect.height, bounds),
+            y1: yValue(rect.y, bounds),
+          },
+          dataBounds,
+        ),
+      );
       setTool("select");
     } else if (tool === "select") {
       const hits = selectionHits(points, rect);
@@ -106,41 +117,88 @@ export function TelemetryChart({
     } else if (tool === "pan") {
       const dx = end.x - drag.startX;
       const dy = end.y - drag.startY;
-      setBounds(translateBounds(drag.bounds, -dx, -dy));
+      setBounds(clampBoundsToReference(translateBounds(drag.bounds, -dx, -dy), dataBounds));
     }
     setDrag(null);
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  const zoom = (factor: number) => setBounds((current) => zoomBounds(current, factor));
+  const zoom = (factor: number) =>
+    setBounds((current) => clampBoundsToReference(zoomBounds(current, factor), dataBounds));
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isTextEntry(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const key = event.key;
+      const lowerKey = key.toLowerCase();
+      if (key === "=" || key === "+") {
+        event.preventDefault();
+        zoom(0.78);
+        return;
+      }
+      if (key === "-" || key === "_") {
+        event.preventDefault();
+        zoom(1.28);
+        return;
+      }
+      if (lowerKey === "s") {
+        event.preventDefault();
+        setTool("select");
+      } else if (lowerKey === "z") {
+        event.preventDefault();
+        setTool("zoom");
+      } else if (lowerKey === "p") {
+        event.preventDefault();
+        setTool("pan");
+      } else if (lowerKey === "i") {
+        event.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dataBounds]);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/45">
       <div className="flex flex-wrap items-center gap-1 border-b border-border/70 bg-card/70 p-2">
-        <ToolButton active={tool === "select"} title="Select points" onClick={() => setTool("select")}>
+        <ToolButton active={tool === "select"} title="Select points" shortcut="S" ariaKeyShortcuts="S" onClick={() => setTool("select")}>
           <MousePointer2 />
         </ToolButton>
-        <ToolButton active={tool === "zoom"} title="Zoom to rectangle once" onClick={() => setTool("zoom")}>
+        <ToolButton
+          active={tool === "zoom"}
+          title="Zoom to rectangle once"
+          shortcut="Z"
+          ariaKeyShortcuts="Z"
+          onClick={() => setTool("zoom")}
+        >
           <Focus />
         </ToolButton>
-        <ToolButton title="Zoom in" onClick={() => zoom(0.78)}>
+        <ToolButton title="Zoom in" shortcut="= / +" ariaKeyShortcuts="= Shift+=" onClick={() => zoom(0.78)}>
           <ZoomIn />
         </ToolButton>
-        <ToolButton title="Zoom out" onClick={() => zoom(1.28)}>
+        <ToolButton title="Zoom out" shortcut="-" ariaKeyShortcuts="-" onClick={() => zoom(1.28)}>
           <ZoomOut />
         </ToolButton>
         <ToolButton title="Reset zoom" onClick={() => setBounds(dataBounds)}>
           <RotateCcw />
         </ToolButton>
-        <ToolButton active={tool === "pan"} title="Pan" onClick={() => setTool("pan")}>
+        <ToolButton active={tool === "pan"} title="Pan" shortcut="P" ariaKeyShortcuts="P" onClick={() => setTool("pan")}>
           <Hand />
         </ToolButton>
         <div className="ml-2 text-xs text-muted-foreground">
           {tool === "zoom" ? "Drag a zoom region" : tool === "pan" ? "Drag to pan" : "Drag to select points"}
         </div>
         <div className="ml-auto">
-          <ToolButton title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}>
-            <Eye />
+          <ToolButton
+            title="Keyboard shortcuts"
+            shortcut="I"
+            ariaKeyShortcuts="I"
+            onClick={() => setShortcutsOpen(true)}
+          >
+            <Info />
           </ToolButton>
         </div>
       </div>
@@ -171,14 +229,21 @@ export function TelemetryChart({
           const point = svgPoint(event, svgRef.current);
           setDrag({ ...drag, x: point.x, y: point.y });
           if (tool === "pan") {
-            setBounds(translateBounds(drag.bounds, -(point.x - drag.startX), -(point.y - drag.startY)));
+            setBounds(
+              clampBoundsToReference(
+                translateBounds(drag.bounds, -(point.x - drag.startX), -(point.y - drag.startY)),
+                dataBounds,
+              ),
+            );
           }
         }}
         onPointerUp={finishDrag}
         onPointerCancel={() => setDrag(null)}
         onWheel={(event) => {
           event.preventDefault();
-          setBounds((current) => translateBounds(current, event.deltaX, event.deltaY));
+          setBounds((current) =>
+            clampBoundsToReference(translateBounds(current, event.deltaX, event.deltaY), dataBounds),
+          );
         }}
       >
         <rect width={WIDTH} height={HEIGHT} className="fill-background" />
@@ -190,7 +255,6 @@ export function TelemetryChart({
             cy={y}
             r={selected.has(observation.sample_id) ? 6 : 4}
             className={cn(
-              "stroke-background stroke-[1.5]",
               observation.deleted
                 ? "fill-muted-foreground/40"
                 : observation.outlier
@@ -223,22 +287,29 @@ export function TelemetryChart({
 function ToolButton({
   active,
   title,
+  shortcut,
+  ariaKeyShortcuts,
   onClick,
   children,
 }: {
   active?: boolean;
   title: string;
+  shortcut?: string;
+  ariaKeyShortcuts?: string;
   onClick: () => void;
   children: React.ReactElement;
 }) {
+  const label = shortcut ? `${title} (${shortcut})` : title;
   return (
     <Button
       type="button"
       variant={active ? "secondary" : "ghost"}
       size="icon"
       className="h-8 w-8"
-      title={title}
-      aria-label={title}
+      title={label}
+      aria-label={label}
+      aria-pressed={active || undefined}
+      aria-keyshortcuts={ariaKeyShortcuts}
       onClick={onClick}
     >
       {<span className="[&>svg]:h-4 [&>svg]:w-4">{children}</span>}
@@ -300,18 +371,22 @@ function boundsFor(observations: PostprocessingObservation[]): Bounds {
 function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Selection and correction controls for the active telemetry series.</DialogDescription>
-        </DialogHeader>
-        <div className="divide-y divide-border/70 rounded-md border border-border/70">
-          {SHORTCUTS.map(([keys, description]) => (
-            <div key={keys} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4 px-3 py-2 text-sm">
-              <span className="font-mono text-xs text-foreground">{keys}</span>
-              <span className="text-muted-foreground">{description}</span>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-hidden p-0 sm:max-h-[calc(100dvh-3rem)]">
+        <div className="flex min-h-0 flex-col gap-4 p-6">
+          <DialogHeader className="shrink-0 pr-8">
+            <DialogTitle>Keyboard shortcuts</DialogTitle>
+            <DialogDescription>Chart navigation, selection, and correction controls for the active telemetry series.</DialogDescription>
+          </DialogHeader>
+          <div className="-mr-2 min-h-0 overflow-y-auto pr-2">
+            <div className="divide-y divide-border/70 rounded-md border border-border/70">
+              {SHORTCUTS.map(([keys, description]) => (
+                <div key={keys} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-4 px-3 py-2 text-sm">
+                  <span className="font-mono text-xs text-foreground">{keys}</span>
+                  <span className="text-muted-foreground">{description}</span>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -354,6 +429,28 @@ function translateBounds(bounds: Bounds, pixelX: number, pixelY: number): Bounds
   return { x0: bounds.x0 + dx, x1: bounds.x1 + dx, y0: bounds.y0 - dy, y1: bounds.y1 - dy };
 }
 
+function clampBoundsToReference(bounds: Bounds, reference: Bounds): Bounds {
+  const [x0, x1] = clampAxis(bounds.x0, bounds.x1, reference.x0, reference.x1);
+  const [y0, y1] = clampAxis(bounds.y0, bounds.y1, reference.y0, reference.y1);
+  return { x0, x1, y0, y1 };
+}
+
+function clampAxis(min: number, max: number, referenceMin: number, referenceMax: number) {
+  const span = max - min;
+  const referenceSpan = referenceMax - referenceMin;
+  if (span >= referenceSpan) {
+    const center = (referenceMin + referenceMax) / 2;
+    return [center - span / 2, center + span / 2] as const;
+  }
+  if (min < referenceMin) {
+    return [referenceMin, referenceMin + span] as const;
+  }
+  if (max > referenceMax) {
+    return [referenceMax - span, referenceMax] as const;
+  }
+  return [min, max] as const;
+}
+
 function normalizedRect(x0: number, y0: number, x1: number, y1: number) {
   return { x: Math.min(x0, x1), y: Math.min(y0, y1), width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
 }
@@ -382,4 +479,13 @@ function ticks(min: number, max: number, count: number) {
 
 function formatTick(value: number) {
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(Math.abs(value) < 10 ? 2 : 1);
+}
+
+function isTextEntry(target: EventTarget | null) {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
 }
