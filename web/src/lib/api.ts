@@ -185,10 +185,88 @@ export type JobSummary = {
   started_at: number;
   ended_at: number | null;
   error: string | null;
-  video_path: string;
+  video_path: string | null;
   output_dir: string;
   profile_name: string;
   outputs: string[];
+};
+
+export type PostprocessingNodeStatus = "current" | "stale" | "failed" | "disabled";
+
+export type PostprocessingNode = {
+  kind: "source_series" | "derived_series" | "artifact";
+  depends_on: string[];
+  handler: string | null;
+  status: PostprocessingNodeStatus;
+  updated_at: string;
+  error: string | null;
+};
+
+export type PostprocessingManifest = {
+  schema_version: number;
+  created_at: string;
+  updated_at: string;
+  source_video: string | null;
+  nodes: Record<string, PostprocessingNode>;
+  last_save: {
+    started_at: string;
+    completed_at: string | null;
+    edit_counts: Record<string, number>;
+  } | null;
+};
+
+export type PostprocessingDraft = {
+  session_token: string;
+  created_at: string;
+  heartbeat_at: number;
+  expired: boolean;
+  applied: boolean;
+  operation_count: number;
+  redo_count: number;
+  edit_counts: Record<string, number>;
+};
+
+export type PostprocessingUnit = {
+  name: string;
+  label: string;
+  expression: string;
+};
+
+export type PostprocessingObservation = {
+  sample_id: string;
+  mission_elapsed_time_s: number | null;
+  raw_text: string | null;
+  raw_value: number | null;
+  raw_unit: string | null;
+  value: number | null;
+  parse_status: string | null;
+  deleted: boolean;
+  manual: boolean;
+  plottable: boolean;
+  outlier: boolean;
+};
+
+export type PostprocessingField = {
+  id: string;
+  label: string;
+  clean_column: string;
+  kind: string;
+  output_unit: string;
+  units: PostprocessingUnit[];
+  observations: PostprocessingObservation[];
+  rejected: { mission_elapsed_time_s: number; value: number }[];
+};
+
+export type PostprocessingOpen = {
+  path: string;
+  manifest: PostprocessingManifest;
+  draft: PostprocessingDraft | null;
+};
+
+export type PostprocessingWorkspace = PostprocessingOpen & {
+  session_token: string;
+  fields: PostprocessingField[];
+  pending_recomputations: string[];
 };
 
 export type JobEvent = {
@@ -408,4 +486,58 @@ export const api = {
   cancelJob: (id: string) =>
     request<{ ok: boolean }>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   jobFileUrl: (id: string, relpath: string) => `/api/jobs/${id}/files/${encodeURI(relpath)}`,
+  postprocessingOpen: (outputDir: string) =>
+    request<PostprocessingOpen>("/api/postprocessing/open", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir }),
+    }),
+  postprocessingSession: (
+    outputDir: string,
+    action: "create" | "resume" | "discard" | "takeover",
+    sessionToken?: string | null,
+  ) =>
+    request<PostprocessingWorkspace>("/api/postprocessing/session", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir, action, session_token: sessionToken }),
+    }),
+  postprocessingHeartbeat: (outputDir: string, sessionToken: string) =>
+    request<PostprocessingDraft>("/api/postprocessing/heartbeat", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir, session_token: sessionToken }),
+    }),
+  postprocessingDraft: (
+    outputDir: string,
+    sessionToken: string,
+    payload: {
+      action: "delete" | "restore" | "override" | "undo" | "redo";
+      field_name?: string;
+      sample_ids?: string[];
+      value?: number;
+      unit?: string;
+    },
+  ) =>
+    request<PostprocessingWorkspace>("/api/postprocessing/draft", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir, session_token: sessionToken, ...payload }),
+    }),
+  discardPostprocessingDraft: (outputDir: string, sessionToken: string) =>
+    request<{ discarded: boolean }>("/api/postprocessing/discard", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir, session_token: sessionToken }),
+    }),
+  savePostprocessingDraft: (outputDir: string, sessionToken: string) =>
+    request<{ id: string; state: string }>("/api/postprocessing/save", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir, session_token: sessionToken }),
+    }),
+  retryPostprocessing: (outputDir: string) =>
+    request<{ id: string; state: string }>("/api/postprocessing/retry", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir }),
+    }),
+  regeneratePostprocessingOverlay: (outputDir: string) =>
+    request<{ id: string; state: string }>("/api/postprocessing/overlay", {
+      method: "POST",
+      body: JSON.stringify({ output_dir: outputDir }),
+    }),
 };

@@ -104,12 +104,15 @@ def write_trajectory_outputs(
     *,
     sample_fps: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    from webcalyzer.postprocessing_editor import mark_trajectory_current
+
     augmented, trajectory_df = reconstruct_trajectory(
         clean_df, config=config, sample_fps=sample_fps
     )
     output_path = Path(output_dir)
     augmented.to_csv(output_path / "telemetry_clean.csv", index=False)
     trajectory_df.to_csv(output_path / TRAJECTORY_FILENAME, index=False)
+    mark_trajectory_current(output_path)
     return augmented, trajectory_df
 
 

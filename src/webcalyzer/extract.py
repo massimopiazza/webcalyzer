@@ -61,8 +61,11 @@ def extract_telemetry(
     skip_detection: bool = False,
     cancel_check: Callable[[], None] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    from webcalyzer.postprocessing_editor import initialize_manifest, mark_raw_materialized
+
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    initialize_manifest(output_path, profile=profile, source_video=video_path)
 
     metadata = get_video_metadata(video_path)
     effective_fps = float(sample_fps or profile.default_sample_fps)
@@ -156,6 +159,7 @@ def extract_telemetry(
             indent=2,
         )
     )
+    mark_raw_materialized(output_path)
     return raw_df, clean_df
 
 

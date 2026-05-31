@@ -54,7 +54,12 @@ from webcalyzer.web.files import (
     normalize_roots,
     safe_resolve,
 )
-from webcalyzer.web.jobs import JobManager, JobOptions
+from webcalyzer.web.jobs import (
+    JobManager,
+    JobOptions,
+    OverlayRegenerationJobOptions,
+    PostprocessingJobOptions,
+)
 from webcalyzer.web.schema import (
     ProfileModel,
     default_parsing_model,
@@ -458,6 +463,127 @@ def create_app(config: ServeConfig) -> FastAPI:
         save_profile(model_to_profile_dataclass(model), target)
         return {"name": str(target.relative_to(config.templates_dir.resolve())), "path": str(target)}
 
+    # ----- post-processing ----------------------------------------------
+    @app.post("/api/postprocessing/open")
+    def postprocessing_open(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import PostprocessingError, open_workspace
+
+        try:
+            return open_workspace(_ensure_within(config, payload.get("output_dir", "")))
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/postprocessing/session")
+    def postprocessing_session(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import (
+            PostprocessingConflict,
+            PostprocessingError,
+            acquire_session,
+        )
+
+        try:
+            return acquire_session(
+                _ensure_within_writable(config, payload.get("output_dir", "")),
+                action=str(payload.get("action", "create")),
+                session_token=payload.get("session_token"),
+            )
+        except PostprocessingConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/postprocessing/heartbeat")
+    def postprocessing_heartbeat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import PostprocessingConflict, PostprocessingError, heartbeat
+
+        try:
+            return heartbeat(
+                _ensure_within(config, payload.get("output_dir", "")),
+                session_token=str(payload.get("session_token", "")),
+            )
+        except PostprocessingConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/postprocessing/draft")
+    def postprocessing_draft(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import PostprocessingConflict, PostprocessingError, mutate_draft
+
+        try:
+            return mutate_draft(
+                _ensure_within_writable(config, payload.get("output_dir", "")),
+                session_token=str(payload.get("session_token", "")),
+                action=str(payload.get("action", "")),
+                field_name=payload.get("field_name"),
+                sample_ids=payload.get("sample_ids") or [],
+                value=_optional_float(payload.get("value")),
+                unit=payload.get("unit"),
+            )
+        except PostprocessingConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/postprocessing/discard")
+    def postprocessing_discard(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import PostprocessingConflict, PostprocessingError, discard_draft
+
+        try:
+            return discard_draft(
+                _ensure_within_writable(config, payload.get("output_dir", "")),
+                session_token=str(payload.get("session_token", "")),
+            )
+        except PostprocessingConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/postprocessing/save")
+    async def postprocessing_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        options = PostprocessingJobOptions(
+            output_dir=_ensure_within_writable(config, payload.get("output_dir", "")),
+            session_token=str(payload.get("session_token", "")),
+            mode="save",
+        )
+        return _submit_job(app, options, asyncio.get_running_loop())
+
+    @app.post("/api/postprocessing/retry")
+    async def postprocessing_retry(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        options = PostprocessingJobOptions(
+            output_dir=_ensure_within_writable(config, payload.get("output_dir", "")),
+            session_token=None,
+            mode="retry",
+        )
+        return _submit_job(app, options, asyncio.get_running_loop())
+
+    @app.post("/api/postprocessing/overlay")
+    async def postprocessing_overlay(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from webcalyzer.postprocessing_editor import PostprocessingError, load_manifest
+
+        output_dir = _ensure_within_writable(config, payload.get("output_dir", ""))
+        try:
+            manifest = load_manifest(output_dir)
+        except PostprocessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        source_video = manifest.get("source_video")
+        if not source_video:
+            raise HTTPException(status_code=422, detail="The original source video is unavailable.")
+        video_path = _ensure_within(config, source_video)
+        if not video_path.is_file():
+            raise HTTPException(status_code=422, detail="The original source video is unavailable.")
+        profile = load_profile(output_dir / "config_resolved.yaml")
+        if not profile.video_overlay.enabled:
+            raise HTTPException(status_code=422, detail="Video overlay generation is disabled in the resolved profile.")
+        options = OverlayRegenerationJobOptions(
+            video_path=video_path,
+            output_dir=output_dir,
+            profile=profile,
+            overlay_engine=profile.video_overlay.engine,
+            overlay_encoder=profile.video_overlay.encoder,
+        )
+        return _submit_job(app, options, asyncio.get_running_loop())
+
     # ----- jobs ----------------------------------------------------------
     @app.get("/api/jobs")
     def list_jobs() -> list[dict[str, Any]]:
@@ -605,6 +731,14 @@ def create_app(config: ServeConfig) -> FastAPI:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _submit_job(app: FastAPI, options: Any, loop: asyncio.AbstractEventLoop) -> dict[str, Any]:
+    try:
+        job = app.state.jobs.submit(options, loop)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": job.id, "state": job.state}
 
 
 def _resolve_template_path(config: ServeConfig, name: str, *, must_exist: bool) -> Path:

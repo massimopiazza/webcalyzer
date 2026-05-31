@@ -46,6 +46,8 @@ def create_plots(
     trajectory_config: TrajectoryConfig | None = None,
     profile: ProfileConfig | None = None,
 ) -> None:
+    from webcalyzer.postprocessing_editor import mark_plots_current
+
     output_path = Path(output_dir)
     if profile is None:
         profile_path = output_path / "config_resolved.yaml"
@@ -86,6 +88,7 @@ def create_plots(
         trajectory_config=trajectory_config,
         profile=profile,
     )
+    mark_plots_current(output_path)
 
 
 def _create_plot_set(

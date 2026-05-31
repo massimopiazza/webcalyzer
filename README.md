@@ -210,6 +210,7 @@ and collapse section lists independently from page-title navigation.
 |       | `--trajectory-derivative-window-s` | float | no | profile's `trajectory.derivative_smoothing_window_s` | any positive float | Override Savitzky-Golay window length for this run. |
 | `plot` | `--output` | path | yes | - | - | Existing run directory containing `telemetry_clean.csv`. |
 | `rebuild-clean` | `--output` | path | yes | - | - | Re-derives `telemetry_clean.csv` from `telemetry_raw.csv`. |
+| `postprocess-regenerate` | `--output` | path | yes | - | - | Regenerates downstream artifacts from the current raw data in a manifest-enabled output directory. |
 | `rescue` | `--video` | path | yes | - | - | Rebuilds clean telemetry and reapplies outlier rejection after re-OCR. |
 |          | `--config` | path | no | falls back to `<output>/config_resolved.yaml` | - | Optional override of the profile saved alongside the run. |
 |          | `--output` | path | yes | - | - | |
@@ -468,6 +469,19 @@ sanitization rules.
 webcalyzer rebuild-clean --output outputs/ng3
 ```
 
+### `postprocess-regenerate`: rebuild after manual corrections
+
+Use the **Postprocessing** web page to edit points graphically. If a saved
+regeneration is interrupted, rerun its downstream work from the CLI:
+
+```bash
+webcalyzer postprocess-regenerate --output outputs/ng3
+```
+
+Manifest-enabled outputs treat `telemetry_raw.csv` as materialized raw
+data. Hardcoded YAML anchor points are injected during initial extraction
+and are not reinserted during later regeneration.
+
 ### `rescue`:  multi-variant re-OCR for missing rows
 
 For rows whose strip OCR failed, re-reads the video, runs a tiered
@@ -583,7 +597,8 @@ child directory created under the specified output parent:
 
 | File | Purpose |
 |------|---------|
-| `telemetry_raw.csv` | One row per sampled frame, with `segment_id`, canonical and custom field raw OCR text, parse status, raw value, raw unit, normalized value, OCR variant, parse confidence, unit source, unit match score, candidate count, and reject reason. Append-only source of truth. |
+| `telemetry_raw.csv` | One row per sampled frame, with stable `sample_id`, `segment_id`, canonical and custom field raw OCR text, parse status, raw value, raw unit, normalized value, OCR variant, parse confidence, unit source, unit match score, candidate count, and reject reason. |
+| `postprocessing_manifest.json` | Dependency DAG and freshness status used by the visual Postprocessing editor and recovery command. |
 | `telemetry_clean.csv` | Clean telemetry with canonical units (m/s, m, s) and custom fields in each quantity's `display_unit`, with plausibility filtering, stage activation, and appended trajectory columns applied. |
 | `trajectory.csv` | Dense fixed-step trajectory reconstruction. Interpolated velocity/altitude live here only; the original telemetry columns keep their gaps. |
 | `telemetry_rejected.csv` | Outliers removed by `reject-outliers`. Initially empty; populated by the outlier rejection step. |

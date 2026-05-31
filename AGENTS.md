@@ -43,6 +43,7 @@ src/webcalyzer/
   calibration.py        # OpenCV interactive bbox editor (CLI)
   ocr.py / vision_backend.py / ocr_factory.py
   postprocess.py        # outlier rejection / clean rebuild
+  postprocessing_editor.py # manifest DAG + interactive-editor drafts
   rescue.py             # multi-variant re-OCR
   acceleration.py       # Savitzky-Golay derivatives
   raw_points.py         # injection of hardcoded anchor points
@@ -59,7 +60,7 @@ src/webcalyzer/
 web/                    # web UI frontend (Vite + React + TS + Tailwind + shadcn)
   src/
     App.tsx, main.tsx, index.css
-    pages/{RunPage,CalibratePage,QuantityLibraryPage,TemplatesPage,DocumentationPage}.tsx
+    pages/{RunPage,CalibratePage,PostprocessingPage,QuantityLibraryPage,TemplatesPage,DocumentationPage}.tsx
     components/profile/*           # one component per ProfileConfig section
     components/{AppShell,RunPanel,FileBrowserDialog,PathPicker,
                 TemplatePicker,Field,Toaster}.tsx
@@ -204,7 +205,7 @@ above as a navigation aid and read the code for authoritative bounds.
 
 - `sample-frames`, `calibrate`, `extract`, `run`, `plot`,
   `rebuild-clean`, `rescue`, `reject-outliers`,
-  `reconstruct-trajectory`, `render-overlay`, **`quantities`**,
+  `reconstruct-trajectory`, `render-overlay`, **`postprocess-regenerate`**, **`quantities`**,
   **`serve`** (web UI).
 
 **Invariant: the existing CLI must keep working unchanged.** `serve` is
@@ -227,6 +228,12 @@ section under "Argument reference" + "Subcommands" in `README.md`.
 YAML templates whose embedded snapshots are updated. `edit` and `delete`
 must immediately update affected template snapshots so the CLI and web UI
 keep the same library behavior.
+
+`postprocess-regenerate --output <dir>` rebuilds downstream artifacts from
+the current materialized `telemetry_raw.csv` in a manifest-enabled output
+directory. New `extract` and `run` outputs include
+`postprocessing_manifest.json`; legacy output directories remain usable by
+existing CLI commands but cannot be opened by the web editor.
 
 When you add a new flag to `extract`/`run`/`render-overlay`, decide
 whether it belongs in the persisted profile form or remains a one-run
@@ -277,6 +284,12 @@ Custom telemetry endpoints are part of the supported API surface:
 `/api/units/si`. Keep these in sync with
 `web/src/pages/QuantityLibraryPage.tsx` and the calibration page custom-slot
 flow.
+
+The interactive editor endpoints live under `/api/postprocessing/...`.
+Every output directory path must pass through the same root-scoped helpers
+as run inputs. Editing sessions persist immediate-operation drafts in
+`.postprocessing_draft.json`, enforce one heartbeat lock, and materialize
+edits atomically into `telemetry_raw.csv` only when Save begins.
 
 ## 6. Web frontend contract
 

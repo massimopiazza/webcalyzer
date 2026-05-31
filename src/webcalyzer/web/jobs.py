@@ -21,6 +21,7 @@ from webcalyzer.ocr_factory import OCRBackendOptions, resolve_backend_name
 from webcalyzer.overlay import render_telemetry_overlay_video
 from webcalyzer.plotting import create_plots
 from webcalyzer.postprocess import apply_outlier_rejection_in_output_dir, rebuild_clean_in_output_dir
+from webcalyzer.postprocessing_editor import initialize_manifest
 from webcalyzer.trajectory import TRAJECTORY_FILENAME, write_trajectory_outputs
 
 
@@ -34,6 +35,22 @@ class JobOptions:
     ocr_recognition_level: str
     ocr_workers: int
     ocr_skip_detection: bool
+    overlay_engine: str
+    overlay_encoder: str
+
+
+@dataclass
+class PostprocessingJobOptions:
+    output_dir: Path
+    session_token: str | None
+    mode: str = "save"
+
+
+@dataclass
+class OverlayRegenerationJobOptions:
+    video_path: Path
+    output_dir: Path
+    profile: ProfileConfig
     overlay_engine: str
     overlay_encoder: str
 
@@ -60,7 +77,7 @@ class JobRecord:
     state: str  # "queued" | "running" | "succeeded" | "failed" | "cancelled"
     started_at: float
     ended_at: float | None
-    options: JobOptions
+    options: JobOptions | PostprocessingJobOptions | OverlayRegenerationJobOptions
     error: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     events: list[JobEvent] = field(default_factory=list)
@@ -70,15 +87,17 @@ class JobRecord:
     loop: asyncio.AbstractEventLoop | None = None
 
     def to_summary(self) -> dict[str, Any]:
+        video_path = getattr(self.options, "video_path", None)
+        profile = getattr(self.options, "profile", None)
         return {
             "id": self.id,
             "state": self.state,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "error": self.error,
-            "video_path": str(self.options.video_path),
+            "video_path": str(video_path) if video_path else None,
             "output_dir": str(self.options.output_dir),
-            "profile_name": self.options.profile.profile_name,
+            "profile_name": profile.profile_name if profile else "postprocessing",
             "outputs": self.output_paths,
         }
 
@@ -109,7 +128,11 @@ class JobManager:
                 return None
             return self._jobs.get(self._active_id)
 
-    def submit(self, options: JobOptions, loop: asyncio.AbstractEventLoop) -> JobRecord:
+    def submit(
+        self,
+        options: JobOptions | PostprocessingJobOptions | OverlayRegenerationJobOptions,
+        loop: asyncio.AbstractEventLoop,
+    ) -> JobRecord:
         with self._lock:
             if self._active_id is not None:
                 running = self._jobs.get(self._active_id)
@@ -209,8 +232,15 @@ class JobManager:
 
     def _execute(self, job: JobRecord) -> None:
         options = job.options
+        if isinstance(options, PostprocessingJobOptions):
+            self._execute_postprocessing(job, options)
+            return
+        if isinstance(options, OverlayRegenerationJobOptions):
+            self._execute_overlay_regeneration(job, options)
+            return
         output_path = Path(options.output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+        initialize_manifest(output_path, profile=options.profile, source_video=options.video_path)
 
         backend_options = OCRBackendOptions(
             backend=options.ocr_backend,
@@ -327,6 +357,47 @@ class JobManager:
             )
 
         save_profile(options.profile, output_path / "config_resolved.yaml")
+        self._refresh_output_paths(job, output_path)
+
+    def _execute_postprocessing(self, job: JobRecord, options: PostprocessingJobOptions) -> None:
+        from webcalyzer.postprocessing_editor import apply_draft_to_raw, regenerate_output_dir
+
+        output_path = Path(options.output_dir)
+        if options.mode == "save":
+            if not options.session_token:
+                raise ValueError("session_token is required to save post-processing edits")
+            self._emit(job, JobEvent("phase", "Applying manual corrections", {"phase": "apply_corrections"}))
+            apply_draft_to_raw(output_path, session_token=options.session_token)
+            self._refresh_output_paths(job, output_path)
+            self._check_cancel(job)
+        regenerate_output_dir(
+            output_path,
+            cancel_check=lambda: self._check_cancel(job),
+            phase_callback=lambda phase, message: self._emit(job, JobEvent("phase", message, {"phase": phase})),
+        )
+        self._refresh_output_paths(job, output_path)
+
+    def _execute_overlay_regeneration(self, job: JobRecord, options: OverlayRegenerationJobOptions) -> None:
+        import pandas as pd
+
+        from webcalyzer.web.app import _read_rejected_df
+
+        output_path = Path(options.output_dir)
+        trajectory_path = output_path / TRAJECTORY_FILENAME
+        trajectory_df = pd.read_csv(trajectory_path) if trajectory_path.is_file() else None
+        self._emit(job, JobEvent("phase", "Rendering telemetry overlay video", {"phase": "overlay"}))
+        render_telemetry_overlay_video(
+            video_path=options.video_path,
+            clean_df=pd.read_csv(output_path / "telemetry_clean.csv"),
+            output_dir=output_path,
+            config=options.profile.video_overlay,
+            rejected_df=_read_rejected_df(output_path),
+            trajectory_df=trajectory_df,
+            trajectory_config=options.profile.trajectory,
+            engine=options.overlay_engine,
+            encoder=options.overlay_encoder,
+            cancel_check=lambda: self._check_cancel(job),
+        )
         self._refresh_output_paths(job, output_path)
 
     def _refresh_output_paths(self, job: JobRecord, output_path: Path) -> None:

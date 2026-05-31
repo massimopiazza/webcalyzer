@@ -34,9 +34,9 @@ def rebuild_clean_from_raw(
         raw_candidates_by_sample: list[list[tuple[str, str]]] = []
         hardcoded_values: list[float | None] = []
         for row_position, (_, row) in enumerate(raw_df.iterrows()):
-            hardcoded_value = _hardcoded_si_value(row, field_name)
-            hardcoded_values.append(hardcoded_value)
-            if hardcoded_value is not None:
+            persisted_value = _persisted_si_value(row, field_name)
+            hardcoded_values.append(persisted_value)
+            if persisted_value is not None:
                 hardcoded_by_row[row_position].add(field_name)
                 raw_candidates_by_sample.append([])
                 continue
@@ -135,12 +135,19 @@ def _optional_float(value: object) -> float | None:
 
 
 def rebuild_clean_in_output_dir(output_dir: str | Path, profile: ProfileConfig | None = None) -> pd.DataFrame:
+    from webcalyzer.postprocessing_editor import has_manifest, mark_clean_current
+
     output_path = Path(output_dir)
     profile = profile or _profile_from_output(output_path)
     raw_df = _read_raw_with_hardcoded_points(output_path, profile=profile, persist=True)
-    clean_df = rebuild_clean_from_raw(raw_df, profile=profile)
+    clean_df = rebuild_clean_from_raw(
+        raw_df,
+        hardcoded_raw_data_points=[] if has_manifest(output_path) else None,
+        profile=profile,
+    )
     clean_df.to_csv(output_path / "telemetry_clean.csv", index=False)
     _empty_rejected_frame(clean_df).dropna(how="all").to_csv(output_path / "telemetry_rejected.csv", index=False)
+    mark_clean_current(output_path)
     return clean_df
 
 
@@ -645,6 +652,8 @@ def apply_outlier_rejection_in_output_dir(
     window_s: float | None = None,
     profile: ProfileConfig | None = None,
 ) -> pd.DataFrame:
+    from webcalyzer.postprocessing_editor import has_manifest, mark_clean_current
+
     output_path = Path(output_dir)
     profile = profile or _profile_from_output(output_path)
     resolved_chi2 = (
@@ -665,6 +674,7 @@ def apply_outlier_rejection_in_output_dir(
     if raw_path.exists():
         clean_df = rebuild_clean_from_raw(
             _read_raw_with_hardcoded_points(output_path, profile=profile, persist=True),
+            hardcoded_raw_data_points=[] if has_manifest(output_path) else None,
             profile=profile,
         )
     else:
@@ -684,7 +694,7 @@ def apply_outlier_rejection_in_output_dir(
             protected_by_column[column] = {
                 int(idx)
                 for idx, status in enumerate(raw_df[status_column].tolist())
-                if status == "hardcoded"
+                if status in {"hardcoded", "manual"}
             }
     cleaned, rejected = apply_mahalanobis_outlier_rejection_with_rejected(
         clean_df,
@@ -697,6 +707,7 @@ def apply_outlier_rejection_in_output_dir(
         output_path / "telemetry_rejected.csv",
         index=False,
     )
+    mark_clean_current(output_path)
     return cleaned
 
 
@@ -714,9 +725,9 @@ def _field_name_for_clean_column(column: str) -> str | None:
     return None
 
 
-def _hardcoded_si_value(row: pd.Series, field_name: str) -> float | None:
+def _persisted_si_value(row: pd.Series, field_name: str) -> float | None:
     status = row.get(f"{field_name}_parse_status")
-    if pd.isna(status) or status != "hardcoded":
+    if pd.isna(status) or status not in {"hardcoded", "manual"}:
         return None
     value = row.get(f"{field_name}_si_value")
     if value is None or pd.isna(value):
@@ -730,6 +741,10 @@ def _read_raw_with_hardcoded_points(
     persist: bool,
 ) -> pd.DataFrame:
     raw_path = output_path / "telemetry_raw.csv"
+    from webcalyzer.postprocessing_editor import ensure_raw_sample_ids, has_manifest
+
+    if has_manifest(output_path):
+        return ensure_raw_sample_ids(output_path, persist=persist)
     raw_df = pd.read_csv(raw_path)
     profile = profile or _profile_from_output(output_path)
     hardcoded_points = profile.hardcoded_raw_data_points if profile else []

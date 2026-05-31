@@ -102,6 +102,8 @@ def render_telemetry_overlay_video(
     source_path = Path(video_path)
     output_path = Path(output_dir) / config.output_filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        shutil.copy2(output_path, output_path.with_name(f"{output_path.name}.backup"))
 
     plan = _build_overlay_plan(
         source_path=source_path,
@@ -148,6 +150,9 @@ def render_telemetry_overlay_video(
             source_video=rendered_path,
             source_duration_s=float(plan.metadata.duration_s),
         )
+        from webcalyzer.postprocessing_editor import mark_overlay_current
+
+        mark_overlay_current(output_dir)
     return rendered_path
 
 

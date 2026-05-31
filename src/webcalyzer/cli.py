@@ -189,6 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
     overlay_parser.add_argument("--no-audio", action="store_true", help="Do not mux the original audio into the rendered copy.")
     _add_overlay_engine_args(overlay_parser)
 
+    postprocess_parser = subparsers.add_parser(
+        "postprocess-regenerate",
+        help="Regenerate derived outputs from a manifest-enabled telemetry_raw.csv.",
+    )
+    postprocess_parser.add_argument("--output", required=True, help="Extraction output directory.")
+
     return parser
 
 
@@ -323,6 +329,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "quantities":
         _run_quantities(args)
+        return
+
+    if args.command == "postprocess-regenerate":
+        from webcalyzer.postprocessing_editor import regenerate_output_dir
+
+        regenerate_output_dir(args.output)
         return
 
     if args.command == "plot":
@@ -462,9 +474,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "run":
+        from webcalyzer.postprocessing_editor import initialize_manifest
+
         _validate_runnable_profile(profile)
         output_dir = timestamped_run_output_dir(args.output, args.config)
         print(f"[webcalyzer] output directory: {output_dir}")
+        initialize_manifest(output_dir, profile=profile, source_video=args.video)
         generate_review_frames(args.video, profile, output_dir / "review")
         profile.trajectory = _trajectory_config_from_args(profile.trajectory, args)
         backend_options = _ocr_backend_options(args, profile)

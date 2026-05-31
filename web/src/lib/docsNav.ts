@@ -7,6 +7,7 @@ import templatesMd from "../../../docs/user/templates.md?raw";
 import profileConfigurationMd from "../../../docs/user/profile-configuration.md?raw";
 import trajectoryReconstructionMd from "../../../docs/user/trajectory-reconstruction.md?raw";
 import outputsReviewMd from "../../../docs/user/outputs-and-review.md?raw";
+import postprocessingMd from "../../../docs/user/postprocessing.md?raw";
 import cliReferenceMd from "../../../docs/user/cli-reference.md?raw";
 
 import internalIndexMd from "../../../docs/internal/index.md?raw";
@@ -44,6 +45,7 @@ export const DOC_GROUPS: DocsGroup[] = [
       { id: "profile-configuration", title: "Profile Configuration", content: profileConfigurationMd },
       { id: "trajectory-reconstruction", title: "Trajectory Reconstruction", content: trajectoryReconstructionMd },
       { id: "outputs-and-review", title: "Outputs and Review", content: outputsReviewMd },
+      { id: "postprocessing", title: "Postprocessing", content: postprocessingMd },
       { id: "cli-reference", title: "CLI Reference", content: cliReferenceMd },
     ],
   },

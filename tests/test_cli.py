@@ -63,3 +63,11 @@ def test_reject_outliers_uses_chi2_flag() -> None:
 
     with pytest.raises(SystemExit):
         parser.parse_args(["reject-outliers", "--output", "outputs/run", "--sigma", "4.5"])
+
+
+def test_postprocess_regenerate_requires_output() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["postprocess-regenerate", "--output", "outputs/run"])
+
+    assert args.output == "outputs/run"
